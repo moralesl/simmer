@@ -1,0 +1,633 @@
+#!/bin/bash
+# Let the Mac simmer: awake for a bounded time, lid closed, then off by itself.
+#
+# Why not `caffeinate`: its assertions prevent idle sleep, but not lid sleep. On
+# Apple silicon the machine sleeps when you close the lid even with caffeinate
+# holding an assertion. Staying awake with the lid shut requires
+# `pmset -a disablesleep 1`.
+#
+# And that is exactly the trap: `disablesleep` is a switch with no way back. It
+# survives reboots, nothing on screen indicates it, and whoever forgets it finds
+# a flat battery in their bag. (That is precisely what happened here on day one --
+# it stayed on for hours.)
+#
+# So nothing is switched here, it is *borrowed*: every grant has a deadline, and
+# it is handed back by `simmer guard` under launchd -- not by memory. Four things
+# end a lease and only one of them is remembering:
+#
+#   1. the deadline passes
+#   2. the battery drops below the floor
+#   3. `simmer down`
+#   4. the guard finds `disablesleep=1` with no lease (this heals stray pmset
+#      runs, including the ones you type yourself)
+#
+#   simmer 60m -r "claude: funnel refactor"  lease for 60 minutes
+#   simmer 2h --min-battery 30               custom battery floor
+#   simmer --until 23:00                     absolute time instead of duration
+#   simmer forever -r "long run"             no deadline, reminder every 30 min
+#   simmer                                   status
+#   simmer +20m                              extend
+#   simmer down                              hand it back now
+#   simmer 1h --force                        replace someone else's lease
+#   simmer 1h --owner agent                  say who is asking (else: terminal/script)
+#   simmer doctor                            guard, sudo rule, notifications
+#   simmer --version
+#
+#   simmer budget                            how much room is left (for agents)
+#   simmer budget --need 20m                 exit 0 if it fits, 1 if not, 3 if no lease
+set -euo pipefail
+
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/simmer"
+LEASE="$STATE/lease"
+LOG="$STATE/simmer.log"
+PMSET=/usr/bin/pmset
+SIMMER_VERSION="1.0.0"
+LEASE_FORMAT=1
+NOTIFIER="$HOME/Applications/Simmer.app"
+
+DEFAULT_MIN_BATTERY=20
+WARN_SECONDS=300      # a single warning, 5 minutes before expiry
+REMIND_SECONDS=1800   # with `forever`: remind every 30 minutes
+
+die() { echo "simmer: $*" >&2; exit 1; }
+
+mkdir -p "$STATE"
+
+############################################################################
+### Reading and writing the lease
+#
+# A flat key=value file rather than JSON: the menu bar and Alfred read it too,
+# and `jq` should not become a prerequisite for either.
+
+lease_until=0; lease_started=0; lease_reason=""; lease_min_battery=$DEFAULT_MIN_BATTERY
+lease_caffeinate=0; lease_warned=0; lease_reminded=0; lease_owner=""; lease_format=1
+
+read_lease() {
+  [ -f "$LEASE" ] || return 1
+  lease_until=0; lease_started=0; lease_reason=""
+  lease_min_battery=$DEFAULT_MIN_BATTERY
+  lease_caffeinate=0; lease_warned=0; lease_reminded=0; lease_owner=""
+  local key value
+  while IFS='=' read -r key value; do
+    case "$key" in
+      until)        lease_until="$value" ;;
+      started)      lease_started="$value" ;;
+      reason)       lease_reason="$value" ;;
+      min_battery)  lease_min_battery="$value" ;;
+      caffeinate)   lease_caffeinate="$value" ;;
+      warned)       lease_warned="$value" ;;
+      reminded)     lease_reminded="$value" ;;
+      owner)        lease_owner="$value" ;;
+      format)       lease_format="$value" ;;
+    esac
+  done < "$LEASE"
+  return 0
+}
+
+write_lease() {
+  # Write in full, then rename: the guard must never read half a lease and
+  # conclude it is corrupt.
+  local tmp="$LEASE.$$"
+  {
+    # A format number so a later change is detectable instead of being read
+    # as garbage by whichever binary happens to be installed.
+    echo "format=$LEASE_FORMAT"
+    echo "until=$lease_until"
+    echo "started=$lease_started"
+    echo "reason=$lease_reason"
+    echo "min_battery=$lease_min_battery"
+    echo "caffeinate=$lease_caffeinate"
+    echo "warned=$lease_warned"
+    echo "reminded=$lease_reminded"
+    echo "owner=$lease_owner"
+  } > "$tmp"
+  mv -f "$tmp" "$LEASE"
+}
+
+log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"; }
+
+############################################################################
+### System state
+
+# The three readings and the one write, funnelled through four functions so the
+# test suite can substitute them. Without this seam a test of the guard has to
+# flip real disablesleep -- which needs sudo, changes the machine under you, and
+# makes the battery branch untestable while charging. SIMMER_FAKE_* is read only
+# here and documented in ARCHITECTURE.md.
+sleep_disabled() {
+  if [ -n "${SIMMER_FAKE_PMSET:-}" ]; then
+    [ "$(cat "$SIMMER_FAKE_PMSET" 2>/dev/null || echo 0)" = 1 ]
+  else
+    $PMSET -g live 2>/dev/null | grep -q 'SleepDisabled[[:space:]]*1'
+  fi
+}
+
+battery_percent() {
+  if [ -n "${SIMMER_FAKE_BATTERY:-}" ]; then printf '%s' "${SIMMER_FAKE_BATTERY%%:*}"
+  else $PMSET -g batt | grep -oE '[0-9]+%' | head -1 | tr -d '%'; fi
+}
+
+on_battery() {
+  if [ -n "${SIMMER_FAKE_BATTERY:-}" ]; then [ "${SIMMER_FAKE_BATTERY##*:}" = 1 ]
+  else $PMSET -g batt | grep -q "'Battery Power'"; fi
+}
+
+battery_line() {
+  local pct; pct="$(battery_percent)"
+  if on_battery; then echo "battery ${pct}%"; else echo "on AC, battery ${pct}%"; fi
+}
+
+# Flipping the switch needs root. The guard runs unattended and must therefore
+# *never* ask for a password -- `sudo -n` or nothing. Interactively a prompt is
+# fine; without the sudo rule from sudoers.d/simmer it would appear on every lease.
+set_disablesleep() { # <0|1>
+  if [ -n "${SIMMER_FAKE_PMSET:-}" ]; then printf '%s' "$1" > "$SIMMER_FAKE_PMSET"; return 0; fi
+  sudo -n $PMSET -a disablesleep "$1" 2>/dev/null && return 0
+  [ "${SIMMER_NONINTERACTIVE:-0}" = 1 ] && return 1
+  [ -t 0 ] || return 1
+  echo "simmer: needs sudo once (to stop being asked: simmer doctor)" >&2
+  sudo $PMSET -a disablesleep "$1"
+}
+
+############################################################################
+### Feedback
+#
+# Three lines rather than two: title says which state, subtitle the number that
+# matters, body the reason. A banner reading "no reason given" spent its widest
+# line on the absence of information -- now the reason line is simply omitted
+# when there is none, and the space goes to something useful.
+# A notification's identity -- name and icon -- comes from the bundle that posts
+# it, and nothing else. osascript posts as Script Editor: a quill, the wrong
+# name, and dropped silently if Script Editor's notifications are off. So the
+# preferred channel is simmer's own tiny app bundle, built by setup.d from
+# assets/. Content goes through a file because `open --args` does not reach an
+# applet's `on run argv` -- tested; it does not arrive.
+#
+# Script Editor remains the fallback: worse-looking, but it needs nothing built
+# and a notification that looks wrong still beats one that never appears.
+notify() { # <title> <subtitle> <body> [system sound]
+  local title="$1" subtitle="$2" body="$3"
+  if [ -d "$NOTIFIER" ]; then
+    printf '%s\n%s\n%s\n' "$title" "$subtitle" "$body" > "$STATE/notify"
+    open -g -a "$NOTIFIER" 2>/dev/null || notify_via_osascript "$title" "$subtitle" "$body"
+  else
+    notify_via_osascript "$title" "$subtitle" "$body"
+  fi
+  # The sound is not decoration: it is the channel that carries when the banner
+  # is suppressed, and the menu bar is the indicator nothing can drop.
+  [ -n "${4:-}" ] && [ -f "/System/Library/Sounds/$4.aiff" ] &&
+    (afplay -v 0.5 "/System/Library/Sounds/$4.aiff" >/dev/null 2>&1 &)
+  return 0
+}
+
+notify_via_osascript() { # <title> <subtitle> <body>
+  local title="${1//\"/\\\"}" subtitle="${2//\"/\\\"}" body="${3//\"/\\\"}"
+  local script="display notification \"$body\" with title \"$title\""
+  [ -n "$subtitle" ] && script="$script subtitle \"$subtitle\""
+  osascript -e "$script" 2>/dev/null || true
+}
+
+# The menu bar polls its own state every 10 seconds; this is only for the
+# immediate feel right after a command. If SwiftBar is absent it costs nothing.
+refresh_menubar() {
+  [ -d /Applications/SwiftBar.app ] || return 0
+  open -g "swiftbar://refreshplugin?name=simmer" >/dev/null 2>&1 || true
+  return 0
+}
+
+############################################################################
+### Who took the lease
+#
+# The owner is what makes the refusal below possible, so it has to be more
+# specific than "a shell": every surface here would otherwise report the same
+# thing. Launchers export SIMMER_OWNER; a terminal is recognised by its tty;
+# anything else is a script, which is also what an agent looks like unless it
+# says otherwise. Agents should export SIMMER_OWNER=agent so the refusal can
+# name them.
+current_owner() {
+  if [ -n "${SIMMER_OWNER:-}" ]; then printf '%s' "$SIMMER_OWNER"
+  elif [ -t 0 ]; then printf 'terminal'
+  else printf 'script'; fi
+}
+
+############################################################################
+### Durations and times
+
+# 90 | 90m | 1h | 1h30m | 45min | 2h15
+parse_duration() { # <text> -> seconds
+  # tr rather than ${1,,}: the shebang is /bin/bash, which on macOS is still
+  # 3.2, and lowercasing expansions arrived in bash 4. Staying on /bin/bash is
+  # deliberate -- a launchd job should not depend on a Homebrew shell.
+  local text total=0 rest
+  text="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  rest="$text"
+  [[ "$text" =~ ^[0-9]+$ ]] && { echo $((text * 60)); return 0; }
+  local matched=0
+  while [[ "$rest" =~ ^([0-9]+)(h|hours?|m|min|minutes?|s|sec|seconds?)(.*)$ ]]; do
+    local n="${BASH_REMATCH[1]}" unit="${BASH_REMATCH[2]}"
+    rest="${BASH_REMATCH[3]}"
+    case "$unit" in
+      h|hour|hours) total=$((total + n * 3600)) ;;
+      s|sec|second|seconds) total=$((total + n)) ;;
+      *) total=$((total + n * 60)) ;;
+    esac
+    matched=1
+  done
+  # "2h15" -- a trailing bare number means minutes
+  [[ "$rest" =~ ^[0-9]+$ ]] && { total=$((total + rest * 60)); rest=""; }
+  [ "$matched" = 1 ] && [ -z "$rest" ] && [ "$total" -gt 0 ] && { echo "$total"; return 0; }
+  return 1
+}
+
+# HH:MM -> epoch. If the time is already behind us, tomorrow is meant.
+parse_until() { # <HH:MM> -> epoch
+  [[ "$1" =~ ^([0-9]{1,2}):([0-9]{2})$ ]] || return 1
+  local target; target="$(date -j -f '%Y-%m-%d %H:%M' "$(date '+%Y-%m-%d') $1" '+%s' 2>/dev/null)" || return 1
+  [ "$target" -le "$(date +%s)" ] && target=$((target + 86400))
+  echo "$target"
+}
+
+human_duration() { # <seconds> -> "1 h 20 min"
+  local s="$1"
+  [ "$s" -lt 0 ] && s=0
+  local h=$((s / 3600)) m=$(((s % 3600) / 60))
+  if [ "$h" -gt 0 ]; then echo "${h} h ${m} min"
+  elif [ "$m" -gt 0 ]; then echo "${m} min"
+  else echo "under 1 min"; fi
+}
+
+short_duration() { # <seconds> -> "1h20" / "42m" -- for the menu bar
+  local s="$1"
+  [ "$s" -lt 0 ] && s=0
+  local h=$((s / 3600)) m=$(((s % 3600) / 60))
+  if [ "$h" -gt 0 ]; then printf '%dh%02d\n' "$h" "$m"
+  else printf '%dm\n' "$m"; fi
+}
+
+############################################################################
+### Taking and returning a lease
+
+release() { # <reason> [system sound]
+  local why="$1" sound="${2:-Blow}" had_lease=0
+  if read_lease; then
+    had_lease=1
+    [ "$lease_caffeinate" != 0 ] && kill "$lease_caffeinate" 2>/dev/null || true
+  fi
+  rm -f "$LEASE"
+
+  if sleep_disabled; then
+    if set_disablesleep 0; then
+      log "released ($why)"
+      notify "⏾ Sleep allowed again" "$why" "" "$sound"
+    else
+      # The one way the guard can fail: no sudo rule. This must not happen
+      # quietly -- otherwise the machine simply stays awake.
+      log "ERROR: could not revert disablesleep ($why)"
+      notify "⚠️ simmer could not release" "disablesleep is still on" \
+             "Run 'simmer doctor' in a terminal." "Basso"
+      refresh_menubar
+      return 1
+    fi
+  elif [ "$had_lease" = 1 ]; then
+    log "lease removed, disablesleep was already off ($why)"
+  fi
+  refresh_menubar
+}
+
+cmd_take() {
+  local seconds=0 until_epoch=0 reason="" min_battery=$DEFAULT_MIN_BATTERY forever=0 force=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -r|--reason)      reason="${2:-}"; shift 2 ;;
+      --min-battery)    min_battery="${2:-}"; shift 2 ;;
+      --until)          until_epoch="$(parse_until "${2:-}")" || die "did not understand the time: ${2:-} (expected HH:MM)"; shift 2 ;;
+      forever|--forever|--indefinite) forever=1; shift ;;
+      -f|--force)       force=1; shift ;;
+      # A flag as well as SIMMER_OWNER, because SwiftBar can pass arguments to a
+      # menu action but cannot set environment variables for it.
+      --owner)          SIMMER_OWNER="${2:-}"; shift 2 ;;
+      -*)               die "unknown option: $1" ;;
+      *)                seconds="$(parse_duration "$1")" || die "did not understand the duration: $1 (e.g. 60m, 2h, 1h30m)"; shift ;;
+    esac
+  done
+
+  [[ "$min_battery" =~ ^[0-9]+$ ]] || die "--min-battery expects a number"
+
+  local now; now="$(date +%s)"
+  if [ "$forever" = 1 ]; then
+    until_epoch=0
+  elif [ "$until_epoch" = 0 ]; then
+    [ "$seconds" -gt 0 ] || die "no duration given. 'simmer 60m', 'simmer --until 23:00' or 'simmer forever'"
+    until_epoch=$((now + seconds))
+  fi
+
+  # Check the battery floor before flipping the switch: a lease the guard
+  # reclaims on its very next tick is only confusing.
+  local pct; pct="$(battery_percent)"
+  if on_battery && [ "$pct" -le "$min_battery" ]; then
+    notify "⚠️ simmer refused" "Battery ${pct}%, floor ${min_battery}%" \
+           "Plug in, or lower --min-battery." "Basso"
+    die "battery ${pct}% <= floor ${min_battery}%. Plug in, or lower --min-battery."
+  fi
+
+  # An existing lease is replaced, not stacked -- but not silently, and not
+  # across owners. The case this exists for: an agent takes a two hour lease and
+  # stamps over the twenty minutes a human deliberately set, and the human finds
+  # out when the machine does not sleep. Same owner replacing its own lease is
+  # ordinary and stays silent.
+  if read_lease; then
+    local mine; mine="$(current_owner)"
+    if [ -n "$lease_owner" ] && [ "$lease_owner" != "$mine" ] && [ "$force" = 0 ]; then
+      if [ "$lease_until" = 0 ]; then
+        echo "simmer: $lease_owner holds an open-ended lease${lease_reason:+ ($lease_reason)}." >&2
+      else
+        echo "simmer: $lease_owner holds a lease until $(date -r "$lease_until" '+%H:%M')${lease_reason:+ ($lease_reason)}." >&2
+      fi
+      die "replace it with --force, extend it with 'simmer +<duration>', or end it with 'simmer down'"
+    fi
+    [ "$lease_caffeinate" != 0 ] && kill "$lease_caffeinate" 2>/dev/null || true
+  fi
+
+  set_disablesleep 1 || die "could not set disablesleep (sudo?). Run 'simmer doctor'"
+
+  # A second, independent clock: caffeinate holds display and idle open and ends
+  # on its own via -t. If the guard dies, at least this one still expires.
+  #
+  # nohup, because otherwise closing the terminal that started the lease sends
+  # SIGHUP to this background child and the second clock quietly disappears.
+  #
+  # -dims without -u: -u asserts *user activity* and, given no -t, lasts all of
+  # five seconds -- so in the open-ended branch it would look like an assertion
+  # and be none. -d already keeps the display up, which makes -u redundant
+  # either way.
+  local caff_pid=0
+  if [ "$until_epoch" != 0 ]; then
+    nohup caffeinate -dims -t $((until_epoch - now)) >/dev/null 2>&1 &
+    caff_pid=$!
+  else
+    nohup caffeinate -dims >/dev/null 2>&1 &
+    caff_pid=$!
+  fi
+
+  lease_until="$until_epoch"; lease_started="$now"; lease_reason="$reason"
+  lease_min_battery="$min_battery"; lease_caffeinate="$caff_pid"
+  lease_warned=0; lease_reminded="$now"; lease_owner="$(current_owner)"
+  write_lease
+
+  if [ "$until_epoch" = 0 ]; then
+    log "took: no deadline${reason:+ ($reason)}, battery floor ${min_battery}%"
+    echo "☕ simmering, no deadline${reason:+ · $reason}"
+    echo "   reminder every 30 min · releases below ${min_battery}% battery · 'simmer down' ends it"
+    notify "☕ Simmering, no deadline" "reminder every 30 min · floor ${min_battery}%" \
+           "${reason:-Ends with simmer down.}" "Submarine"
+  else
+    log "took: until $(date -r "$until_epoch" '+%H:%M')${reason:+ ($reason)}, battery floor ${min_battery}%"
+    echo "☕ simmering until $(date -r "$until_epoch" '+%H:%M') ($(human_duration $((until_epoch - now))))${reason:+ · $reason}"
+    echo "   lid may close · $(battery_line) · releases below ${min_battery}%"
+    notify "☕ Simmering until $(date -r "$until_epoch" '+%H:%M')" \
+           "$(human_duration $((until_epoch - now))) · lid may close" \
+           "${reason:-}" "Submarine"
+  fi
+  refresh_menubar
+}
+
+cmd_extend() {
+  local arg="${1:-}"; arg="${arg#+}"
+  [ -n "$arg" ] || die "extend by how much? 'simmer +20m'"
+  local seconds; seconds="$(parse_duration "$arg")" || die "did not understand the duration: $arg"
+  read_lease || die "no lease to extend. 'simmer ${arg}' takes a new one."
+  [ "$lease_until" = 0 ] && die "this lease has no deadline -- there is nothing to extend."
+
+  # From now, not from the old deadline: after "+20m" twenty minutes should be
+  # left, not twenty plus whatever remained.
+  local now; now="$(date +%s)"
+  lease_until=$((now + seconds))
+  lease_warned=0
+  write_lease
+  log "extended until $(date -r "$lease_until" '+%H:%M')"
+  echo "☕ simmering until $(date -r "$lease_until" '+%H:%M') ($(human_duration "$seconds"))"
+  notify "☕ Extended until $(date -r "$lease_until" '+%H:%M')" "$(human_duration "$seconds") left" \
+         "${lease_reason:-}" "Pop"
+  refresh_menubar
+}
+
+############################################################################
+### Status
+
+cmd_status() {
+  local porcelain=0
+  [ "${1:-}" = "--porcelain" ] && porcelain=1
+
+  local now; now="$(date +%s)"
+  if ! read_lease; then
+    if sleep_disabled; then
+      # Either set by hand, or the guard is not running. Both deserve saying.
+      [ "$porcelain" = 1 ] && { echo "state=orphan"; echo "battery=$(battery_percent)"; return 0; }
+      echo "⚠️  disablesleep is on but there is no lease -- nobody will hand it back."
+      echo "   'simmer down' reverts it, 'simmer 60m' turns it into a proper lease."
+      return 0
+    fi
+    [ "$porcelain" = 1 ] && { echo "state=idle"; echo "battery=$(battery_percent)"; return 0; }
+    echo "⏾ sleep allowed · $(battery_line)"
+    return 0
+  fi
+
+  local left=0
+  [ "$lease_until" != 0 ] && left=$((lease_until - now))
+
+  if [ "$porcelain" = 1 ]; then
+    echo "state=$([ "$lease_until" = 0 ] && echo forever || echo active)"
+    echo "until=$lease_until"
+    echo "left=$left"
+    echo "left_short=$([ "$lease_until" = 0 ] && echo "∞" || short_duration "$left")"
+    echo "reason=$lease_reason"
+    echo "min_battery=$lease_min_battery"
+    echo "battery=$(battery_percent)"
+    echo "on_battery=$(on_battery && echo 1 || echo 0)"
+    echo "sleep_disabled=$(sleep_disabled && echo 1 || echo 0)"
+    echo "since=$lease_started"
+    return 0
+  fi
+
+  if [ "$lease_until" = 0 ]; then
+    echo "☕ simmering, no deadline · for $(human_duration $((now - lease_started)))${lease_reason:+ · $lease_reason}"
+  else
+    echo "☕ simmering until $(date -r "$lease_until" '+%H:%M') · $(human_duration "$left") left${lease_reason:+ · $lease_reason}"
+  fi
+  echo "   $(battery_line) · floor ${lease_min_battery}%"
+  sleep_disabled || echo "   ⚠️  disablesleep is off despite the lease -- the lid will not hold. 'simmer doctor'"
+}
+
+############################################################################
+### budget -- the agent-facing question
+#
+# `--porcelain` says what the state IS. An agent needs to decide whether to
+# START something: "is there room for another ten minutes of work, or do I write
+# the handoff note instead?" Answering that from the raw seconds means every
+# caller reimplements the same comparison, and gets the no-lease case wrong.
+#
+# So the decision lives here, in the exit code:
+#
+#   0  there is room (or no deadline at all)
+#   1  not enough time left -- wind down
+#   3  no lease: sleep is allowed and the lid can interrupt at any moment
+#
+# 3 rather than 1 for "no lease" on purpose: it is not a small budget, it is an
+# absent guarantee. A caller that treats those the same will keep working while
+# the machine sleeps under it.
+
+cmd_budget() {
+  local need_seconds=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --need) need_seconds="$(parse_duration "${2:-}")" || die "did not understand the duration: ${2:-}"; shift 2 ;;
+      *)      die "usage: simmer budget [--need 20m]" ;;
+    esac
+  done
+
+  local now; now="$(date +%s)"
+  if ! read_lease; then
+    if sleep_disabled; then
+      echo "sleep disabled with no lease -- nobody will hand it back"
+    else
+      echo "no lease -- sleep is allowed, the lid can interrupt at any time"
+    fi
+    return 3
+  fi
+
+  if [ "$lease_until" = 0 ]; then
+    echo "no deadline -- running for $(human_duration $((now - lease_started)))${lease_reason:+ · $lease_reason}"
+    return 0
+  fi
+
+  local left=$((lease_until - now))
+  local total=$((lease_until - lease_started))
+  echo "$(human_duration "$left") left of $(human_duration "$total") · until $(date -r "$lease_until" '+%H:%M')${lease_reason:+ · $lease_reason}"
+  [ "$need_seconds" -gt 0 ] && [ "$left" -lt "$need_seconds" ] && return 1
+  return 0
+}
+
+############################################################################
+### The guard
+#
+# Runs every 30 seconds under launchd, and at login. It is the reason this tool
+# is safe to carry around: handing the switch back does not depend on a terminal
+# you closed or a process you killed.
+
+cmd_guard() {
+  export SIMMER_NONINTERACTIVE=1
+  local now; now="$(date +%s)"
+
+  if ! read_lease; then
+    # No lease but the switch is on: set by hand, or a crash mid-release. Either
+    # way it goes back -- this is the self-healing that makes the forgotten
+    # switch structurally impossible.
+    if sleep_disabled; then
+      release "found disablesleep with no lease" "Basso" || exit 1
+    fi
+    exit 0
+  fi
+
+  # Deadline passed
+  if [ "$lease_until" != 0 ] && [ "$now" -ge "$lease_until" ]; then
+    release "time is up$([ -n "$lease_reason" ] && echo " · $lease_reason")"
+    exit 0
+  fi
+
+  # Battery below the floor. Only on battery power -- on AC the charge level is
+  # irrelevant, and while charging this would abort for no reason.
+  local pct; pct="$(battery_percent)"
+  if on_battery && [ -n "$pct" ] && [ "$pct" -le "$lease_min_battery" ]; then
+    release "battery ${pct}% below floor ${lease_min_battery}%" "Basso"
+    exit 0
+  fi
+
+  # Did something else flip the switch? Inside a lease it gets restored,
+  # otherwise the lid stops holding.
+  if ! sleep_disabled; then
+    if set_disablesleep 1; then
+      log "disablesleep was off and was restored inside the lease"
+    else
+      log "ERROR: could not restore disablesleep"
+    fi
+  fi
+
+  # One warning, exactly once
+  if [ "$lease_until" != 0 ]; then
+    local left=$((lease_until - now))
+    if [ "$left" -le "$WARN_SECONDS" ] && [ "$lease_warned" = 0 ]; then
+      lease_warned=1; write_lease
+      notify "☕ $(human_duration "$left") left" "then this Mac sleeps" \
+             "simmer +30m extends it.${lease_reason:+ · $lease_reason}" "Tink"
+      refresh_menubar
+    fi
+  else
+    # No deadline: remind regularly. An open-ended lease must be impossible to
+    # forget -- that was the condition under which it is allowed at all.
+    if [ $((now - lease_reminded)) -ge "$REMIND_SECONDS" ]; then
+      lease_reminded="$now"; write_lease
+      notify "☕ Still simmering, no deadline" \
+             "running $(human_duration $((now - lease_started)))" \
+             "${lease_reason:-simmer down ends it.}" "Purr"
+    fi
+  fi
+}
+
+############################################################################
+### doctor
+
+cmd_doctor() {
+  local ok=0 fail=0
+  say() { if eval "$2" >/dev/null 2>&1; then echo "✅ $1"; ok=$((ok+1)); else echo "❌ $1"; fail=$((fail+1)); fi; }
+
+  echo "simmer doctor"
+  echo "============"
+  say "guard loaded (com.github.moralesl.simmer-guard)" "launchctl print gui/$(id -u)/com.github.moralesl.simmer-guard"
+  # -nl asks sudo whether the command is *allowed*, without running it and
+  # without ever prompting. Testing with `sudo -n pmset -g` would fail even
+  # with the rule installed, because -g is deliberately not in the allowlist.
+  say "passwordless sudo rule for pmset"         "sudo -nl $PMSET -a disablesleep 0"
+  say "state directory writable"                 "[ -w '$STATE' ]"
+  say "caffeinate present"                       "command -v caffeinate"
+  say "SwiftBar installed"                       "[ -d /Applications/SwiftBar.app ]"
+  echo
+  echo "State:"
+  cmd_status | sed 's/^/  /'
+  echo
+  if [ "$fail" -gt 0 ]; then
+    echo "Without the sudo rule the guard cannot release unattended."
+    echo "Install it (asks for your password, allows exactly two commands):"
+    echo
+    echo "  sudo install -m 440 -o root -g wheel \\"
+    echo "    \"\$SIMMER_HOME/sudoers.d/simmer\" /etc/sudoers.d/simmer"
+    echo
+    echo "Missing guard: run \"make install\" in the simmer repo."
+  fi
+  echo
+  echo "Firing one notification now -- if none arrives, notifications for"
+  echo "\"Script Editor\" are switched off in System Settings."
+  notify "☕ simmer doctor" "notifications are working" \
+         "This banner is the test." "Tink"
+  [ "$fail" -gt 0 ] && return 1 || return 0
+}
+
+############################################################################
+### Entry point
+
+case "${1:-status}" in
+  # `shift` with no arguments returns non-zero, and under `set -e` that ended
+  # the script before it printed anything. Bare `simmer` is the most common call
+  # there is -- it must not be the one that silently does nothing.
+  status)              shift || true; cmd_status "$@" ;;
+  --porcelain)         cmd_status --porcelain ;;
+  down|off|stop|release) release "released by hand" ;;
+  guard)               cmd_guard ;;
+  doctor)              cmd_doctor ;;
+  budget)              shift || true; cmd_budget "$@" ;;
+  extend)              shift || true; cmd_extend "$@" ;;
+  +*)                  cmd_extend "$1" ;;
+  log)                 [ -f "$LOG" ] && tail -n "${2:-20}" "$LOG" || echo "no log yet" ;;
+  -V|--version)        echo "simmer $SIMMER_VERSION" ;;
+  -h|--help|help)      sed -n '2,/^set -euo/p' "$0" | sed 's/^# \{0,1\}//; $d' ;;
+  *)                   cmd_take "$@" ;;
+esac

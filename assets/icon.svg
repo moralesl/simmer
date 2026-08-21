@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs>
+ <linearGradient id="sky" x1="0" y1="0" x2="0.3" y2="1">
+   <stop offset="0" stop-color="#2A3554"/><stop offset="0.55" stop-color="#18203A"/><stop offset="1" stop-color="#0D1220"/></linearGradient>
+ <linearGradient id="warmsky" x1="0" y1="0" x2="0.2" y2="1">
+   <stop offset="0" stop-color="#3A2418"/><stop offset="1" stop-color="#170D08"/></linearGradient>
+ <linearGradient id="body" x1="0" y1="0" x2="0.2" y2="1">
+   <stop offset="0" stop-color="#FFFDF7"/><stop offset="0.6" stop-color="#F6EAD4"/><stop offset="1" stop-color="#DFCFB4"/></linearGradient>
+ <linearGradient id="lid" x1="0" y1="0" x2="0" y2="1">
+   <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#EADCC2"/></linearGradient>
+ <linearGradient id="steam" x1="0" y1="0" x2="0" y2="1">
+   <stop offset="0" stop-color="#FFD79B" stop-opacity="0.10"/>
+   <stop offset="0.55" stop-color="#FFC97F" stop-opacity="0.75"/>
+   <stop offset="1" stop-color="#FFBE63" stop-opacity="1"/></linearGradient>
+ <linearGradient id="moonfill" x1="0" y1="0" x2="0.5" y2="1">
+   <stop offset="0" stop-color="#FFF6DE"/><stop offset="1" stop-color="#FFC46B"/></linearGradient>
+ <radialGradient id="glow"><stop offset="0" stop-color="#FFD79B" stop-opacity="0.32"/>
+   <stop offset="0.6" stop-color="#FFD79B" stop-opacity="0.09"/>
+   <stop offset="1" stop-color="#FFD79B" stop-opacity="0"/></radialGradient></defs><rect width="1024" height="1024" rx="228" fill="url(#sky)"/><circle cx="250" cy="300" r="11" fill="#FFE9C4" opacity="0.85"/><circle cx="350" cy="210" r="8" fill="#FFE9C4" opacity="0.6"/><circle cx="620" cy="172" r="9" fill="#FFE9C4" opacity="0.7"/><circle cx="196" cy="430" r="7" fill="#FFE9C4" opacity="0.5"/><mask id="m"><rect width="1024" height="1024" fill="#fff"/><circle cx="843.44" cy="240.36" r="89.3" fill="#000"/></mask><circle cx="760.72" cy="246" r="216.2" fill="url(#glow)"/><circle cx="772" cy="246" r="94" fill="url(#moonfill)" mask="url(#m)"/><path d="M432 520c0-42 32-52 32-70 0-42-32-52-32-70" fill="none" stroke="url(#steam)" stroke-width="30" stroke-linecap="round"/><path d="M574 520c0-42 32-52 32-70 0-42-32-52-32-70" fill="none" stroke="url(#steam)" stroke-width="28" stroke-linecap="round"/><g transform="translate(512,512) scale(1.0) translate(-512,-512)">
+ <ellipse cx="512" cy="906" rx="196" ry="26" fill="#000" opacity="0.28"/>
+ <path d="M300 616h424l-36 214c-6 40-40 70-81 70H417c-41 0-75-30-81-70z" fill="url(#body)"/>
+ <path d="M336 648h352l-6 36H342z" fill="#fff" opacity="0.45"/>
+ <path d="M300 668h-40a38 38 0 000 76h44" fill="none" stroke="url(#body)" stroke-width="34" stroke-linecap="round"/>
+ <path d="M724 668h40a38 38 0 010 76h-44" fill="none" stroke="url(#body)" stroke-width="34" stroke-linecap="round"/>
+ <rect x="266" y="556" width="492" height="54" rx="27" fill="url(#lid)"/>
+ <rect x="286" y="566" width="452" height="12" rx="6" fill="#fff" opacity="0.6"/>
+ <rect x="484" y="506" width="56" height="52" rx="22" fill="url(#lid)"/>
+</g></svg>

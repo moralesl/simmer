@@ -1,0 +1,22 @@
+# Passwordless pmset for `simmer`.
+#
+# Why this file has to exist: only root can flip `disablesleep`, and the whole
+# point of simmer is that the switch gets handed back by the launchd guard while
+# nobody is at the keyboard. A guard that needs a password is a guard that does
+# not run -- the machine would simply stay awake until the battery is flat.
+#
+# Scope is two exact command lines and nothing else. `pmset -a disablesleep`
+# takes no other arguments, so there is no wildcard to abuse here: no other
+# pmset subcommand, no other setting, no shell.
+#
+# Install (asks for the password once):
+#   sudo install -m 440 -o root -g wheel <repo>/sudoers.d/simmer /etc/sudoers.d/simmer
+#
+# Verify, before trusting it:
+#   sudo visudo -c -f /etc/sudoers.d/simmer
+#   sudo -nl /usr/bin/pmset -a disablesleep 0
+#
+# The username is spelled out rather than %admin: least privilege. `make install`
+# generates this file with your own username -- do not copy it verbatim.
+__USER__ ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0
+__USER__ ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 1
