@@ -79,11 +79,13 @@ to a particular path.
 
 That links `simmer` into `~/.local/bin` and starts the guard as a LaunchAgent.
 
-**Optional, recommended:** `brew install terminal-notifier`. Without it,
-notifications are posted by `osascript`, which macOS attributes to *Script
-Editor* — a quill icon, and often an alert style of "none", meaning they are
-delivered and never shown. With it, banners carry simmer's own icon. A shell
-script cannot brand its own notifications any other way.
+**Optional:** `brew install terminal-notifier`. Without it, notifications are
+posted by `osascript`, which macOS attributes to *Script Editor* — whose alert
+style is commonly "none", so they are delivered and never shown. terminal-notifier
+banners reliably appear.
+
+Neither carries simmer's icon: a shell script cannot brand a macOS notification.
+The menu bar is the channel that always shows the truth, and the one to rely on.
 
 One step needs root and is therefore **yours to run** — `make install` prints it
 with your username filled in:

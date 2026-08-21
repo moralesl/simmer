@@ -106,8 +106,15 @@ shell script does changes that. Three attempts, in order:
 2. **SwiftBar's `swiftbar://notify`.** Works, and its banners do appear — but they
    are branded SwiftBar, and using it only when SwiftBar happens to be running
    made banners differ between the CLI, Raycast and the menu bar.
-3. **`terminal-notifier`.** Has its own bundle, and `-appIcon` points at
-   `assets/icon-256.png`. This is what ships.
+3. **`terminal-notifier`.** Has its own bundle, and advertises `-appIcon` and
+   `-contentImage`. Both rely on private APIs that no longer exist: on macOS 26
+   the notification is delivered and the flags do nothing. Tested on 26.5.1 with
+   terminal-notifier 2.0.0.
+
+**Conclusion: a shell script cannot put its own icon on a macOS notification.**
+The only remaining route is a signed, notarised app bundle, which is a different
+kind of project. terminal-notifier is preferred anyway, for one reason: its
+banners reliably appear, where Script Editor's are usually suppressed.
 
 `osascript` remains the fallback when terminal-notifier is absent. That is a
 ladder, but a deterministic one: the branch depends on what is *installed*, not on
