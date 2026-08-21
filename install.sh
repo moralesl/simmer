@@ -32,10 +32,23 @@ build_app() {
     || /usr/libexec/PlistBuddy -c "Add :CFBundleName string Simmer" "$APP/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile applet" "$APP/Contents/Info.plist" 2>/dev/null || true
   cp "$SIMMER_HOME/assets/icon.icns" "$APP/Contents/Resources/applet.icns"
+  # A version, so LaunchServices sees a *different* bundle than the one whose
+  # icon it cached. Without this a rebuilt app keeps showing the old graphic in
+  # notifications no matter what is in Resources.
+  local v; v="$(cd "$SIMMER_HOME" && git rev-list --count HEAD 2>/dev/null || echo 1)"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.$v" "$APP/Contents/Info.plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.$v" "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $v" "$APP/Contents/Info.plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $v" "$APP/Contents/Info.plist"
   # Ad-hoc signature: the bundle changed after osacompile signed it, and macOS
   # will refuse to launch a bundle whose signature no longer matches.
   codesign --force --sign - "$APP" >/dev/null 2>&1 || true
   touch "$APP"
+  # Tell LaunchServices and Notification Center to look again. Both cache icons
+  # per bundle id, which is why a corrected icon otherwise never shows up.
+  local ls_reg=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+  [ -x "$ls_reg" ] && "$ls_reg" -f "$APP" >/dev/null 2>&1 || true
+  killall NotificationCenter >/dev/null 2>&1 || true
 }
 
 # bootout returns before the job is gone; a bootstrap straight after fails with
@@ -111,21 +124,45 @@ cmd_uninstall() {
   echo "  sudo rm /etc/sudoers.d/simmer"
 }
 
-# Regenerating the icon needs only system tools -- QuickLook to rasterise the
-# SVG, sips to resize, iconutil to pack. No design app, no Homebrew formula.
+# Regenerating every icon consumer from the one SVG: the .icns for the notifier
+# app, a PNG for the README, and a PNG for Raycast. One source, so they cannot
+# disagree -- which is the whole point, since they sit next to each other.
+#
+# Chrome is preferred purely for the alpha channel: QuickLook composites the SVG
+# onto white, so the rounded corners come out opaque and the icon shows a white
+# box on a dark page. Chrome renders with a transparent background. If Chrome is
+# absent we still produce icons, just with white corners, and say so.
 cmd_icon() {
-  local t; t="$(mktemp -d)"
-  qlmanage -t -s 1024 -o "$t" "$SIMMER_HOME/assets/icon.svg" >/dev/null 2>&1
-  local png="$t/icon.svg.png"
+  local t chrome png
+  t="$(mktemp -d)"
+  chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  png="$t/icon.png"
+
+  if [ -x "$chrome" ]; then
+    cp "$SIMMER_HOME/assets/icon.svg" "$t/i.svg"
+    "$chrome" --headless --disable-gpu --default-background-color=00000000 \
+              --window-size=1024,1024 --hide-scrollbars \
+              --screenshot="$png" "$t/i.svg" >/dev/null 2>&1
+  fi
+  if [ ! -f "$png" ]; then
+    qlmanage -t -s 1024 -o "$t" "$SIMMER_HOME/assets/icon.svg" >/dev/null 2>&1
+    mv "$t/icon.svg.png" "$png" 2>/dev/null || true
+    echo "  note: rendered without Chrome, so the corners are opaque white."
+  fi
   [ -f "$png" ] || { echo "could not rasterise assets/icon.svg" >&2; return 1; }
+
   mkdir -p "$t/i.iconset"
-  local s d
-  for s in 16 32 128 256 512; do
-    sips -z "$s" "$s" "$png" --out "$t/i.iconset/icon_${s}x${s}.png" >/dev/null
-    d=$((s*2)); sips -z "$d" "$d" "$png" --out "$t/i.iconset/icon_${s}x${s}@2x.png" >/dev/null
+  local sz dbl
+  for sz in 16 32 128 256 512; do
+    sips -z "$sz" "$sz" "$png" --out "$t/i.iconset/icon_${sz}x${sz}.png" >/dev/null
+    dbl=$((sz * 2))
+    sips -z "$dbl" "$dbl" "$png" --out "$t/i.iconset/icon_${sz}x${sz}@2x.png" >/dev/null
   done
   iconutil -c icns "$t/i.iconset" -o "$SIMMER_HOME/assets/icon.icns"
-  echo "assets/icon.icns regenerated from assets/icon.svg"
+  sips -Z 256 "$png" --out "$SIMMER_HOME/assets/icon-256.png" >/dev/null
+  # Raycast wants the image beside the script that names it.
+  sips -Z 512 "$png" --out "$SIMMER_HOME/integrations/raycast/simmer.png" >/dev/null
+  say "assets/icon.icns, assets/icon-256.png, integrations/raycast/simmer.png"
 }
 
 case "${1:-install}" in

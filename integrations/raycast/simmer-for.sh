@@ -3,7 +3,7 @@
 # @raycast.title Simmer for…
 # @raycast.mode compact
 # @raycast.packageName Simmer
-# @raycast.icon ☕
+# @raycast.icon simmer.png
 # @raycast.description Hold this Mac awake for a bounded time, lid closed
 # @raycast.argument1 { "type": "text", "placeholder": "60m / 2h / 23:00 / forever" }
 # @raycast.argument2 { "type": "text", "placeholder": "reason (optional)", "optional": true }

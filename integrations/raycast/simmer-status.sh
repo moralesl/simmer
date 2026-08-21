@@ -6,7 +6,7 @@
 # @raycast.mode inline
 # @raycast.refreshTime 10s
 # @raycast.packageName Simmer
-# @raycast.icon ☕
+# @raycast.icon simmer.png
 # @raycast.description Is this Mac being held awake, and for how much longer
 #
 # inline mode is the whole reason this is a Raycast command rather than an
