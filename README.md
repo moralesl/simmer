@@ -168,8 +168,12 @@ Pass `--owner <name>` when taking a lease. simmer refuses to replace a lease
 held by a different owner unless you add `--force`, so an automated job cannot
 silently stamp over the twenty minutes a human set on purpose.
 
-`simmer --porcelain` prints the full state as `key=value` lines for anything
-that wants to render it.
+`simmer status --machine` prints the full state as `key=value` lines for
+anything that wants to render it.
+
+**Agents:** [docs/FOR-AGENTS.md](docs/FOR-AGENTS.md) is the short protocol — take a
+lease, check the budget before each expensive step, wind down when the clock
+runs low, hand it back. Written to be read by a model, not skimmed by one.
 
 ## Development
 

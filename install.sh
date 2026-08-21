@@ -11,45 +11,11 @@ SIMMER_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="${PREFIX:-$HOME/.local/bin}"
 LABEL=com.github.moralesl.simmer-guard
 AGENT="$HOME/Library/LaunchAgents/$LABEL.plist"
-APP="$HOME/Applications/Simmer.app"
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/simmer"
 
 ok=0; bad=0
 say()  { printf '  %s\n' "$*"; }
 check() { if eval "$2" >/dev/null 2>&1; then echo "✅ $1"; ok=$((ok+1)); else echo "❌ $1"; bad=$((bad+1)); fi; }
-
-# The notification's name and icon come from the bundle that posts it, and from
-# nothing else. That is the whole reason this app exists: a 20-line AppleScript
-# applet so banners say "Simmer" with simmer's own logo, instead of arriving as
-# Script Editor with a quill.
-build_app() {
-  mkdir -p "$HOME/Applications"
-  rm -rf "$APP"
-  osacompile -o "$APP" "$SIMMER_HOME/assets/notifier.applescript"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.github.moralesl.simmer" "$APP/Contents/Info.plist" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.github.moralesl.simmer" "$APP/Contents/Info.plist"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleName Simmer" "$APP/Contents/Info.plist" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleName string Simmer" "$APP/Contents/Info.plist"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile applet" "$APP/Contents/Info.plist" 2>/dev/null || true
-  cp "$SIMMER_HOME/assets/icon.icns" "$APP/Contents/Resources/applet.icns"
-  # A version, so LaunchServices sees a *different* bundle than the one whose
-  # icon it cached. Without this a rebuilt app keeps showing the old graphic in
-  # notifications no matter what is in Resources.
-  local v; v="$(cd "$SIMMER_HOME" && git rev-list --count HEAD 2>/dev/null || echo 1)"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.$v" "$APP/Contents/Info.plist" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.$v" "$APP/Contents/Info.plist"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $v" "$APP/Contents/Info.plist" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $v" "$APP/Contents/Info.plist"
-  # Ad-hoc signature: the bundle changed after osacompile signed it, and macOS
-  # will refuse to launch a bundle whose signature no longer matches.
-  codesign --force --sign - "$APP" >/dev/null 2>&1 || true
-  touch "$APP"
-  # Tell LaunchServices and Notification Center to look again. Both cache icons
-  # per bundle id, which is why a corrected icon otherwise never shows up.
-  local ls_reg=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-  [ -x "$ls_reg" ] && "$ls_reg" -f "$APP" >/dev/null 2>&1 || true
-  killall NotificationCenter >/dev/null 2>&1 || true
-}
 
 # bootout returns before the job is gone; a bootstrap straight after fails with
 # "5: Input/output error" and the service quietly stays down.
@@ -70,9 +36,6 @@ cmd_install() {
       "$SIMMER_HOME/launchd/$LABEL.plist" > "$AGENT"
   reload_agent
   say "guard running as $LABEL"
-
-  build_app
-  say "notifier built at $APP"
 
   # Generated rather than committed, because the committed template must not
   # carry a username: copying someone else's would grant them nothing and you
@@ -118,15 +81,15 @@ cmd_check() {
 cmd_uninstall() {
   launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
   rm -f "$AGENT" "$PREFIX/simmer"
-  rm -rf "$APP"
-  echo "Removed the guard, the launcher symlink and the notifier."
+  rm -rf "$HOME/Applications/Simmer.app"   # from versions that built a notifier
+  echo "Removed the guard and the launcher symlink."
   echo "Left alone on purpose: /etc/sudoers.d/simmer (needs root) and $STATE (your log)."
   echo "  sudo rm /etc/sudoers.d/simmer"
 }
 
-# Regenerating every icon consumer from the one SVG: the .icns for the notifier
-# app, a PNG for the README, and a PNG for Raycast. One source, so they cannot
-# disagree -- which is the whole point, since they sit next to each other.
+# Regenerating every icon consumer from the one SVG: the .icns (for anyone who
+# wants it), a PNG for the README, and a PNG for Raycast. One source, so they
+# cannot disagree -- which is the point, since they sit next to each other.
 #
 # Chrome is preferred purely for the alpha channel: QuickLook composites the SVG
 # onto white, so the rounded corners come out opaque and the icon shows a white

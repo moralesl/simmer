@@ -45,7 +45,6 @@ PMSET=/usr/bin/pmset
 SIMMER_VERSION="1.0.0"
 GUARD_LABEL=com.github.moralesl.simmer-guard
 LEASE_FORMAT=1
-NOTIFIER="$HOME/Applications/Simmer.app"
 
 DEFAULT_MIN_BATTERY=20
 WARN_SECONDS=300      # a single warning, 5 minutes before expiry
@@ -158,28 +157,53 @@ set_disablesleep() { # <0|1>
 # matters, body the reason. A banner reading "no reason given" spent its widest
 # line on the absence of information -- now the reason line is simply omitted
 # when there is none, and the space goes to something useful.
-# A notification's identity -- name and icon -- comes from the bundle that posts
-# it, and nothing else. osascript posts as Script Editor: a quill, the wrong
-# name, and dropped silently if Script Editor's notifications are off. So the
-# preferred channel is simmer's own tiny app bundle, built by setup.d from
-# assets/. Content goes through a file because `open --args` does not reach an
-# applet's `on run argv` -- tested; it does not arrive.
+# Notifications, in order of preference, and the ordering is the whole story.
 #
-# Script Editor remains the fallback: worse-looking, but it needs nothing built
-# and a notification that looks wrong still beats one that never appears.
+# The plan was simmer's own app bundle, so banners would carry simmer's name and
+# icon. That does not work: an AppleScript applet's `display notification` is
+# attributed to the OSA host -- Script Editor -- and not to the applet, so the
+# bundle's identity never applies. Tested; the banners arrive grouped under
+# "Script Editor" regardless.
+#
+# Which leaves two channels that do have a real identity:
+#
+#   1. SwiftBar, if it is running. Its banners actually appear, it is already the
+#      documented dependency for the menu bar, and clicking one opens the menu.
+#      The icon is SwiftBar's, not simmer's -- honest, and better than a quill.
+#   2. osascript. Posts as Script Editor, whose alert style is often set to
+#      "none", in which case the notification is delivered but never shown. This
+#      is the reason it is second, not first.
+#
+# Owning the icon needs a signed app bundle. That is a notarisation project, not
+# a shell script, and it is recorded as a limitation rather than pretended away.
+#
+# The sound is not decoration: it is the channel that carries when a banner is
+# suppressed, and the menu bar is the indicator nothing can drop.
 notify() { # <title> <subtitle> <body> [system sound]
   local title="$1" subtitle="$2" body="$3"
-  if [ -d "$NOTIFIER" ]; then
-    printf '%s\n%s\n%s\n' "$title" "$subtitle" "$body" > "$STATE/notify"
-    open -g -a "$NOTIFIER" 2>/dev/null || notify_via_osascript "$title" "$subtitle" "$body"
+  if [ -d /Applications/SwiftBar.app ] && pgrep -qx SwiftBar 2>/dev/null; then
+    open -g "swiftbar://notify?plugin=simmer&title=$(urlencode "$title")&subtitle=$(urlencode "$subtitle")&body=$(urlencode "$body")&silent=true" \
+      >/dev/null 2>&1 || notify_via_osascript "$title" "$subtitle" "$body"
   else
     notify_via_osascript "$title" "$subtitle" "$body"
   fi
-  # The sound is not decoration: it is the channel that carries when the banner
-  # is suppressed, and the menu bar is the indicator nothing can drop.
   [ -n "${4:-}" ] && [ -f "/System/Library/Sounds/$4.aiff" ] &&
     (afplay -v 0.5 "/System/Library/Sounds/$4.aiff" >/dev/null 2>&1 &)
   return 0
+}
+
+# Byte-wise under LC_ALL=C, so multi-byte characters in a reason survive the
+# round trip instead of being mangled a character at a time.
+urlencode() {
+  local LC_ALL=C s="$1" out="" i c
+  for (( i=0; i<${#s}; i++ )); do
+    c="${s:i:1}"
+    case "$c" in
+      [a-zA-Z0-9.~_-]) out="$out$c" ;;
+      *) out="$out$(printf '%%%02X' "'$c")" ;;
+    esac
+  done
+  printf '%s' "$out"
 }
 
 notify_via_osascript() { # <title> <subtitle> <body>
@@ -601,8 +625,7 @@ cmd_doctor() {
   # without ever prompting. Testing with `sudo -n pmset -g` would fail even
   # with the rule installed, because -g is deliberately not in the allowlist.
   say "passwordless pmset rule"            "sudo -nl $PMSET -a disablesleep 0"
-  say "notifier app present"               "[ -d '$NOTIFIER' ]"
-  say "notifier carries simmer's icon"     "[ -f '$NOTIFIER/Contents/Resources/applet.icns' ]"
+  say "a notification channel exists"      "[ -d /Applications/SwiftBar.app ] || command -v osascript"
   say "state directory writable"           "[ -w '$STATE' ]"
   say "caffeinate present"                 "command -v caffeinate"
   echo
@@ -621,11 +644,12 @@ cmd_doctor() {
 
   # Which channel is about to be used matters more than a generic warning: they
   # fail for completely different reasons.
-  if [ -d "$NOTIFIER" ]; then
-    echo "Notifications post as \"Simmer\". Firing one now."
+  if [ -d /Applications/SwiftBar.app ] && pgrep -qx SwiftBar 2>/dev/null; then
+    echo "Notifications post through SwiftBar. Firing one now."
   else
-    echo "No notifier app, so notifications post as \"Script Editor\" -- if none"
-    echo "arrives, its notifications are switched off in System Settings."
+    echo "No SwiftBar running, so notifications post as \"Script Editor\". If"
+    echo "nothing appears, its alert style is set to none in System Settings --"
+    echo "the notification is delivered, just never shown."
   fi
   notify "simmer doctor" "notifications are working" "This banner is the test." "Tink"
   [ "$fail" -gt 0 ] && return 1 || return 0
@@ -640,40 +664,55 @@ cmd_doctor() {
 
 cmd_help() {
   cat <<'HELP'
-simmer — keep this Mac awake for a bounded time, lid closed, then let it sleep.
+simmer keeps this Mac awake for a while -- lid closed -- then lets it sleep again.
 
-USAGE
-  simmer                        what is happening right now
-  simmer <duration> [options]   stay awake that long
-  simmer +<duration>            move the deadline, counted from now
-  simmer down                   allow sleep again, immediately
+TRY THIS
+  simmer 2h                  stay awake for two hours
+  simmer 2h -r "big build"   ...and say what for, so you can see it later
+  simmer                     how much longer? what for?
+  simmer +30m                need longer: 30 more minutes from now
+  simmer down                finished early, let it sleep
 
-DURATIONS
-  90   90m   1h   1h30m   45min   2h15   30s
-  --until 23:00                 an absolute time instead of a length
-  forever                       no deadline; reminds every 30 min
+HOW LONG
+  simmer 45                  45 minutes -- a bare number means minutes
+  simmer 90m                 90 minutes
+  simmer 2h                  two hours
+  simmer 1h30m               an hour and a half
+  simmer --until 23:00       until 11pm tonight
+  simmer forever             no end time; it reminds you every 30 minutes
 
-OPTIONS
-  -r, --reason <text>           what it is for; shown in the menu bar and log
-      --min-battery <percent>   release below this (default 20; on battery only)
-      --owner <name>            who is asking (default: terminal, or script)
-  -f, --force                   replace a lease that someone else holds
+IT STOPS BY ITSELF WHEN
+  the time runs out  ·  the battery drops below 20%  ·  you run simmer down
 
-FOR SCRIPTS AND AGENTS
-  simmer budget --need 20m      "is there room to start something 20 min long?"
-                                  exit 0  yes, or there is no deadline at all
-                                  exit 1  not that much time left
-                                  exit 3  no lease -- sleep may interrupt you
-  simmer budget --seconds       just the number of seconds left (-1 = no deadline)
-  simmer status --machine       the whole state as key=value lines, for parsing
+  You get a notification five minutes before the end, and another when it stops.
+  Even if you close the terminal, log out, or the tool crashes, a background
+  watchdog puts the machine back to normal. That is the point of it.
+
+CHANGING THE DEFAULTS
+  -r "text"                  what this is for; shown in the menu bar and log
+  --min-battery 30           let go under 30% instead of 20%
+                             (ignored while plugged in -- charge does not matter then)
+  --until 23:00              an absolute time instead of a length
+  --owner <name>             who is asking; simmer refuses to overwrite someone
+                             else's lease unless you add --force
 
 CHECKING ON IT
-  simmer log [lines]            what the guard has actually done
-  simmer doctor                 guard, sudo rule and notifications, plus a test
+  simmer log                 what the watchdog has actually done
+  simmer doctor              is everything wired up? fires a test notification
   simmer --version
 
-  The menu bar shows the countdown and can extend or release it, so none of the
-  above is required day to day. See the README for SwiftBar and Raycast setup.
+  Day to day you do not need any of this: the menu bar shows the countdown and
+  can extend or release it. See the README for SwiftBar and Raycast setup.
+
+FOR SCRIPTS AND AGENTS
+  simmer budget --need 20m   "is there room to start a 20-minute job?"
+                               exit 0  yes, or there is no deadline at all
+                               exit 1  less than that remains
+                               exit 3  nothing is holding the Mac awake
+  simmer budget --seconds    just the seconds remaining (-1 = no deadline)
+  simmer status --machine    the whole state as key=value lines, for parsing
+
+  See docs/FOR-AGENTS.md for how an agent should use these together.
 
 https://github.com/moralesl/simmer
 HELP
