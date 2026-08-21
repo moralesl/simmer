@@ -36,7 +36,7 @@ while IFS='=' read -r k v; do
     battery) battery="$v" ;; min_battery) min_battery="$v" ;;
     on_battery) on_battery="$v" ;; until) until_epoch="$v" ;;
   esac
-done < <("$SIMMER" --porcelain 2>/dev/null)
+done < <("$SIMMER" --machine 2>/dev/null)
 
 power="${battery}%$([ "$on_battery" = 1 ] && echo " batt" || echo " AC")"
 case "$state" in

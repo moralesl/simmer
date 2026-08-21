@@ -11,6 +11,10 @@
 # plugin is not decoration -- it is the honest answer to "is my Mac still awake
 # right now", available without opening a terminal.
 #
+# One icon per line, always the SF Symbol: it is monochrome like everything else
+# in the menu bar and it follows light/dark mode, which an emoji does not. Adding
+# an emoji as well is what put two moons up there.
+#
 # Refresh every 10s comes from the filename. The countdown is therefore up to
 # ten seconds stale, which is fine: the guard, not this plugin, enforces the
 # deadline.
@@ -49,7 +53,7 @@ while IFS='=' read -r key value; do
     sleep_disabled) sleep_disabled="$value" ;;
     since)          since="$value" ;;
   esac
-done < <("$SIMMER" --porcelain 2>/dev/null)
+done < <("$SIMMER" --machine 2>/dev/null)
 
 act() { # <label> <simmer args...> -- a clickable menu entry
   local label="$1"; shift
@@ -68,8 +72,8 @@ case "$state" in
   active)
     # Under five minutes the countdown turns orange: the warning notification
     # may not have arrived, this always will.
-    if [ "$left" -le 300 ]; then echo "☕ $left_short | sfimage=cup.and.saucer.fill color=orange"
-    else                          echo "☕ $left_short | sfimage=cup.and.saucer.fill"; fi
+    if [ "$left" -le 300 ]; then echo "$left_short | sfimage=cup.and.saucer.fill color=orange"
+    else                          echo "$left_short | sfimage=cup.and.saucer.fill"; fi
     echo "---"
     echo "Simmering until $(date -r "$until_epoch" '+%H:%M') | sfimage=clock"
     [ -n "$reason" ] && echo "$reason | sfimage=text.quote"
@@ -83,7 +87,7 @@ case "$state" in
     act "Release now" "down"
     ;;
   forever)
-    echo "☕ ∞ | sfimage=cup.and.saucer.fill color=orange"
+    echo "∞ | sfimage=cup.and.saucer.fill color=orange"
     echo "---"
     echo "Simmering with no deadline | sfimage=infinity"
     [ "$since" != 0 ] && echo "since $(date -r "$since" '+%H:%M') | sfimage=clock"
@@ -100,7 +104,7 @@ case "$state" in
     # disablesleep on, no lease. Loud on purpose: this is the state that
     # empties a battery in a bag, and the guard will fix it within 30 seconds
     # unless it is not running.
-    echo "☕ ⚠️ | sfimage=exclamationmark.triangle.fill color=red"
+    echo " | sfimage=exclamationmark.triangle.fill color=red"
     echo "---"
     echo "Sleep is disabled with no lease | color=red"
     echo "Nobody is scheduled to hand it back. Is the guard running?"
@@ -111,7 +115,7 @@ case "$state" in
     echo "Run simmer doctor | bash=\"$SIMMER\" param1=doctor terminal=true"
     ;;
   *)
-    echo "⏾ | sfimage=moon.zzz"
+    echo " | sfimage=moon.zzz"
     echo "---"
     echo "Sleep allowed | sfimage=moon.zzz"
     echo "$(power_line) | sfimage=battery.50"

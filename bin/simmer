@@ -418,7 +418,7 @@ cmd_extend() {
 
 cmd_status() {
   local porcelain=0
-  [ "${1:-}" = "--porcelain" ] && porcelain=1
+  case "${1:-}" in --machine|--porcelain) porcelain=1 ;; esac
 
   local now; now="$(date +%s)"
   if ! read_lease; then
@@ -632,6 +632,54 @@ cmd_doctor() {
 }
 
 ############################################################################
+### help
+#
+# Written out rather than printed from the file header. The header explains *why*
+# the tool is built this way, which is what a maintainer needs and exactly what
+# someone typing --help does not.
+
+cmd_help() {
+  cat <<'HELP'
+simmer — keep this Mac awake for a bounded time, lid closed, then let it sleep.
+
+USAGE
+  simmer                        what is happening right now
+  simmer <duration> [options]   stay awake that long
+  simmer +<duration>            move the deadline, counted from now
+  simmer down                   allow sleep again, immediately
+
+DURATIONS
+  90   90m   1h   1h30m   45min   2h15   30s
+  --until 23:00                 an absolute time instead of a length
+  forever                       no deadline; reminds every 30 min
+
+OPTIONS
+  -r, --reason <text>           what it is for; shown in the menu bar and log
+      --min-battery <percent>   release below this (default 20; on battery only)
+      --owner <name>            who is asking (default: terminal, or script)
+  -f, --force                   replace a lease that someone else holds
+
+FOR SCRIPTS AND AGENTS
+  simmer budget --need 20m      "is there room to start something 20 min long?"
+                                  exit 0  yes, or there is no deadline at all
+                                  exit 1  not that much time left
+                                  exit 3  no lease -- sleep may interrupt you
+  simmer budget --seconds       just the number of seconds left (-1 = no deadline)
+  simmer status --machine       the whole state as key=value lines, for parsing
+
+CHECKING ON IT
+  simmer log [lines]            what the guard has actually done
+  simmer doctor                 guard, sudo rule and notifications, plus a test
+  simmer --version
+
+  The menu bar shows the countdown and can extend or release it, so none of the
+  above is required day to day. See the README for SwiftBar and Raycast setup.
+
+https://github.com/moralesl/simmer
+HELP
+}
+
+############################################################################
 ### Entry point
 
 case "${1:-status}" in
@@ -639,7 +687,8 @@ case "${1:-status}" in
   # the script before it printed anything. Bare `simmer` is the most common call
   # there is -- it must not be the one that silently does nothing.
   status)              shift || true; cmd_status "$@" ;;
-  --porcelain)         cmd_status --porcelain ;;
+  --machine)           cmd_status --machine ;;
+  --porcelain)         cmd_status --machine ;;   # kept, undocumented
   down|off|stop|release) release "released by hand" ;;
   guard)               cmd_guard ;;
   doctor)              cmd_doctor ;;
@@ -648,6 +697,6 @@ case "${1:-status}" in
   +*)                  cmd_extend "$1" ;;
   log)                 [ -f "$LOG" ] && tail -n "${2:-20}" "$LOG" || echo "no log yet" ;;
   -V|--version)        echo "simmer $SIMMER_VERSION" ;;
-  -h|--help|help)      sed -n '2,/^set -euo/p' "$0" | sed 's/^# \{0,1\}//; $d' ;;
+  -h|--help|help)      cmd_help ;;
   *)                   cmd_take "$@" ;;
 esac

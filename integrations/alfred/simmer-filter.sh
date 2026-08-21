@@ -66,7 +66,7 @@ while IFS='=' read -r key value; do
     sleep_disabled) sleep_disabled="$value" ;;
     since)          since="$value" ;;
   esac
-done < <("$SIMMER" --porcelain 2>/dev/null)
+done < <("$SIMMER" --machine 2>/dev/null)
 
 power="battery ${battery}%$([ "$on_battery" = 1 ] && echo ", on battery" || echo ", on AC")"
 

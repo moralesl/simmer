@@ -78,7 +78,7 @@ t "warns exactly once"          "[ \"\$(grep -c '^warned=1' '$LEASE')\" = 1 ]"
 echo 1 > "$SIMMER_FAKE_PMSET"
 lease 0 $((NOW-7200)) forever 10 0 $((NOW-3600)); "$SIMMER" guard >/dev/null 2>&1
 t "open-ended lease reminds"    "[ \"\$(grep '^reminded=' '$LEASE' | cut -d= -f2)\" -gt $((NOW-60)) ]"
-t "porcelain reports forever"   "$SIMMER --porcelain | grep -q 'state=forever'"
+t "porcelain reports forever"   "$SIMMER --machine | grep -q 'state=forever'"
 
 rm -f "$LEASE"; echo 1 > "$SIMMER_FAKE_PMSET"
 "$SIMMER" guard >/dev/null 2>&1
@@ -114,11 +114,12 @@ t "extend needs no ownership"   "$SIMMER +25m >/dev/null"
 
 echo "surfaces render in every state"
 lease 0 $((NOW-600)) render 10 0 "$NOW"
-t "swiftbar, open-ended"        "$HERE/integrations/swiftbar/simmer.10s.sh | grep -q '☕ ∞'"
+t "swiftbar, open-ended"        "$HERE/integrations/swiftbar/simmer.10s.sh | head -1 | grep -q '^∞ |'"
 t "raycast inline, open-ended"  "$HERE/integrations/raycast/simmer-status.sh | grep -q 'no deadline'"
 t "alfred filter emits JSON"    "$HERE/integrations/alfred/simmer-filter.sh '' | python3 -m json.tool"
 rm -f "$LEASE"; echo 0 > "$SIMMER_FAKE_PMSET"
-t "swiftbar, idle"              "$HERE/integrations/swiftbar/simmer.10s.sh | grep -q '⏾'"
+t "swiftbar, idle"              "$HERE/integrations/swiftbar/simmer.10s.sh | head -1 | grep -q 'sfimage=moon.zzz'"
+t "menu bar title has one icon"  "! $HERE/integrations/swiftbar/simmer.10s.sh | head -1 | grep -qE '☕|⏾'"
 t "status readable when idle"   "$SIMMER | grep -q 'sleep allowed'"
 t "help documents down/force"   "$SIMMER --help | grep -q 'simmer down' && $SIMMER --help | grep -q -- '--force'"
 t "--version prints"            "$SIMMER --version | grep -q simmer"
