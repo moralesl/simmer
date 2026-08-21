@@ -9,7 +9,7 @@
 [![test](https://github.com/moralesl/simmer/actions/workflows/test.yml/badge.svg)](https://github.com/moralesl/simmer/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-macOS%2011%2B-lightgrey?logo=apple)](#install)
-[![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](#install)
+[![dependencies](https://img.shields.io/badge/dependencies-1%20optional-brightgreen)](#install)
 
 </div>
 
@@ -77,8 +77,13 @@ make install
 Clone it anywhere — the installer resolves its own location, so nothing is tied
 to a particular path.
 
-That links `simmer` into `~/.local/bin`, starts the guard as a LaunchAgent, and
-builds a small notifier app so banners carry simmer's own name and icon.
+That links `simmer` into `~/.local/bin` and starts the guard as a LaunchAgent.
+
+**Optional, recommended:** `brew install terminal-notifier`. Without it,
+notifications are posted by `osascript`, which macOS attributes to *Script
+Editor* — a quill icon, and often an alert style of "none", meaning they are
+delivered and never shown. With it, banners carry simmer's own icon. A shell
+script cannot brand its own notifications any other way.
 
 One step needs root and is therefore **yours to run** — `make install` prints it
 with your username filled in:
@@ -107,6 +112,7 @@ make check      # the above, plus whether this checkout is what is installed
 |---|---|
 | `simmer 60m -r "reason"` | lease for 60 minutes |
 | `simmer 2h --min-battery 30` | custom battery floor (default 20%) |
+| `simmer 2h --display-on` | keep the screen lit too — by default the screen may sleep while the Mac stays awake |
 | `simmer --until 23:00` | absolute time instead of a duration |
 | `simmer forever` | no deadline; reminds every 30 min, still stops on low battery |
 | `simmer` | status |

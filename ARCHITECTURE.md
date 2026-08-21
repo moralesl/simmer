@@ -97,32 +97,36 @@ lease would take it with them.
 
 ## Notifications
 
-A notification's name and icon come from the bundle that posts it, and from
-nothing else. `osascript` posts as **Script Editor** — a quill icon, a
-misleading name, and dropped silently if Script Editor's notifications are off.
+A notification's name and icon come from the bundle that posts it, and nothing a
+shell script does changes that. Three attempts, in order:
 
-So `make install` compiles `assets/notifier.applescript` into
-`~/Applications/Simmer.app`, sets its bundle id and icon, and simmer launches
-that. Content passes through a file rather than arguments, because
-`open --args` does **not** reach an applet's `on run argv` — tested; it does not
-arrive. Script Editor remains the fallback: worse-looking, but a notification
-that looks wrong still beats one that never appears.
+1. **An AppleScript applet** with its own bundle id, icon and version. Does not
+   work: `display notification` inside an applet is attributed to the OSA host,
+   Script Editor. The applet's identity never applies.
+2. **SwiftBar's `swiftbar://notify`.** Works, and its banners do appear — but they
+   are branded SwiftBar, and using it only when SwiftBar happens to be running
+   made banners differ between the CLI, Raycast and the menu bar.
+3. **`terminal-notifier`.** Has its own bundle, and `-appIcon` points at
+   `assets/icon-256.png`. This is what ships.
 
-The sound is not decoration. It is the channel that still carries when banners
-are suppressed, and the menu bar is the indicator nothing can drop.
+`osascript` remains the fallback when terminal-notifier is absent. That is a
+ladder, but a deterministic one: the branch depends on what is *installed*, not on
+what is *running*, so every path on a given machine produces the same banner.
+Notifications are grouped, so a new one replaces the last rather than stacking.
 
-## One health check, two entry points
+The sound is not decoration. It is the channel that still carries when banners are
+suppressed, and the menu bar is the indicator nothing can drop.
 
-`simmer doctor` is the health report, and it is the *only* implementation. It
-covers the running system — guard loaded, sudo rule allowed, notifier present
-and carrying the icon, state writable — and works with no repo checked out,
-because it is the installed binary talking about the machine.
+## Sleep, and which kinds
 
-`make check` adds the three things only a checkout can know (is the symlink
-pointing here, is `$PREFIX` on `PATH`, is the installed LaunchAgent still
-identical to the template) and then calls `simmer doctor` for the rest. Two
-health reports covering the same ground is two reports that drift, and the one
-you happen to run is the one you believe.
+`caffeinate -ims` by default: idle, system and disk sleep are held, **display
+sleep is not**. You took a lease because you are walking away, so keeping a
+screen lit costs exactly the battery the floor exists to protect — and with the
+lid shut it is off anyway. `--display-on` adds `-d` for demos and kiosks.
+
+`pmset -a disablesleep` is the separate, privileged part, and the only thing that
+holds the lid. caffeinate runs alongside as a second, independent clock that
+expires on its own via `-t`.
 
 ## The test seam
 

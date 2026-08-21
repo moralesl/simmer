@@ -38,6 +38,13 @@
 #   simmer budget --seconds                  bare seconds left (-1 = no deadline)
 set -euo pipefail
 
+# Where the repo is, resolved through the symlink install.sh puts on PATH, so
+# assets (the banner icon) can be found no matter how simmer was invoked.
+_self="${BASH_SOURCE[0]}"
+while [ -L "$_self" ]; do _self="$(readlink "$_self")"; done
+SIMMER_HOME="$(cd "$(dirname "$_self")/.." 2>/dev/null && pwd || echo "")"
+ICON="$SIMMER_HOME/assets/icon-256.png"
+
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/simmer"
 LEASE="$STATE/lease"
 LOG="$STATE/simmer.log"
@@ -174,11 +181,28 @@ set_disablesleep() { # <0|1>
 #     only route to simmer's own artwork, at the cost of one dependency, and that
 #     is an open decision rather than something to slip in.
 #
-# So: osascript, everywhere, identically. It posts as "Script Editor", whose
-# alert style is often "none" -- notifications then arrive but are never shown,
-# which reads as broken. `simmer doctor` says so and names the setting.
+# Resolved: terminal-notifier, when installed. It has its own bundle, so banners
+# carry an identity that is not Script Editor, and -appIcon points at simmer's own
+# artwork. It is a dependency, and a deliberate one -- a badge saying "no
+# dependencies" is worth less than notifications that appear and look right.
+#
+# osascript stays as the fallback for anyone without it. That is a ladder, but a
+# deterministic one: which branch runs depends on what is installed, not on what
+# happens to be running, so every path on a given machine looks the same.
 notify() { # <title> <subtitle> <body> [system sound]
-  notify_via_osascript "$1" "$2" "$3"
+  local title="$1" subtitle="$2" body="$3"
+  if command -v terminal-notifier >/dev/null 2>&1; then
+    # -group means a new banner REPLACES the previous simmer one instead of
+    # stacking: at any moment there is one, saying the current thing.
+    local args
+    args=(-title "$title" -message "${body:- }" -group ai.simmer)
+    [ -n "$subtitle" ] && args=("${args[@]}" -subtitle "$subtitle")
+    [ -f "$ICON" ] && args=("${args[@]}" -appIcon "$ICON")
+    terminal-notifier "${args[@]}" >/dev/null 2>&1 ||
+      notify_via_osascript "$title" "$subtitle" "$body"
+  else
+    notify_via_osascript "$title" "$subtitle" "$body"
+  fi
   # Not decoration: the sound is what carries when a banner is suppressed, and
   # the menu bar is the indicator nothing can drop.
   [ -n "${4:-}" ] && [ -f "/System/Library/Sounds/$4.aiff" ] &&
@@ -301,7 +325,7 @@ release() { # <reason> [system sound]
 }
 
 cmd_take() {
-  local seconds=0 until_epoch=0 reason="" min_battery=$DEFAULT_MIN_BATTERY forever=0 force=0
+  local seconds=0 until_epoch=0 reason="" min_battery=$DEFAULT_MIN_BATTERY forever=0 force=0 display=0
   while [ $# -gt 0 ]; do
     case "$1" in
       -r|--reason)      reason="${2:-}"; shift 2 ;;
@@ -309,6 +333,7 @@ cmd_take() {
       --until)          until_epoch="$(parse_until "${2:-}")" || die "did not understand the time: ${2:-} (expected HH:MM)"; shift 2 ;;
       forever|--forever|--indefinite) forever=1; shift ;;
       -f|--force)       force=1; shift ;;
+      --display-on)     display=1; shift ;;
       # A flag as well as SIMMER_OWNER, because SwiftBar can pass arguments to a
       # menu action but cannot set environment variables for it.
       --owner)          SIMMER_OWNER="${2:-}"; shift 2 ;;
@@ -362,16 +387,21 @@ cmd_take() {
   # nohup, because otherwise closing the terminal that started the lease sends
   # SIGHUP to this background child and the second clock quietly disappears.
   #
-  # -dims without -u: -u asserts *user activity* and, given no -t, lasts all of
-  # five seconds -- so in the open-ended branch it would look like an assertion
-  # and be none. -d already keeps the display up, which makes -u redundant
-  # either way.
+  # -ims by default, NOT -dims: the display is allowed to sleep. You took a lease
+  # because you are walking away, so holding a screen lit serves nobody and costs
+  # exactly the battery the floor below exists to protect. With the lid shut it is
+  # off regardless. `--display-on` adds -d back for the demo and kiosk cases.
+  #
+  # No -u in either: it asserts *user activity* and, given no -t, lasts five
+  # seconds -- an assertion in name only.
+  local flags=-ims
+  [ "$display" = 1 ] && flags=-dims
   local caff_pid=0
   if [ "$until_epoch" != 0 ]; then
-    nohup caffeinate -dims -t $((until_epoch - now)) >/dev/null 2>&1 &
+    nohup caffeinate "$flags" -t $((until_epoch - now)) >/dev/null 2>&1 &
     caff_pid=$!
   else
-    nohup caffeinate -dims >/dev/null 2>&1 &
+    nohup caffeinate "$flags" >/dev/null 2>&1 &
     caff_pid=$!
   fi
 
@@ -605,7 +635,8 @@ cmd_doctor() {
   # without ever prompting. Testing with `sudo -n pmset -g` would fail even
   # with the rule installed, because -g is deliberately not in the allowlist.
   say "passwordless pmset rule"            "sudo -nl $PMSET -a disablesleep 0"
-  say "a notification channel exists"      "[ -d /Applications/SwiftBar.app ] || command -v osascript"
+  say "notification channel"               "command -v terminal-notifier || command -v osascript"
+  say "banner icon available"               "[ -f '$ICON' ]"
   say "state directory writable"           "[ -w '$STATE' ]"
   say "caffeinate present"                 "command -v caffeinate"
   echo
@@ -624,11 +655,16 @@ cmd_doctor() {
 
   # Which channel is about to be used matters more than a generic warning: they
   # fail for completely different reasons.
-  echo "Notifications post as \"Script Editor\". That is macOS, not a bug: a shell"
-  echo "script cannot brand its own banners without a signed app bundle."
-  echo
-  echo "If nothing appears they are arriving but not being shown. Fix once, in"
-  echo "System Settings > Notifications > Script Editor > Alert style: Banners"
+  if command -v terminal-notifier >/dev/null 2>&1; then
+    echo "Notifications post through terminal-notifier, with simmer's icon."
+    echo "If nothing appears: System Settings > Notifications > terminal-notifier"
+    echo "> Alert style: Banners."
+  else
+    echo "Notifications post as \"Script Editor\" -- a shell script cannot brand its"
+    echo "own banners. For simmer's icon: brew install terminal-notifier"
+    echo "If nothing appears: System Settings > Notifications > Script Editor"
+    echo "> Alert style: Banners."
+  fi
   echo
   echo "Firing one now."
   notify "simmer doctor" "notifications are working" "This banner is the test." "Tink"
@@ -673,6 +709,8 @@ CHANGING THE DEFAULTS
   --min-battery 30           let go under 30% instead of 20%
                              (ignored while plugged in -- charge does not matter then)
   --until 23:00              an absolute time instead of a length
+  --display-on               keep the screen lit too (default: the screen may
+                             sleep -- the Mac stays awake either way)
   --owner <name>             who is asking; simmer refuses to overwrite someone
                              else's lease unless you add --force
 
