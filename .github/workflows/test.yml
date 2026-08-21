@@ -1,0 +1,39 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # macOS because the whole tool is macOS power management. The suite itself
+    # never calls pmset -- it substitutes it through SIMMER_FAKE_* -- so this
+    # needs no sudo, no runner privileges, and touches nothing.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shell syntax
+        run: |
+          for f in bin/simmer install.sh test/simmer-test.sh \
+                   integrations/swiftbar/*.sh integrations/raycast/*.sh \
+                   integrations/alfred/*.sh; do
+            bash -n "$f" || exit 1
+          done
+
+      - name: Property lists parse
+        run: plutil -lint launchd/*.plist integrations/alfred/Simmer/info.plist
+
+      # bin/simmer targets /bin/bash, which is 3.2 on macOS. Runners also ship a
+      # modern bash, so this asserts the constraint rather than trusting it:
+      # bash 3.2 has no ${var,,} and no associative arrays, and a LaunchAgent
+      # should not depend on a Homebrew shell.
+      - name: Runs under bash 3.2
+        run: |
+          /bin/bash --version | head -1
+          /bin/bash bin/simmer --version
+
+      - name: Test suite
+        run: make test

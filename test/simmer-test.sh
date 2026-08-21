@@ -15,6 +15,11 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SIMMER="${SIMMER_BIN:-$HERE/bin/simmer}"
 [ -x "$SIMMER" ] || { echo "no simmer at $SIMMER" >&2; exit 2; }
+# Pin it for the integrations too. They resolve simmer through SIMMER_BIN, then
+# PATH, then known install locations -- so without this the front-end assertions
+# would silently exercise whichever simmer happens to be installed, and would
+# find none at all on a clean CI runner.
+export SIMMER_BIN="$SIMMER"
 
 # Its own state directory, so a run cannot disturb the real lease.
 TMP="$(mktemp -d)"; export XDG_STATE_HOME="$TMP/state"
