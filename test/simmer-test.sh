@@ -124,6 +124,23 @@ t "status readable when idle"   "$SIMMER | grep -q 'sleep allowed'"
 t "help documents down/force"   "$SIMMER --help | grep -q 'simmer down' && $SIMMER --help | grep -q -- '--force'"
 t "--version prints"            "$SIMMER --version | grep -q simmer"
 
+# Execute every front-end, not just two of them. Two Raycast commands shipped
+# broken -- `$SIMMER: unbound variable` -- because nothing ever ran them.
+#
+# The assertion is "no shell-level failure", not "exit 0": `simmer +15m` with no
+# lease exits 1 and is right to. What must never happen is an unbound variable or
+# a missing command, which is the class of bug that shipped.
+runs_clean() { # <script> [args...]
+  local err; err="$("$@" 2>&1 >/dev/null)"
+  ! printf '%s' "$err" | grep -qE 'unbound variable|command not found|No such file|syntax error'
+}
+echo "every integration actually executes"
+for f in "$HERE"/integrations/raycast/*.sh; do
+  t "runs $(basename "$f")"      "bash -n '$f' && runs_clean '$f'"
+done
+t "runs the swiftbar plugin"     "runs_clean '$HERE/integrations/swiftbar/simmer.10s.sh'"
+t "runs the alfred filter"       "runs_clean '$HERE/integrations/alfred/simmer-filter.sh' ''"
+
 echo
 echo "$pass passed, $fail failed"
 exit "$fail"

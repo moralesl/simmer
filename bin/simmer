@@ -157,53 +157,33 @@ set_disablesleep() { # <0|1>
 # matters, body the reason. A banner reading "no reason given" spent its widest
 # line on the absence of information -- now the reason line is simply omitted
 # when there is none, and the space goes to something useful.
-# Notifications, in order of preference, and the ordering is the whole story.
+# One notification channel, always the same one. That requirement outranks a
+# nicer-looking banner: a preference ladder means the banner changes shape
+# depending on whether some other app happens to be running, which is exactly
+# the inconsistency between the CLI, Raycast and the menu bar that this replaced.
 #
-# The plan was simmer's own app bundle, so banners would carry simmer's name and
-# icon. That does not work: an AppleScript applet's `display notification` is
-# attributed to the OSA host -- Script Editor -- and not to the applet, so the
-# bundle's identity never applies. Tested; the banners arrive grouped under
-# "Script Editor" regardless.
+# The history, so nobody re-treads it:
 #
-# Which leaves two channels that do have a real identity:
+#   · An AppleScript applet with its own bundle id and icon does NOT own its
+#     notifications -- `display notification` is attributed to the OSA host,
+#     Script Editor. Tested; the bundle's identity never applies.
+#   · SwiftBar's swiftbar://notify does work, but the banner is branded SwiftBar,
+#     and using it only when SwiftBar happens to be running was the cause of the
+#     inconsistency above.
+#   · terminal-notifier has its own bundle and can carry a custom icon. It is the
+#     only route to simmer's own artwork, at the cost of one dependency, and that
+#     is an open decision rather than something to slip in.
 #
-#   1. SwiftBar, if it is running. Its banners actually appear, it is already the
-#      documented dependency for the menu bar, and clicking one opens the menu.
-#      The icon is SwiftBar's, not simmer's -- honest, and better than a quill.
-#   2. osascript. Posts as Script Editor, whose alert style is often set to
-#      "none", in which case the notification is delivered but never shown. This
-#      is the reason it is second, not first.
-#
-# Owning the icon needs a signed app bundle. That is a notarisation project, not
-# a shell script, and it is recorded as a limitation rather than pretended away.
-#
-# The sound is not decoration: it is the channel that carries when a banner is
-# suppressed, and the menu bar is the indicator nothing can drop.
+# So: osascript, everywhere, identically. It posts as "Script Editor", whose
+# alert style is often "none" -- notifications then arrive but are never shown,
+# which reads as broken. `simmer doctor` says so and names the setting.
 notify() { # <title> <subtitle> <body> [system sound]
-  local title="$1" subtitle="$2" body="$3"
-  if [ -d /Applications/SwiftBar.app ] && pgrep -qx SwiftBar 2>/dev/null; then
-    open -g "swiftbar://notify?plugin=simmer&title=$(urlencode "$title")&subtitle=$(urlencode "$subtitle")&body=$(urlencode "$body")&silent=true" \
-      >/dev/null 2>&1 || notify_via_osascript "$title" "$subtitle" "$body"
-  else
-    notify_via_osascript "$title" "$subtitle" "$body"
-  fi
+  notify_via_osascript "$1" "$2" "$3"
+  # Not decoration: the sound is what carries when a banner is suppressed, and
+  # the menu bar is the indicator nothing can drop.
   [ -n "${4:-}" ] && [ -f "/System/Library/Sounds/$4.aiff" ] &&
     (afplay -v 0.5 "/System/Library/Sounds/$4.aiff" >/dev/null 2>&1 &)
   return 0
-}
-
-# Byte-wise under LC_ALL=C, so multi-byte characters in a reason survive the
-# round trip instead of being mangled a character at a time.
-urlencode() {
-  local LC_ALL=C s="$1" out="" i c
-  for (( i=0; i<${#s}; i++ )); do
-    c="${s:i:1}"
-    case "$c" in
-      [a-zA-Z0-9.~_-]) out="$out$c" ;;
-      *) out="$out$(printf '%%%02X' "'$c")" ;;
-    esac
-  done
-  printf '%s' "$out"
 }
 
 notify_via_osascript() { # <title> <subtitle> <body>
@@ -644,13 +624,13 @@ cmd_doctor() {
 
   # Which channel is about to be used matters more than a generic warning: they
   # fail for completely different reasons.
-  if [ -d /Applications/SwiftBar.app ] && pgrep -qx SwiftBar 2>/dev/null; then
-    echo "Notifications post through SwiftBar. Firing one now."
-  else
-    echo "No SwiftBar running, so notifications post as \"Script Editor\". If"
-    echo "nothing appears, its alert style is set to none in System Settings --"
-    echo "the notification is delivered, just never shown."
-  fi
+  echo "Notifications post as \"Script Editor\". That is macOS, not a bug: a shell"
+  echo "script cannot brand its own banners without a signed app bundle."
+  echo
+  echo "If nothing appears they are arriving but not being shown. Fix once, in"
+  echo "System Settings > Notifications > Script Editor > Alert style: Banners"
+  echo
+  echo "Firing one now."
   notify "simmer doctor" "notifications are working" "This banner is the test." "Tink"
   [ "$fail" -gt 0 ] && return 1 || return 0
 }
