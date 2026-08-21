@@ -84,20 +84,21 @@ cmd_install() {
 }
 
 cmd_check() {
-  echo "simmer health check"
+  echo "install"
   echo "==================="
-  check "simmer on PATH"              "command -v simmer"
-  check "guard agent installed"       "[ -f '$AGENT' ]"
-  check "guard agent current"         "diff -q <(sed -e 's|__SIMMER__|$SIMMER_HOME|g' -e 's|__HOME__|$HOME|g' '$SIMMER_HOME/launchd/$LABEL.plist') '$AGENT'"
-  check "guard running"               "launchctl print gui/\$(id -u)/$LABEL"
-  check "passwordless pmset rule"     "sudo -nl /usr/bin/pmset -a disablesleep 0"
-  check "notifier app built"          "[ -d '$APP' ]"
-  check "notifier has simmer's icon"  "[ -f '$APP/Contents/Resources/applet.icns' ]"
-  check "state directory"             "[ -d '$STATE' ]"
-  check "caffeinate present"          "command -v caffeinate"
+  # Only what belongs to installing: whether this checkout is the thing that is
+  # actually installed. Everything about the running system -- guard, sudo rule,
+  # notifier, state -- is `simmer doctor`, called below rather than repeated
+  # here. Two health reports covering the same ground is two reports that drift.
+  check "linked into $PREFIX"     "[ -L '$PREFIX/simmer' ]"
+  check "link points at this repo" "[ \"\$(readlink '$PREFIX/simmer')\" = '$SIMMER_HOME/bin/simmer' ]"
+  check "$PREFIX is on PATH"      "case \":\$PATH:\" in *:$PREFIX:*) true ;; *) false ;; esac"
+  check "guard agent installed"   "[ -f '$AGENT' ]"
+  check "guard agent up to date"  "diff -q <(sed -e 's|__SIMMER__|$SIMMER_HOME|g' -e 's|__HOME__|$HOME|g' '$SIMMER_HOME/launchd/$LABEL.plist') '$AGENT'"
+  echo
+  "$SIMMER_HOME/bin/simmer" doctor || bad=$((bad+1))
   echo "==================="
-  echo "$ok passed, $bad failed"
-  [ "$bad" -eq 0 ] && echo "All good 🎉" || echo "Run 'make install' to fix"
+  [ "$bad" -eq 0 ] && echo "All good 🎉" || echo "$bad problem(s) -- see above"
   return "$bad"
 }
 

@@ -1,2 +1,3 @@
 .build/
 integrations/alfred/*.alfredworkflow
+.DS_Store

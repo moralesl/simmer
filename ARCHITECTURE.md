@@ -111,6 +111,19 @@ that looks wrong still beats one that never appears.
 The sound is not decoration. It is the channel that still carries when banners
 are suppressed, and the menu bar is the indicator nothing can drop.
 
+## One health check, two entry points
+
+`simmer doctor` is the health report, and it is the *only* implementation. It
+covers the running system — guard loaded, sudo rule allowed, notifier present
+and carrying the icon, state writable — and works with no repo checked out,
+because it is the installed binary talking about the machine.
+
+`make check` adds the three things only a checkout can know (is the symlink
+pointing here, is `$PREFIX` on `PATH`, is the installed LaunchAgent still
+identical to the template) and then calls `simmer doctor` for the rest. Two
+health reports covering the same ground is two reports that drift, and the one
+you happen to run is the one you believe.
+
 ## The test seam
 
 Four functions — `sleep_disabled`, `set_disablesleep`, `battery_percent`,

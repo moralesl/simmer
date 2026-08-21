@@ -1,6 +1,17 @@
+<div align="center">
+
+<img src="assets/icon-256.png" width="120" alt="simmer">
+
 # simmer
 
-Keep your Mac awake for a bounded time — lid closed — then let it sleep again.
+**Keep your Mac awake for a bounded time — lid closed — then let it sleep again.**
+
+[![test](https://github.com/moralesl/simmer/actions/workflows/test.yml/badge.svg)](https://github.com/moralesl/simmer/actions/workflows/test.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![platform](https://img.shields.io/badge/platform-macOS%2011%2B-lightgrey?logo=apple)](#install)
+[![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](#install)
+
+</div>
 
 ```
 $ simmer 2h -r "overnight build"
@@ -58,10 +69,13 @@ structurally impossible rather than merely unlikely.**
 ## Install
 
 ```bash
-git clone https://github.com/moralesl/simmer ~/workspace/tools/simmer
-cd ~/workspace/tools/simmer
+git clone https://github.com/moralesl/simmer
+cd simmer
 make install
 ```
+
+Clone it anywhere — the installer resolves its own location, so nothing is tied
+to a particular path.
 
 That links `simmer` into `~/.local/bin`, starts the guard as a LaunchAgent, and
 builds a small notifier app so banners carry simmer's own name and icon.
@@ -83,8 +97,8 @@ Without it simmer still works interactively; the guard then logs and notifies
 its failure instead of failing silently. Check any time with:
 
 ```bash
-make check      # expected to be fully green
-simmer doctor   # same, plus a live notification test
+simmer doctor   # the running system: guard, sudo rule, notifier, state
+make check      # the above, plus whether this checkout is what is installed
 ```
 
 ## Usage
@@ -99,7 +113,7 @@ simmer doctor   # same, plus a live notification test
 | `simmer +20m` | extend, counted from now |
 | `simmer down` | hand it back immediately |
 | `simmer log` | what the guard has been doing |
-| `simmer doctor` | guard, sudo rule, notifications |
+| `simmer doctor` | health of the running system, plus a live notification test |
 
 Durations are forgiving: `90`, `90m`, `1h`, `1h30m`, `45min`, `2h15`, `30s`.
 

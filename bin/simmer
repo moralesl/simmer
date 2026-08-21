@@ -42,6 +42,7 @@ LEASE="$STATE/lease"
 LOG="$STATE/simmer.log"
 PMSET=/usr/bin/pmset
 SIMMER_VERSION="1.0.0"
+GUARD_LABEL=com.github.moralesl.simmer-guard
 LEASE_FORMAT=1
 NOTIFIER="$HOME/Applications/Simmer.app"
 
@@ -580,34 +581,44 @@ cmd_doctor() {
   local ok=0 fail=0
   say() { if eval "$2" >/dev/null 2>&1; then echo "✅ $1"; ok=$((ok+1)); else echo "❌ $1"; fail=$((fail+1)); fi; }
 
-  echo "simmer doctor"
-  echo "============"
-  say "guard loaded (com.github.moralesl.simmer-guard)" "launchctl print gui/$(id -u)/com.github.moralesl.simmer-guard"
+  echo "simmer $SIMMER_VERSION"
+  echo "==================="
+  # The runtime checks, and only those: doctor is the installed binary talking
+  # about the running system, so it must work with no repo checked out. The
+  # install-time checks (symlink, agent template current) belong to
+  # install.sh, which calls this rather than repeating it.
+  say "guard loaded ($GUARD_LABEL)"        "launchctl print gui/$(id -u)/$GUARD_LABEL"
   # -nl asks sudo whether the command is *allowed*, without running it and
   # without ever prompting. Testing with `sudo -n pmset -g` would fail even
   # with the rule installed, because -g is deliberately not in the allowlist.
-  say "passwordless sudo rule for pmset"         "sudo -nl $PMSET -a disablesleep 0"
-  say "state directory writable"                 "[ -w '$STATE' ]"
-  say "caffeinate present"                       "command -v caffeinate"
-  say "SwiftBar installed"                       "[ -d /Applications/SwiftBar.app ]"
+  say "passwordless pmset rule"            "sudo -nl $PMSET -a disablesleep 0"
+  say "notifier app present"               "[ -d '$NOTIFIER' ]"
+  say "notifier carries simmer's icon"     "[ -f '$NOTIFIER/Contents/Resources/applet.icns' ]"
+  say "state directory writable"           "[ -w '$STATE' ]"
+  say "caffeinate present"                 "command -v caffeinate"
   echo
   echo "State:"
   cmd_status | sed 's/^/  /'
   echo
+
   if [ "$fail" -gt 0 ]; then
-    echo "Without the sudo rule the guard cannot release unattended."
-    echo "Install it (asks for your password, allows exactly two commands):"
+    echo "Anything red above is fixed by re-running the installer:"
+    echo "  cd <the simmer repo> && make install"
     echo
-    echo "  sudo install -m 440 -o root -g wheel \\"
-    echo "    \"\$SIMMER_HOME/sudoers.d/simmer\" /etc/sudoers.d/simmer"
+    echo "Except the sudo rule, which needs root and is therefore yours to run."
+    echo "make install prints the exact command with your username filled in."
     echo
-    echo "Missing guard: run \"make install\" in the simmer repo."
   fi
-  echo
-  echo "Firing one notification now -- if none arrives, notifications for"
-  echo "\"Script Editor\" are switched off in System Settings."
-  notify "☕ simmer doctor" "notifications are working" \
-         "This banner is the test." "Tink"
+
+  # Which channel is about to be used matters more than a generic warning: they
+  # fail for completely different reasons.
+  if [ -d "$NOTIFIER" ]; then
+    echo "Notifications post as \"Simmer\". Firing one now."
+  else
+    echo "No notifier app, so notifications post as \"Script Editor\" -- if none"
+    echo "arrives, its notifications are switched off in System Settings."
+  fi
+  notify "simmer doctor" "notifications are working" "This banner is the test." "Tink"
   [ "$fail" -gt 0 ] && return 1 || return 0
 }
 
