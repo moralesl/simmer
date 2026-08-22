@@ -97,23 +97,37 @@ No flag changes this. Every attempt below was actually run:
 | `osascript` | ✅ | Script Editor | works; quill icon; alert style must be Banners |
 | SwiftBar URL scheme | ✅ | SwiftBar | honours title, subtitle and body |
 | Shortcuts (`/usr/bin/shortcuts run`) | ✅ | Shortcuts | **title is the shortcut's name**; body via Shortcut Input |
-| `terminal-notifier` | ❌ | — | 2017 binary, `NSUserNotification`; registers in the legacy DB, never shown |
+| `terminal-notifier` (own identity) | ❌ | — | 2017 binary; registers in the legacy DB, never shown |
+| **`terminal-notifier -sender <id>`** | ✅ | **the named app** | posts AS another installed app — Safari's icon displayed, verified by screenshot. The one mechanism that changes an icon without a paid signature |
 | AppleScript applet with own bundle | ❌ | Script Editor | applets do **not** own their notifications — attributed to the OSA host |
 | **Our own ad-hoc-signed bundle** | ❌ | — | `UNErrorDomain Code=1 "Notifications are not allowed"`. Tried in `/tmp` and `~/Applications`, registered with `lsregister`, with and without `LSUIElement` |
 
-**Conclusion: simmer's own icon on a banner requires a Developer ID signature.**
-Ad-hoc signing is refused. That is a paid Apple Developer account plus a signing
-step, and it is a real decision rather than a technicality.
+**Constraint from Luis: no paid signature — everything self-built.** So Developer
+ID is off the table, which reshapes the endgame:
+
+- `-sender` is the only *verified* way to change the banner icon for free. It
+  borrows an installed app's identity, so the icon is honest only if we point it
+  at an app we legitimately own on that machine.
+- Unexplained data point: `-sender com.apple.Safari` returns instantly and
+  displays; SwiftBar's and Shortcuts' verified ids made terminal-notifier hang
+  (killed after 8s; whether their banners still appeared is unconfirmed). Also:
+  terminal-notifier is single-instance -- a hung invocation silently wedges every
+  later one, which cost an hour of confusion. Kill stale instances before
+  concluding anything.
+- **The open free path to a real own-identity app: a self-signed certificate**
+  (created locally in Keychain, no Apple account) instead of ad-hoc signing.
+  Whether `UNUserNotificationCenter` authorises a self-signed bundle is
+  UNVERIFIED and is spike #3 below. If yes: real app, own icon, zero dollars,
+  reproducible on every team Mac by install script. If no: the free ceiling is
+  `-sender` plus a Shortcuts transport, and the pot icon waits.
 
 Until then the menu bar is the honest primary channel: it cannot be suppressed,
 it is always correct, and it is identical across surfaces by construction.
 
 ## Open decisions — for Luis, before coding
 
-1. **Apple Developer Program, $99/yr?** Unlocks: simmer's own notification icon,
-   a notarised app colleagues install without Gatekeeper warnings, and a
-   Homebrew cask. Without it, v2's notifications look exactly like v1's.
-   *Recommendation: yes, if this is really going to the team.*
+1. ~~Apple Developer Program~~ **Decided: no paid signature, everything
+   self-built.** The icon question therefore hangs on spike 2 (self-signed cert).
 2. **Architecture: one app or several parts?** A single menu-bar app as guard +
    UI + notifier, started as a login item — or v1's split (LaunchAgent guard,
    separate UI, separate notifier). *Recommendation: one app; it is the only
@@ -128,14 +142,19 @@ it is always correct, and it is identical across surfaces by construction.
    first.*
 6. **Keep the name, repo and bundle id?** No reason to change them.
 
-## Do these two spikes before anything else
+## Do these three spikes before anything else
 
 1. **Closed-display without root.** Is Amphetamine's public API real and usable?
    If yes, the scariest install step disappears.
-2. **A signed notification.** Only meaningful after decision 1. Prove a banner
-   appears from a Developer ID-signed bundle *before* building anything on it.
+2. **A self-signed notifier.** Create a self-signed code-signing certificate in
+   the login keychain (free, scriptable, no Apple account), sign the notifier
+   bundle with it instead of ad-hoc, and test `requestAuthorization`. This is the
+   only remaining route to simmer's own icon under the no-pay constraint.
+3. **`-sender` behaviour map.** Which installed apps work as senders, whether the
+   hangs on non-Safari ids are real rejections or display-anyway, and whether a
+   *self-signed* bundle id becomes a valid sender once spike 2 passes.
 
-Neither is a day's work, and both change the design.
+None is a day's work, and all three change the design.
 
 ## Starting prompt
 
