@@ -97,32 +97,32 @@ lease would take it with them.
 
 ## Notifications
 
-A notification's name and icon come from the bundle that posts it, and nothing a
-shell script does changes that. Three attempts, in order:
+macOS attributes a banner to the **bundle** that posts it, drops banners from
+identities it does not recognise, and caches a permission denial per bundle id
+forever. Those three rules explain every dead end below, and the solution:
 
-1. **An AppleScript applet** with its own bundle id, icon and version. Does not
-   work: `display notification` inside an applet is attributed to the OSA host,
-   Script Editor. The applet's identity never applies.
-2. **SwiftBar's `swiftbar://notify`.** Works, and its banners do appear — but they
-   are branded SwiftBar, and using it only when SwiftBar happens to be running
-   made banners differ between the CLI, Raycast and the menu bar.
-3. **`terminal-notifier`.** Has its own bundle, and advertises `-appIcon` and
-   `-contentImage`. Both rely on private APIs that no longer exist: on macOS 26
-   the notification is delivered and the flags do nothing. Tested on 26.5.1 with
-   terminal-notifier 2.0.0.
+- `osascript` → attributed to Script Editor (quill, often suppressed)
+- an AppleScript applet → attributed to the OSA host, not the applet
+- `terminal-notifier` → its own identity is never shown; `-sender` borrows an
+  installed app's identity and works, but the icon is theirs
+- **an installed, LaunchServices-registered, ad-hoc-signed app bundle → works.**
+  No certificate needed (verified by A/B against a trusted self-signed cert).
+  The one-time permission request arrives as a banner carrying the bundle's own
+  icon; one click on Allow finishes the setup.
 
-**Conclusion: a shell script cannot put its own icon on a macOS notification.**
-The only remaining route is a signed, notarised app bundle, which is a different
-kind of project. terminal-notifier is preferred anyway, for one reason: its
-banners reliably appear, where Script Editor's are usually suppressed.
+So `install.sh` compiles `notifier/main.swift` into `~/Applications/Simmer.app`
+with the pot icon and the id `io.github.moralesl.simmer` — an id that must never
+be reused after a denial, because the cached verdict outlives every rebuild.
+The binary answers `--status` (authorized / notDetermined / denied) so `doctor`
+asks instead of guessing, and exits non-zero when not authorized so `notify()`
+falls back to `osascript` and the message still lands somewhere.
 
-`osascript` remains the fallback when terminal-notifier is absent. That is a
-ladder, but a deterministic one: the branch depends on what is *installed*, not on
-what is *running*, so every path on a given machine produces the same banner.
-Notifications are grouped, so a new one replaces the last rather than stacking.
+The transport remains a setting (`SIMMER_NOTIFY`), with `simmer notify-test`
+firing one labelled banner per transport — anything OS-version-dependent should
+be switchable and self-testing rather than baked in.
 
-The sound is not decoration. It is the channel that still carries when banners are
-suppressed, and the menu bar is the indicator nothing can drop.
+The sound is not decoration: it carries when banners are suppressed, and the
+menu bar is the indicator nothing can drop.
 
 ## Sleep, and which kinds
 

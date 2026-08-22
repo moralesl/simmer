@@ -35,5 +35,10 @@ jobs:
           /bin/bash --version | head -1
           /bin/bash bin/simmer --version
 
+      # The notifier is Swift compiled at install time on user machines; CI
+      # proves the source actually compiles before anyone installs it.
+      - name: Notifier compiles
+        run: swiftc -O -o /tmp/simmer-notify notifier/main.swift
+
       - name: Test suite
         run: make test

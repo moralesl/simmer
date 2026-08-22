@@ -81,62 +81,27 @@ That links `simmer` into `~/.local/bin` and starts the guard as a LaunchAgent.
 
 ### Notifications
 
-macOS decides whether a banner is *shown* based on which app posted it, and a
-shell script has no app of its own. Which transport works varies by machine and
-by macOS version, so it is a setting rather than a guess:
+simmer's banners carry **simmer's own name and icon**. At install, `make install`
+compiles a ~60-line Swift notifier from `notifier/main.swift`, wraps it in an
+app bundle with the pot icon, signs it ad-hoc and registers it — no certificate,
+no Apple account. macOS shows a one-time permission banner (with the pot icon);
+click **Allow** once and that is the entire setup.
+
+This works where every CLI notification tool fails because macOS attributes a
+banner to the *bundle* that posts it and silently drops unknown identities — a
+bare binary is such an identity, an installed registered bundle is not. The
+recipe and its traps are in [docs/V2-BRIEF.md](docs/V2-BRIEF.md); the transport
+is switchable and testable:
 
 ```bash
-simmer notify-test        # fires one through every transport, labelled
+simmer notify-test                 # one labelled banner per transport
+export SIMMER_NOTIFY=bundle        # or shortcut · swiftbar · osascript · say · none
 ```
 
-Whichever one you actually see is the one to use:
-
-```bash
-export SIMMER_NOTIFY=shortcut     # or swiftbar · osascript · say · none
-```
-
-| Transport | Shows as | Notes |
-|---|---|---|
-| `shortcut` | Shortcuts | first-party and signed, so banners display reliably. Needs a one-time shortcut, below |
-| `swiftbar` | SwiftBar | reliable if you already run SwiftBar for the menu bar |
-| `osascript` | Script Editor | no setup, but frequently delivered-and-never-shown |
-| `say` | *spoken aloud* | unmissable, bypasses notifications entirely |
-| `none` | — | rely on the menu bar |
-| `auto` | *default* | shortcut if present, else SwiftBar if running, else osascript |
-
-**The one-time shortcut** (30 seconds, gives the most reliable banners):
-
-1. Open **Shortcuts** → **+** for a new shortcut
-2. Add the action **Show Notification**
-3. Click the notification *body* field → choose **Shortcut Input**
-4. Name it exactly **`simmer-notify`**
-
-Then `simmer notify-test` will use it.
-
-**None of them work?** That is survivable. The menu bar shows the countdown at all
-times and macOS cannot suppress it — `SIMMER_NOTIFY=none` is a legitimate choice,
-and the sound still plays.
-
-One step needs root and is therefore **yours to run** — `make install` prints it
-with your username filled in:
-
-```bash
-sudo install -m 440 -o root -g wheel .build/simmer.sudoers /etc/sudoers.d/simmer
-```
-
-Why: only root can flip `disablesleep`, and the whole point is that the guard
-hands it back while nobody is at the keyboard. A watchdog that needs a password
-is a watchdog that does not run. The rule allows **exactly two command lines** —
-`pmset -a disablesleep 0` and `... 1` — and nothing else. No wildcard, no shell,
-no other pmset subcommand.
-
-Without it simmer still works interactively; the guard then logs and notifies
-its failure instead of failing silently. Check any time with:
-
-```bash
-simmer doctor   # the running system: guard, sudo rule, notifier, state
-make check      # the above, plus whether this checkout is what is installed
-```
+No Swift compiler on the machine? The installer says so and banners fall back to
+`osascript` (posting as *Script Editor*). Fix later with `xcode-select --install`
+and another `make install`. The menu bar works regardless and can never be
+suppressed.
 
 ## Usage
 

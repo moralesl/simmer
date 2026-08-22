@@ -26,6 +26,11 @@ TMP="$(mktemp -d)"; export XDG_STATE_HOME="$TMP/state"
 STATE="$XDG_STATE_HOME/simmer"; LEASE="$STATE/lease"
 mkdir -p "$STATE"
 export SIMMER_FAKE_PMSET="$TMP/disablesleep"; echo 0 > "$SIMMER_FAKE_PMSET"
+# No real banners while testing: the suite fires notify() dozens of times, and
+# before this line every run sprayed the desktop with them.
+export SIMMER_NOTIFY=none
+# Point the bundle transport somewhere empty so its selection logic is testable.
+export SIMMER_NOTIFIER_APP="$TMP/NoSuch.app"
 export SIMMER_FAKE_BATTERY="80:0"          # 80%, on AC
 trap 'rm -rf "$TMP"' EXIT
 
@@ -123,7 +128,13 @@ t "menu bar title has one icon"  "! $HERE/integrations/swiftbar/simmer.10s.sh | 
 t "status readable when idle"   "$SIMMER | grep -q 'sleep allowed'"
 t "help documents down/force"   "$SIMMER --help | grep -q 'simmer down' && $SIMMER --help | grep -q -- '--force'"
 t "--version prints"            "$SIMMER --version | grep -q simmer"
-t "notify-test runs"            "$SIMMER notify-test >/dev/null 2>&1"
+t "notify-test runs"            "SIMMER_NOTIFY=auto $SIMMER notify-test >/dev/null 2>&1"
+if command -v swiftc >/dev/null 2>&1; then
+  t "notifier source compiles"  "swiftc -O -o '$TMP/nb' '$HERE/notifier/main.swift'"
+else
+  echo "  ⏭  notifier source compiles — no swiftc on this machine"
+fi
+t "notifier plist parses"       "plutil -lint '$HERE/notifier/Info.plist'"
 t "SIMMER_NOTIFY=none is quiet" "SIMMER_NOTIFY=none $SIMMER 5m --owner t --force >/dev/null"
 
 # Execute every front-end, not just two of them. Two Raycast commands shipped

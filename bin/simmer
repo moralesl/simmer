@@ -161,56 +161,18 @@ set_disablesleep() { # <0|1>
 ### Feedback
 #
 # Three lines rather than two: title says which state, subtitle the number that
-# matters, body the reason. A banner reading "no reason given" spent its widest
-# line on the absence of information -- now the reason line is simply omitted
-# when there is none, and the space goes to something useful.
-# One notification channel, always the same one. That requirement outranks a
-# nicer-looking banner: a preference ladder means the banner changes shape
-# depending on whether some other app happens to be running, which is exactly
-# the inconsistency between the CLI, Raycast and the menu bar that this replaced.
+# matters, body the reason -- omitted entirely when there is none.
 #
-# The history, so nobody re-treads it:
-#
-#   · An AppleScript applet with its own bundle id and icon does NOT own its
-#     notifications -- `display notification` is attributed to the OSA host,
-#     Script Editor. Tested; the bundle's identity never applies.
-#   · SwiftBar's swiftbar://notify does work, but the banner is branded SwiftBar,
-#     and using it only when SwiftBar happens to be running was the cause of the
-#     inconsistency above.
-#   · terminal-notifier has its own bundle and can carry a custom icon. It is the
-#     only route to simmer's own artwork, at the cost of one dependency, and that
-#     is an open decision rather than something to slip in.
-#
-# Resolved, after three attempts: there is NO way for a shell script to put its
-# own icon on a macOS notification. Do not try a fourth.
-#
-#   · An AppleScript applet with its own bundle id and icon: `display
-#     notification` is attributed to the OSA host, Script Editor. Tested.
-#   · SwiftBar's swiftbar://notify: works, but the banner is branded SwiftBar.
-#   · terminal-notifier: the binary inside its bundle is dated 2017 and uses
-#     NSUserNotification, which Apple removed. It registers in the legacy
-#     database -- `-list ALL` shows the entries -- but nothing is ever displayed.
-#     Not a settings problem; the tool cannot work on macOS 26.
-#
-# The only remaining route is a signed, notarised app bundle of our own, which is
-# a different kind of project than a shell script and out of proportion to a
-# banner icon.
-#
-# So: osascript, one channel, everywhere. It posts as "Script Editor", whose
-# alert style is commonly "none" -- delivered but never shown, which reads as
-# broken and is worth checking before blaming the tool.
-#
-# Evidence that a *modern* bundle would work: SwiftBar's notifications display
-# fine on this machine. The route to banners of our own is therefore a small
-# signed app using the UserNotifications framework -- see ARCHITECTURE.md. Until
-# then the menu bar is the channel that cannot be suppressed, and the one to
-# rely on.
 # The transport is a setting, not a guess. Four attempts at "the one that works"
 # each turned out to fail differently on macOS 26, so the choice is now explicit
 # and testable: `simmer notify-test` fires one through every transport at once,
 # and whichever appears is the one to set.
 #
-#   SIMMER_NOTIFY=auto       shortcut, else swiftbar, else osascript  (default)
+#   SIMMER_NOTIFY=auto       bundle, else shortcut, else swiftbar, else osascript
+#   SIMMER_NOTIFY=bundle     simmer's own app: OUR name, OUR icon. Built from
+#                            notifier/main.swift by install.sh -- an installed,
+#                            ad-hoc-signed bundle owns its identity after one
+#                            Allow click. Recipe and traps: docs/V2-BRIEF.md.
 #   SIMMER_NOTIFY=shortcut   the Shortcuts app -- first-party and signed, so its
 #                            notifications display. Needs a shortcut named
 #                            "simmer-notify" that shows its input. Icon: Shortcuts.
@@ -219,17 +181,22 @@ set_disablesleep() { # <0|1>
 #   SIMMER_NOTIFY=say        spoken aloud. Unmissable, no notification system at all.
 #   SIMMER_NOTIFY=none       silence; rely on the menu bar, which cannot be suppressed.
 NOTIFY_SHORTCUT="${SIMMER_NOTIFY_SHORTCUT:-simmer-notify}"
+# Overridable for tests; the executable path doubles as the existence check.
+NOTIFIER_APP="${SIMMER_NOTIFIER_APP:-$HOME/Applications/Simmer.app}"
+NOTIFIER_BIN="$NOTIFIER_APP/Contents/MacOS/simmer-notify"
 
 notify() { # <title> <subtitle> <body> [system sound]
   local title="$1" subtitle="$2" body="$3" how="${SIMMER_NOTIFY:-auto}"
 
   if [ "$how" = auto ]; then
-    if shortcuts list 2>/dev/null | grep -qxF "$NOTIFY_SHORTCUT"; then how=shortcut
+    if [ -x "$NOTIFIER_BIN" ]; then how=bundle
+    elif shortcuts list 2>/dev/null | grep -qxF "$NOTIFY_SHORTCUT"; then how=shortcut
     elif [ -d /Applications/SwiftBar.app ] && pgrep -qx SwiftBar 2>/dev/null; then how=swiftbar
     else how=osascript; fi
   fi
 
   case "$how" in
+    bundle)    notify_via_bundle    "$title" "$subtitle" "$body" ;;
     shortcut)  notify_via_shortcut  "$title" "$subtitle" "$body" ;;
     swiftbar)  notify_via_swiftbar  "$title" "$subtitle" "$body" ;;
     osascript) notify_via_osascript "$title" "$subtitle" "$body" ;;
@@ -243,6 +210,14 @@ notify() { # <title> <subtitle> <body> [system sound]
   [ -n "${4:-}" ] && [ -f "/System/Library/Sounds/$4.aiff" ] &&
     (afplay -v 0.5 "/System/Library/Sounds/$4.aiff" >/dev/null 2>&1 &)
   return 0
+}
+
+# The preferred channel: simmer's own bundle, so the banner carries simmer's
+# name and the pot icon. Non-zero means not (or not yet) authorized -- fall back
+# so THIS message still lands somewhere; the permission banner the binary just
+# triggered sorts out the next one.
+notify_via_bundle() { # <title> <subtitle> <body>
+  "$NOTIFIER_BIN" "$1" "$2" "$3" >/dev/null 2>&1 || notify_via_osascript "$1" "$2" "$3"
 }
 
 # Shortcuts reads its input from a file, which is the pattern already in use here.
@@ -282,9 +257,14 @@ cmd_notify_test() {
   echo "  echo 'export SIMMER_NOTIFY=shortcut' >> ~/.zshrc"
   echo
   local t
-  for t in shortcut swiftbar osascript; do
+  for t in bundle shortcut swiftbar osascript; do
     printf '  %-10s ' "$t"
     case "$t" in
+      bundle)
+        if [ -x "$NOTIFIER_BIN" ]; then
+          notify_via_bundle "simmer via $t" "transport test" "the pot icon means use $t"
+          echo "sent (status: $("$NOTIFIER_BIN" --status 2>/dev/null))"
+        else echo "skipped -- not built (make install, needs swiftc)"; fi ;;
       shortcut)
         if shortcuts list 2>/dev/null | grep -qxF "$NOTIFY_SHORTCUT"; then
           notify_via_shortcut "simmer via $t" "transport test" "if you see this, use $t"
@@ -732,7 +712,11 @@ cmd_doctor() {
   # without ever prompting. Testing with `sudo -n pmset -g` would fail even
   # with the rule installed, because -g is deliberately not in the allowlist.
   say "passwordless pmset rule"            "sudo -nl $PMSET -a disablesleep 0"
-  say "notification channel"               "command -v osascript"
+  if [ -x "$NOTIFIER_BIN" ]; then
+    say "notifier bundle authorized"          "[ \"\$('$NOTIFIER_BIN' --status)\" = authorized ]"
+  else
+    say "notification fallback (osascript)"   "command -v osascript"
+  fi
   say "state directory writable"           "[ -w '$STATE' ]"
   say "caffeinate present"                 "command -v caffeinate"
   echo
@@ -751,11 +735,18 @@ cmd_doctor() {
 
   # Which channel is about to be used matters more than a generic warning: they
   # fail for completely different reasons.
-  echo "Notifications post as \"Script Editor\" -- macOS attributes them to the"
-  echo "scripting host, and a shell script cannot change that."
-  echo
-  echo "If nothing appears they are arriving but not being displayed. Check:"
-  echo "  System Settings > Notifications > Script Editor > Alert style: Banners"
+  if [ -x "$NOTIFIER_BIN" ]; then
+    case "$("$NOTIFIER_BIN" --status 2>/dev/null)" in
+      authorized)    echo "Notifications post as \"Simmer\", with simmer's own icon." ;;
+      notDetermined) echo "Simmer's permission banner is pending -- click Allow when it"
+                     echo "appears (make install fires it again)." ;;
+      *)             echo "Notifications for \"Simmer\" were DENIED. Re-enable in"
+                     echo "System Settings > Notifications > Simmer." ;;
+    esac
+  else
+    echo "No notifier bundle (no swift compiler at install time?), so banners post"
+    echo "as \"Script Editor\". Fix: xcode-select --install, then make install."
+  fi
   echo
   echo "Firing one now."
   notify "simmer doctor" "notifications are working" "This banner is the test." "Tink"

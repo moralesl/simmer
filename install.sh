@@ -11,11 +11,46 @@ SIMMER_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="${PREFIX:-$HOME/.local/bin}"
 LABEL=com.github.moralesl.simmer-guard
 AGENT="$HOME/Library/LaunchAgents/$LABEL.plist"
+NOTIFIER_APP="$HOME/Applications/Simmer.app"
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/simmer"
 
 ok=0; bad=0
 say()  { printf '  %s\n' "$*"; }
 check() { if eval "$2" >/dev/null 2>&1; then echo "✅ $1"; ok=$((ok+1)); else echo "❌ $1"; bad=$((bad+1)); fi; }
+
+
+# The notifier bundle: banners with simmer's own name and icon, no certificate,
+# no Apple account. Built from source on this machine, ad-hoc signed, registered,
+# and launched once so macOS shows its one-time permission banner (which carries
+# the pot icon). Recipe and traps: docs/V2-BRIEF.md.
+#
+# Missing swiftc is fine and said out loud: notifications then post as Script
+# Editor via osascript. Homebrew users always have the CLT, so in practice this
+# only skips on machines that could not compile anything anyway.
+build_notifier() {
+  if ! command -v swiftc >/dev/null 2>&1; then
+    say "no swift compiler -- notifications will post as Script Editor"
+    say "(fix later with: xcode-select --install, then make install again)"
+    return 0
+  fi
+  local first=0; [ -d "$NOTIFIER_APP" ] || first=1
+  mkdir -p "$NOTIFIER_APP/Contents/MacOS" "$NOTIFIER_APP/Contents/Resources"
+  swiftc -O -o "$NOTIFIER_APP/Contents/MacOS/simmer-notify" "$SIMMER_HOME/notifier/main.swift" || return 1
+  cp "$SIMMER_HOME/notifier/Info.plist" "$NOTIFIER_APP/Contents/Info.plist"
+  cp "$SIMMER_HOME/assets/icon.icns"    "$NOTIFIER_APP/Contents/Resources/AppIcon.icns"
+  codesign --force --deep --sign - "$NOTIFIER_APP" >/dev/null 2>&1
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+    -f "$NOTIFIER_APP" >/dev/null 2>&1 || true
+  say "notifier built at $NOTIFIER_APP"
+
+  # Only pester for permission when it is genuinely undecided. The request
+  # arrives as a banner with the pot icon; clicking Allow is the whole setup.
+  if [ "$("$NOTIFIER_APP/Contents/MacOS/simmer-notify" --status 2>/dev/null)" = "notDetermined" ] || [ "$first" = 1 ]; then
+    open -a "$NOTIFIER_APP" --args "Simmer" "one-time setup" "Click Allow so simmer can notify you." || true
+    echo
+    echo "  A notification permission banner should be on screen -- click Allow."
+  fi
+}
 
 # bootout returns before the job is gone; a bootstrap straight after fails with
 # "5: Input/output error" and the service quietly stays down.
@@ -36,6 +71,8 @@ cmd_install() {
       "$SIMMER_HOME/launchd/$LABEL.plist" > "$AGENT"
   reload_agent
   say "guard running as $LABEL"
+
+  build_notifier
 
   # Generated rather than committed, because the committed template must not
   # carry a username: copying someone else's would grant them nothing and you
@@ -81,7 +118,7 @@ cmd_check() {
 cmd_uninstall() {
   launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
   rm -f "$AGENT" "$PREFIX/simmer"
-  rm -rf "$HOME/Applications/Simmer.app"   # from versions that built a notifier
+  rm -rf "$NOTIFIER_APP"
   echo "Removed the guard and the launcher symlink."
   echo "Left alone on purpose: /etc/sudoers.d/simmer (needs root) and $STATE (your log)."
   echo "  sudo rm /etc/sudoers.d/simmer"
