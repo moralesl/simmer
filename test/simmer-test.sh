@@ -123,6 +123,8 @@ t "menu bar title has one icon"  "! $HERE/integrations/swiftbar/simmer.10s.sh | 
 t "status readable when idle"   "$SIMMER | grep -q 'sleep allowed'"
 t "help documents down/force"   "$SIMMER --help | grep -q 'simmer down' && $SIMMER --help | grep -q -- '--force'"
 t "--version prints"            "$SIMMER --version | grep -q simmer"
+t "notify-test runs"            "$SIMMER notify-test >/dev/null 2>&1"
+t "SIMMER_NOTIFY=none is quiet" "SIMMER_NOTIFY=none $SIMMER 5m --owner t --force >/dev/null"
 
 # Execute every front-end, not just two of them. Two Raycast commands shipped
 # broken -- `$SIMMER: unbound variable` -- because nothing ever ran them.

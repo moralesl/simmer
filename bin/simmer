@@ -205,13 +205,106 @@ set_disablesleep() { # <0|1>
 # signed app using the UserNotifications framework -- see ARCHITECTURE.md. Until
 # then the menu bar is the channel that cannot be suppressed, and the one to
 # rely on.
+# The transport is a setting, not a guess. Four attempts at "the one that works"
+# each turned out to fail differently on macOS 26, so the choice is now explicit
+# and testable: `simmer notify-test` fires one through every transport at once,
+# and whichever appears is the one to set.
+#
+#   SIMMER_NOTIFY=auto       shortcut, else swiftbar, else osascript  (default)
+#   SIMMER_NOTIFY=shortcut   the Shortcuts app -- first-party and signed, so its
+#                            notifications display. Needs a shortcut named
+#                            "simmer-notify" that shows its input. Icon: Shortcuts.
+#   SIMMER_NOTIFY=swiftbar   SwiftBar's URL scheme. Known to display. Icon: SwiftBar.
+#   SIMMER_NOTIFY=osascript  posts as Script Editor. Often delivered, not shown.
+#   SIMMER_NOTIFY=say        spoken aloud. Unmissable, no notification system at all.
+#   SIMMER_NOTIFY=none       silence; rely on the menu bar, which cannot be suppressed.
+NOTIFY_SHORTCUT="${SIMMER_NOTIFY_SHORTCUT:-simmer-notify}"
+
 notify() { # <title> <subtitle> <body> [system sound]
-  notify_via_osascript "$1" "$2" "$3"
-  # Not decoration: the sound is what carries when a banner is suppressed, and
-  # the menu bar is the indicator nothing can drop.
+  local title="$1" subtitle="$2" body="$3" how="${SIMMER_NOTIFY:-auto}"
+
+  if [ "$how" = auto ]; then
+    if shortcuts list 2>/dev/null | grep -qxF "$NOTIFY_SHORTCUT"; then how=shortcut
+    elif [ -d /Applications/SwiftBar.app ] && pgrep -qx SwiftBar 2>/dev/null; then how=swiftbar
+    else how=osascript; fi
+  fi
+
+  case "$how" in
+    shortcut)  notify_via_shortcut  "$title" "$subtitle" "$body" ;;
+    swiftbar)  notify_via_swiftbar  "$title" "$subtitle" "$body" ;;
+    osascript) notify_via_osascript "$title" "$subtitle" "$body" ;;
+    say)       (say -v Daniel "${title//[^a-zA-Z0-9 ]/ }" >/dev/null 2>&1 &) ;;
+    none)      : ;;
+    *)         notify_via_osascript "$title" "$subtitle" "$body" ;;
+  esac
+
+  # Not decoration: the sound carries when a banner does not, and the menu bar is
+  # the indicator nothing can suppress.
   [ -n "${4:-}" ] && [ -f "/System/Library/Sounds/$4.aiff" ] &&
     (afplay -v 0.5 "/System/Library/Sounds/$4.aiff" >/dev/null 2>&1 &)
   return 0
+}
+
+# Shortcuts reads its input from a file, which is the pattern already in use here.
+notify_via_shortcut() { # <title> <subtitle> <body>
+  local f="$STATE/notify"
+  { printf '%s' "$1"; [ -n "$2" ] && printf ' — %s' "$2"; [ -n "$3" ] && printf '\n%s' "$3"; echo; } > "$f"
+  shortcuts run "$NOTIFY_SHORTCUT" -i "$f" >/dev/null 2>&1 ||
+    notify_via_osascript "$1" "$2" "$3"
+}
+
+notify_via_swiftbar() { # <title> <subtitle> <body>
+  local q
+  q="title=$(urlencode "$1")&subtitle=$(urlencode "$2")&body=$(urlencode "$3")"
+  open -g "swiftbar://notify?plugin=simmer&$q&silent=true" >/dev/null 2>&1 ||
+    notify_via_osascript "$1" "$2" "$3"
+}
+
+# Byte-wise under LC_ALL=C so multi-byte characters survive instead of being
+# mangled one byte at a time.
+urlencode() {
+  local LC_ALL=C str="$1" out="" i c
+  for (( i=0; i<${#str}; i++ )); do
+    c="${str:i:1}"
+    case "$c" in
+      [a-zA-Z0-9.~_-]) out="$out$c" ;;
+      *) out="$out$(printf '%%%02X' "'$c")" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+# One banner per transport, labelled. Whichever one you actually see is the answer,
+# and it replaces another round of me guessing which API macOS still honours.
+cmd_notify_test() {
+  echo "Firing one notification through each transport."
+  echo "Whichever you SEE is the one that works. Then set it, e.g.:"
+  echo "  echo 'export SIMMER_NOTIFY=shortcut' >> ~/.zshrc"
+  echo
+  local t
+  for t in shortcut swiftbar osascript; do
+    printf '  %-10s ' "$t"
+    case "$t" in
+      shortcut)
+        if shortcuts list 2>/dev/null | grep -qxF "$NOTIFY_SHORTCUT"; then
+          notify_via_shortcut "simmer via $t" "transport test" "if you see this, use $t"
+          echo "sent"
+        else
+          echo "skipped -- no shortcut named \"$NOTIFY_SHORTCUT\" (see README)"
+        fi ;;
+      swiftbar)
+        if pgrep -qx SwiftBar 2>/dev/null; then
+          notify_via_swiftbar "simmer via $t" "transport test" "if you see this, use $t"
+          echo "sent"
+        else echo "skipped -- SwiftBar not running"; fi ;;
+      osascript)
+        notify_via_osascript "simmer via $t" "transport test" "if you see this, use $t"
+        echo "sent" ;;
+    esac
+  done
+  echo
+  echo "Nothing at all? The menu bar always shows the truth and cannot be"
+  echo "suppressed -- SIMMER_NOTIFY=none is a legitimate choice."
 }
 
 notify_via_osascript() { # <title> <subtitle> <body>
@@ -715,6 +808,7 @@ CHANGING THE DEFAULTS
 CHECKING ON IT
   simmer log                 what the watchdog has actually done
   simmer doctor              is everything wired up? fires a test notification
+  simmer notify-test         one banner per transport -- see which your Mac shows
   simmer --version
 
   Day to day you do not need any of this: the menu bar shows the countdown and
@@ -748,6 +842,7 @@ case "${1:-status}" in
   guard)               cmd_guard ;;
   doctor)              cmd_doctor ;;
   budget)              shift || true; cmd_budget "$@" ;;
+  notify-test)         cmd_notify_test ;;
   extend)              shift || true; cmd_extend "$@" ;;
   +*)                  cmd_extend "$1" ;;
   log)                 [ -f "$LOG" ] && tail -n "${2:-20}" "$LOG" || echo "no log yet" ;;

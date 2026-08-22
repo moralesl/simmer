@@ -79,13 +79,43 @@ to a particular path.
 
 That links `simmer` into `~/.local/bin` and starts the guard as a LaunchAgent.
 
-**Notifications** are posted by `osascript`, so macOS attributes them to *Script
-Editor*. If you never see them, they are arriving but not being displayed —
-check *System Settings → Notifications → Script Editor → Alert style: Banners*.
+### Notifications
 
-A shell script cannot brand its own banners, and `terminal-notifier` does not
-help: its binary predates the framework macOS now uses. The menu bar is the
-channel that cannot be suppressed, and the one to rely on.
+macOS decides whether a banner is *shown* based on which app posted it, and a
+shell script has no app of its own. Which transport works varies by machine and
+by macOS version, so it is a setting rather than a guess:
+
+```bash
+simmer notify-test        # fires one through every transport, labelled
+```
+
+Whichever one you actually see is the one to use:
+
+```bash
+export SIMMER_NOTIFY=shortcut     # or swiftbar · osascript · say · none
+```
+
+| Transport | Shows as | Notes |
+|---|---|---|
+| `shortcut` | Shortcuts | first-party and signed, so banners display reliably. Needs a one-time shortcut, below |
+| `swiftbar` | SwiftBar | reliable if you already run SwiftBar for the menu bar |
+| `osascript` | Script Editor | no setup, but frequently delivered-and-never-shown |
+| `say` | *spoken aloud* | unmissable, bypasses notifications entirely |
+| `none` | — | rely on the menu bar |
+| `auto` | *default* | shortcut if present, else SwiftBar if running, else osascript |
+
+**The one-time shortcut** (30 seconds, gives the most reliable banners):
+
+1. Open **Shortcuts** → **+** for a new shortcut
+2. Add the action **Show Notification**
+3. Click the notification *body* field → choose **Shortcut Input**
+4. Name it exactly **`simmer-notify`**
+
+Then `simmer notify-test` will use it.
+
+**None of them work?** That is survivable. The menu bar shows the countdown at all
+times and macOS cannot suppress it — `SIMMER_NOTIFY=none` is a legitimate choice,
+and the sound still plays.
 
 One step needs root and is therefore **yours to run** — `make install` prints it
 with your username filled in:
