@@ -51,7 +51,12 @@ Point 3 is the one v1 fails. Everything else is refinement.
    signed bundle is the *only* way to own the notification identity — in Swift
    that stops being a fight.
 
-3. **One app, not four moving parts.** v1 is a script, a LaunchAgent, a SwiftBar
+3. **One app, not four moving parts.** Now unblocked for zero dollars: the
+   ad-hoc recipe means the app can own its notification identity, so the menu
+   bar, the guard and the notifier can be one locally-built bundle with the pot
+   icon everywhere.
+
+   (previously:) v1 is a script, a LaunchAgent, a SwiftBar
    plugin and launcher scripts. A Swift menu-bar app can *be* the menu bar, the
    guard (as a login item) and the notifier, with a small CLI alongside sharing
    the same state. A non-technical colleague then installs **one thing**.
@@ -100,38 +105,65 @@ No flag changes this. Every attempt below was actually run:
 | `terminal-notifier` (own identity) | ❌ | — | 2017 binary; registers in the legacy DB, never shown |
 | **`terminal-notifier -sender <id>`** | ✅ | **the named app** | posts AS another installed app — Safari's icon displayed, verified by screenshot. The one mechanism that changes an icon without a paid signature |
 | AppleScript applet with own bundle | ❌ | Script Editor | applets do **not** own their notifications — attributed to the OSA host |
-| **Our own ad-hoc-signed bundle** | ❌ | — | `UNErrorDomain Code=1 "Notifications are not allowed"`. Tried in `/tmp` and `~/Applications`, registered with `lsregister`, with and without `LSUIElement` |
+| **Our own ad-hoc-signed bundle** | ✅ | **our own icon and name** | THE answer — see the verified recipe above. Earlier failures were a cached per-bundle-id denial from a first run in `/tmp`, not a platform refusal |
 
-**Constraint from Luis: no paid signature — everything self-built.** So Developer
-ID is off the table, which reshapes the endgame:
+**Constraint from Luis: no paid signature — everything self-built.** And that
+constraint is satisfiable, verified end to end on 2026-08-22:
 
-- `-sender` is the only *verified* way to change the banner icon for free. It
-  borrows an installed app's identity, so the icon is honest only if we point it
-  at an app we legitimately own on that machine.
-- Unexplained data point: `-sender com.apple.Safari` returns instantly and
-  displays; SwiftBar's and Shortcuts' verified ids made terminal-notifier hang
-  (killed after 8s; whether their banners still appeared is unconfirmed). Also:
-  terminal-notifier is single-instance -- a hung invocation silently wedges every
-  later one, which cost an hour of confusion. Kill stale instances before
-  concluding anything.
-- **Self-signed certificates DO NOT work. Verified 2026-08-22:** a trusted
-  self-signed codesigning cert (openssl → keychain → add-trusted-cert, no
-  CSSMERR), a fresh bundle id to rule out a cached denial, launched via
-  LaunchServices with 25s for a permission dialog -- still
-  `UNErrorDomain Code=1`, and no dialog ever appears. macOS 26 requires an
-  **Apple-issued** certificate for notification authorization, not merely a
-  valid signature.
-- So the complete free map is: banners that display = `-sender` (what the
-  maintained community tool **alerter** does by default, borrowing
-  `com.apple.Terminal`) or the Shortcuts transport. The pot icon on a banner =
-  an Apple-issued cert. A **free Apple ID** gets an "Apple Development" cert
-  through Xcode -- zero dollars, but a per-machine sign-into-Xcode ritual:
-  acceptable for one developer, wrong for non-technical teammates.
-  (Unverified on this machine; needs full Xcode. High confidence from common
-  Xcode development practice.)
+### The verified recipe: own-icon notifications, zero dollars
 
-Until then the menu bar is the honest primary channel: it cannot be suppressed,
-it is always correct, and it is identical across surfaces by construction.
+1. A ~40-line Swift binary calling `UNUserNotificationCenter`
+   (`requestAuthorization`, then post; keep the process alive ~25s so the
+   permission flow can complete).
+2. Wrap it in a minimal `.app` bundle: `Info.plist` with bundle id, name and
+   `CFBundleIconFile`, the `.icns` in `Resources`.
+3. **Ad-hoc sign it** (`codesign --force --deep --sign -`). No certificate of any
+   kind is needed — verified by A/B test against a trusted self-signed cert;
+   both behave identically.
+4. Install to `~/Applications`, register: `lsregister -f <app>`.
+5. Launch once via LaunchServices (`open -a`). macOS shows the permission
+   request **as a notification banner carrying the app's own icon** — not a
+   modal dialog.
+6. The user clicks Allow once — the same one-time step Slack or any real app
+   requires. From then on, banners carry the app's own name and icon.
+
+Traps, each personally paid for:
+
+- **A denial is cached per bundle id, forever.** The first attempt ran from
+  `/tmp`, was refused, and every later test against that id inherited the
+  refusal — which produced two false "structurally impossible" conclusions.
+  Burned ids on Luis's machine: `ai.causaprima.simmer.notifier`. Production
+  should start clean, e.g. `io.github.moralesl.simmer`.
+- `UNErrorDomain Code=1` while the permission banner is pending means "not YET
+  authorized". Checking the API state races against the human clicking Allow.
+- The permission request only fires when launched via LaunchServices, not when
+  the binary is executed directly.
+- The community never found this because their tools (terminal-notifier,
+  alerter) are bare binaries, not installed app bundles — alerter borrows
+  `com.apple.Terminal`'s identity instead. An installed, registered, ad-hoc
+  bundle is the missing move.
+
+### Distribution — for colleagues and for OSS
+
+The Gatekeeper fact that shapes everything: quarantine only attaches to
+*browser-style downloads*. `git clone`, `brew`, and `curl` set no quarantine
+xattr, so an ad-hoc bundle **built or fetched that way runs with no warnings**.
+A `.dmg` or a zip downloaded in a browser would hit "unidentified developer" —
+so we simply never distribute that way.
+
+| Audience | Channel | Why it works |
+|---|---|---|
+| Developers / OSS | **Homebrew tap**: `brew install moralesl/tap/simmer` | having brew *guarantees* the Xcode CLT, so the formula compiles the notifier locally — no binary blobs in git, `brew upgrade` for updates |
+| Non-technical colleagues | **one pasted line**: `curl -fsSL …/install.sh \| bash` | checks for CLT (offers `xcode-select --install`), builds, registers, launches once, and ends with "click Allow on the banner that just appeared" |
+| Never | committed binaries, .dmg, .zip | binaries in git rot and repel reviewers; browser downloads hit Gatekeeper |
+
+The one-time permission banner *is* the onboarding: the installer's last act
+should be launching the app so the banner (with the pot icon) is on screen at
+the moment the instructions say "click Allow".
+
+The menu bar remains the channel that cannot be suppressed and is identical
+across surfaces by construction; notifications are now its equal rather than its
+apology.
 
 ## Open decisions — for Luis, before coding
 
@@ -155,15 +187,13 @@ it is always correct, and it is identical across surfaces by construction.
 
 1. **Closed-display without root.** Is Amphetamine's public API real and usable?
    If yes, the scariest install step disappears.
-2. ~~A self-signed notifier~~ **Done, negative.** See the facts table -- do not
-   re-run this; the result is structural, not environmental.
-3. **Evaluate `alerter` as the notification transport.** Maintained, Swift,
-   explicitly Sequoia-compatible, defaults to the Terminal identity precisely
-   because "macOS silently drops notifications from unrecognized app
-   identities". Likely replaces our hand-rolled transport code entirely, and its
-   -sender handling may not share terminal-notifier's hang.
+2. ~~A signed/self-signed notifier~~ **Done, positive — better than hoped.**
+   Ad-hoc suffices; the verified recipe is above. The A/B against a trusted
+   self-signed cert showed no difference, so no certificate step exists at all.
 
 Spike 1 (closed-display without root) remains the biggest prize and is untouched.
+If it also lands, v2 needs neither sudo nor a certificate nor any paid account —
+an install with no scary step whatsoever.
 
 ## Starting prompt
 
