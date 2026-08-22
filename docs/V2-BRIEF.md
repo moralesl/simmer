@@ -114,12 +114,21 @@ ID is off the table, which reshapes the endgame:
   terminal-notifier is single-instance -- a hung invocation silently wedges every
   later one, which cost an hour of confusion. Kill stale instances before
   concluding anything.
-- **The open free path to a real own-identity app: a self-signed certificate**
-  (created locally in Keychain, no Apple account) instead of ad-hoc signing.
-  Whether `UNUserNotificationCenter` authorises a self-signed bundle is
-  UNVERIFIED and is spike #3 below. If yes: real app, own icon, zero dollars,
-  reproducible on every team Mac by install script. If no: the free ceiling is
-  `-sender` plus a Shortcuts transport, and the pot icon waits.
+- **Self-signed certificates DO NOT work. Verified 2026-08-22:** a trusted
+  self-signed codesigning cert (openssl → keychain → add-trusted-cert, no
+  CSSMERR), a fresh bundle id to rule out a cached denial, launched via
+  LaunchServices with 25s for a permission dialog -- still
+  `UNErrorDomain Code=1`, and no dialog ever appears. macOS 26 requires an
+  **Apple-issued** certificate for notification authorization, not merely a
+  valid signature.
+- So the complete free map is: banners that display = `-sender` (what the
+  maintained community tool **alerter** does by default, borrowing
+  `com.apple.Terminal`) or the Shortcuts transport. The pot icon on a banner =
+  an Apple-issued cert. A **free Apple ID** gets an "Apple Development" cert
+  through Xcode -- zero dollars, but a per-machine sign-into-Xcode ritual:
+  acceptable for one developer, wrong for non-technical teammates.
+  (Unverified on this machine; needs full Xcode. High confidence from common
+  Xcode development practice.)
 
 Until then the menu bar is the honest primary channel: it cannot be suppressed,
 it is always correct, and it is identical across surfaces by construction.
@@ -146,15 +155,15 @@ it is always correct, and it is identical across surfaces by construction.
 
 1. **Closed-display without root.** Is Amphetamine's public API real and usable?
    If yes, the scariest install step disappears.
-2. **A self-signed notifier.** Create a self-signed code-signing certificate in
-   the login keychain (free, scriptable, no Apple account), sign the notifier
-   bundle with it instead of ad-hoc, and test `requestAuthorization`. This is the
-   only remaining route to simmer's own icon under the no-pay constraint.
-3. **`-sender` behaviour map.** Which installed apps work as senders, whether the
-   hangs on non-Safari ids are real rejections or display-anyway, and whether a
-   *self-signed* bundle id becomes a valid sender once spike 2 passes.
+2. ~~A self-signed notifier~~ **Done, negative.** See the facts table -- do not
+   re-run this; the result is structural, not environmental.
+3. **Evaluate `alerter` as the notification transport.** Maintained, Swift,
+   explicitly Sequoia-compatible, defaults to the Terminal identity precisely
+   because "macOS silently drops notifications from unrecognized app
+   identities". Likely replaces our hand-rolled transport code entirely, and its
+   -sender handling may not share terminal-notifier's hang.
 
-None is a day's work, and all three change the design.
+Spike 1 (closed-display without root) remains the biggest prize and is untouched.
 
 ## Starting prompt
 
