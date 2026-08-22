@@ -629,6 +629,179 @@ cmd_budget() {
 }
 
 ############################################################################
+### render -- the core draws every surface
+#
+# One renderer per surface, all here, all reading the lease directly. The
+# front-end files are one-line shims that exec into these. Why: the previous
+# design had three separate renderers parsing the same state in three languages
+# of shell, which produced six copies of a binary-resolver, two Raycast commands
+# that shipped dead, and a menu bar icon drawn twice. A fourth surface now costs
+# a case branch here and a shim there, and is tested where everything else is.
+
+# Shared row values, computed once per render.
+render_load() {
+  R_NOW="$(date +%s)"
+  R_STATE=idle; R_LEFT=0; R_LEFT_SHORT=""
+  if read_lease; then
+    if [ "$lease_until" = 0 ]; then R_STATE=forever; R_LEFT_SHORT="∞"
+    else R_STATE=active; R_LEFT=$((lease_until - R_NOW)); R_LEFT_SHORT="$(short_duration "$R_LEFT")"; fi
+  elif sleep_disabled; then R_STATE=orphan; fi
+  R_POWER="battery $(battery_percent)%$(on_battery && echo ", on battery" || echo ", on AC")"
+}
+
+render_swiftbar() {
+  local me="$SIMMER_HOME/bin/simmer"
+  act() { # <label> <args...> -- a clickable menu entry
+    local label="$1"; shift
+    local line="$label | bash=\"$me\" terminal=false refresh=true"
+    local i=1
+    for a in "$@"; do line="$line param${i}=\"$a\""; i=$((i + 1)); done
+    echo "$line"
+  }
+  render_load
+  case "$R_STATE" in
+    active)
+      if [ "$R_LEFT" -le 300 ]; then echo "$R_LEFT_SHORT | sfimage=cup.and.saucer.fill color=orange"
+      else                           echo "$R_LEFT_SHORT | sfimage=cup.and.saucer.fill"; fi
+      echo "---"
+      echo "Simmering until $(date -r "$lease_until" '+%H:%M') | sfimage=clock"
+      [ -n "$lease_reason" ] && echo "$lease_reason | sfimage=text.quote"
+      echo "$R_POWER · floor ${lease_min_battery}% | sfimage=battery.50"
+      sleep_disabled || echo "⚠️ disablesleep is off — the lid will not hold | color=red"
+      echo "---"
+      act "Extend 15 minutes" "+15m"
+      act "Extend 1 hour"     "+1h"
+      act "Extend 3 hours"    "+3h"
+      echo "---"
+      act "Release now" "down"
+      ;;
+    forever)
+      echo "∞ | sfimage=cup.and.saucer.fill color=orange"
+      echo "---"
+      echo "Simmering with no deadline | sfimage=infinity"
+      [ "$lease_started" != 0 ] && echo "since $(date -r "$lease_started" '+%H:%M') | sfimage=clock"
+      [ -n "$lease_reason" ] && echo "$lease_reason | sfimage=text.quote"
+      echo "$R_POWER · floor ${lease_min_battery}% | sfimage=battery.50"
+      echo "---"
+      echo "Convert to a deadline"
+      act "-- 1 hour from now"  "1h" "--owner" "menubar"
+      act "-- 3 hours from now" "3h" "--owner" "menubar"
+      echo "---"
+      act "Release now" "down"
+      ;;
+    orphan)
+      echo " | sfimage=exclamationmark.triangle.fill color=red"
+      echo "---"
+      echo "Sleep is disabled with no lease | color=red"
+      echo "Nobody is scheduled to hand it back. Is the guard running?"
+      echo "$R_POWER | sfimage=battery.50"
+      echo "---"
+      act "Revert now" "down"
+      act "Turn it into a 1 hour lease" "1h" "--owner" "menubar"
+      echo "Run simmer doctor | bash=\"$me\" param1=doctor terminal=true"
+      ;;
+    *)
+      echo " | sfimage=moon.zzz"
+      echo "---"
+      echo "Sleep allowed | sfimage=moon.zzz"
+      echo "$R_POWER | sfimage=battery.50"
+      echo "---"
+      echo "Stay awake for…"
+      act "-- 30 minutes" "30m" "--owner" "menubar"
+      act "-- 1 hour"     "1h" "--owner" "menubar"
+      act "-- 2 hours"    "2h" "--owner" "menubar"
+      act "-- 4 hours"    "4h" "--owner" "menubar"
+      act "-- until further notice" "forever" "--owner" "menubar"
+      ;;
+  esac
+  echo "---"
+  echo "Log | bash=\"$me\" param1=log param2=40 terminal=true"
+  echo "Refresh | refresh=true"
+}
+
+# One line for Raycast's inline mode: the answer with no selection made.
+render_raycast() {
+  render_load
+  case "$R_STATE" in
+    active)  echo "☕ $R_LEFT_SHORT left · until $(date -r "$lease_until" '+%H:%M') · ${lease_reason:-no reason} · $(battery_percent)%$(on_battery && echo ' batt' || echo ' AC')" ;;
+    forever) echo "☕ no deadline · ${lease_reason:-no reason} · $(battery_percent)% · floor ${lease_min_battery}%" ;;
+    orphan)  echo "⚠️ sleep disabled with no lease — run: simmer down" ;;
+    *)       echo "⏾ sleep allowed · $(battery_percent)%$(on_battery && echo ' batt' || echo ' AC')" ;;
+  esac
+}
+
+render_alfred() { # <query>
+  local QUERY="${1:-}"
+  esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+  local items=()
+  item() { # <title> <subtitle> <arg|""> <icon>
+    local valid=true; [ -z "$3" ] && valid=false
+    items+=("$(printf '{"title":"%s","subtitle":"%s","arg":"%s","valid":%s,"icon":{"path":"%s"}}' \
+      "$(esc "$1")" "$(esc "$2")" "$(esc "$3")" "$valid" "$4")")
+  }
+  local ICON_ON=/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/AlertNoteIcon.icns
+  local ICON_OFF=/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/SleepFolderIcon.icns
+  local ICON_WARN=/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/AlertCautionIcon.icns
+
+  render_load
+  local power="battery $(battery_percent)%$(on_battery && echo ', on battery' || echo ', on AC')"
+  local dq=""
+  if [[ "$QUERY" =~ ^\+?[0-9]+[hms]?[a-z0-9]*$ ]] || [[ "$QUERY" =~ ^[0-9]{1,2}:[0-9]{2}$ ]]; then dq="$QUERY"; fi
+
+  case "$R_STATE" in
+    active)
+      item "Simmering until $(date -r "$lease_until" '+%H:%M') · $R_LEFT_SHORT left" \
+           "${lease_reason:-no reason given} — $power, floor ${lease_min_battery}%" "" "$ICON_ON"
+      sleep_disabled || item "Warning: disablesleep is off" "The lid will not hold. Run simmer doctor." "" "$ICON_WARN"
+      if [ -n "$dq" ]; then
+        case "$dq" in
+          *:*) item "Move the deadline to $dq" "Replaces the current lease" "--until $dq" "$ICON_ON" ;;
+          +*)  item "Extend by ${dq#+}"         "Counted from now"           "$dq"         "$ICON_ON" ;;
+          *)   item "Replace with $dq"          "Counted from now"           "$dq"         "$ICON_ON" ;;
+        esac
+      fi
+      item "Release now"       "Allow sleep again immediately"          "down" "$ICON_OFF"
+      item "Extend 15 minutes" "Deadline moves to 15 minutes from now"  "+15m" "$ICON_ON"
+      item "Extend 1 hour"     "Deadline moves to 1 hour from now"      "+1h"  "$ICON_ON"
+      ;;
+    forever)
+      item "Simmering with no deadline · since $(date -r "$lease_started" '+%H:%M')" \
+           "${lease_reason:-no reason given} — $power, floor ${lease_min_battery}%" "" "$ICON_ON"
+      [ -n "$dq" ] && item "Give it a deadline: $dq" "Turns the open-ended lease into a timebox" "${dq#+}" "$ICON_ON"
+      item "Release now" "Allow sleep again immediately" "down" "$ICON_OFF"
+      ;;
+    orphan)
+      item "Sleep is disabled with no lease" "Nobody is scheduled to hand it back — is the guard running?" "" "$ICON_WARN"
+      item "Revert now" "Allow sleep again immediately" "down" "$ICON_OFF"
+      item "Turn it into a 1 hour lease" "Keeps it awake, with a deadline" "1h" "$ICON_ON"
+      ;;
+    *)
+      item "Sleep allowed" "$power — nothing is holding this Mac awake" "" "$ICON_OFF"
+      if [ -n "$dq" ]; then
+        case "$dq" in
+          *:*) item "Stay awake until $dq" "Lid may close until then" "--until $dq" "$ICON_ON" ;;
+          *)   item "Stay awake for ${dq#+}" "Lid may close until then" "${dq#+}" "$ICON_ON" ;;
+        esac
+      fi
+      item "30 minutes" "Lid may close until then" "30m" "$ICON_ON"
+      item "1 hour"     "Lid may close until then" "1h"  "$ICON_ON"
+      item "2 hours"    "Lid may close until then" "2h"  "$ICON_ON"
+      item "Until further notice" "No deadline — reminds every 30 minutes" "forever" "$ICON_ON"
+      ;;
+  esac
+  printf '{"items":[%s]}\n' "$(IFS=,; echo "${items[*]}")"
+}
+
+cmd_render() { # <surface> [args]
+  case "${1:-}" in
+    swiftbar) render_swiftbar ;;
+    raycast)  render_raycast ;;
+    alfred)   shift || true; render_alfred "${1:-}" ;;
+    *) die "usage: simmer render swiftbar|raycast|alfred [query]" ;;
+  esac
+}
+
+############################################################################
 ### The guard
 #
 # Runs every 30 seconds under launchd, and at login. It is the reason this tool
@@ -834,6 +1007,7 @@ case "${1:-status}" in
   doctor)              cmd_doctor ;;
   budget)              shift || true; cmd_budget "$@" ;;
   notify-test)         cmd_notify_test ;;
+  render)              shift || true; cmd_render "$@" ;;
   extend)              shift || true; cmd_extend "$@" ;;
   +*)                  cmd_extend "$1" ;;
   log)                 [ -f "$LOG" ] && tail -n "${2:-20}" "$LOG" || echo "no log yet" ;;

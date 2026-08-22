@@ -1,6 +1,4 @@
 #!/bin/bash
-# Live simmer state, rendered straight into Raycast's root search.
-#
 # @raycast.schemaVersion 1
 # @raycast.title Simmer status
 # @raycast.mode inline
@@ -9,15 +7,11 @@
 # @raycast.icon simmer.png
 # @raycast.description Is this Mac being held awake, and for how much longer
 #
-# inline mode is the whole reason this is a Raycast command rather than an
-# Alfred workflow: the answer appears without selecting anything, so "is my Mac
-# still awake" costs a keystroke rather than a decision.
-set -uo pipefail
+# A shim on purpose: the core renders every surface (simmer render raycast).
+set -u
 
 # Find simmer. A launcher runs with a minimal PATH, so `command -v` alone is not
-# enough; SIMMER_BIN wins if set. Short on purpose -- this is duplicated in every
-# integration, and the long version is how two of them ended up referencing
-# $SIMMER without ever setting it.
+# enough; SIMMER_BIN wins if set.
 SIMMER="${SIMMER_BIN:-$(command -v simmer 2>/dev/null || true)}"
 if [ ! -x "${SIMMER:-}" ]; then
   for p in "$HOME/.local/bin/simmer" /usr/local/bin/simmer /opt/homebrew/bin/simmer \
@@ -26,21 +20,4 @@ if [ ! -x "${SIMMER:-}" ]; then
   done
 fi
 [ -x "${SIMMER:-}" ] || { echo "simmer not installed -- github.com/moralesl/simmer"; exit 0; }
-
-
-state=idle; left_short=""; reason=""; battery=""; min_battery=""; on_battery=0; until_epoch=0
-while IFS='=' read -r k v; do
-  case "$k" in
-    state) state="$v" ;; left_short) left_short="$v" ;; reason) reason="$v" ;;
-    battery) battery="$v" ;; min_battery) min_battery="$v" ;;
-    on_battery) on_battery="$v" ;; until) until_epoch="$v" ;;
-  esac
-done < <("$SIMMER" --machine 2>/dev/null)
-
-power="${battery}%$([ "$on_battery" = 1 ] && echo " batt" || echo " AC")"
-case "$state" in
-  active)  echo "☕ ${left_short} left · until $(date -r "$until_epoch" '+%H:%M') · ${reason:-no reason} · $power" ;;
-  forever) echo "☕ no deadline · ${reason:-no reason} · $power · floor ${min_battery}%" ;;
-  orphan)  echo "⚠️ sleep disabled with no lease — run: simmer down" ;;
-  *)       echo "⏾ sleep allowed · $power" ;;
-esac
+exec "$SIMMER" render raycast

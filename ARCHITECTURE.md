@@ -44,10 +44,14 @@ flowchart TB
     RC -. reads .-> BIN
 ```
 
-`bin/simmer` is the only thing that writes the lease or touches `pmset`. Every
-front-end shells out to it — none of them reimplement any logic, and none of
-them read the lease file directly. That is why adding a fourth front-end costs
-nothing and cannot introduce a new bug class.
+`bin/simmer` is the only thing that writes the lease or touches `pmset` — and
+since v1.1 it also **renders every surface**: `simmer render swiftbar|raycast|alfred`
+produces the menu bar text, the launcher line and the Alfred JSON. The files in
+`integrations/` are shims of a dozen lines carrying only each host's metadata and
+a resolver. The previous design, with three separate renderers parsing the same
+state, produced six copies of a resolver and two Raycast commands that shipped
+dead — a fourth surface now costs a case branch in the core, tested where
+everything else is.
 
 ## The lease
 
