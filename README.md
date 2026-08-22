@@ -9,7 +9,7 @@
 [![test](https://github.com/moralesl/simmer/actions/workflows/test.yml/badge.svg)](https://github.com/moralesl/simmer/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-macOS%2011%2B-lightgrey?logo=apple)](#install)
-[![dependencies](https://img.shields.io/badge/dependencies-1%20optional-brightgreen)](#install)
+[![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](#install)
 
 </div>
 
@@ -79,13 +79,13 @@ to a particular path.
 
 That links `simmer` into `~/.local/bin` and starts the guard as a LaunchAgent.
 
-**Optional:** `brew install terminal-notifier`. Without it, notifications are
-posted by `osascript`, which macOS attributes to *Script Editor* — whose alert
-style is commonly "none", so they are delivered and never shown. terminal-notifier
-banners reliably appear.
+**Notifications** are posted by `osascript`, so macOS attributes them to *Script
+Editor*. If you never see them, they are arriving but not being displayed —
+check *System Settings → Notifications → Script Editor → Alert style: Banners*.
 
-Neither carries simmer's icon: a shell script cannot brand a macOS notification.
-The menu bar is the channel that always shows the truth, and the one to rely on.
+A shell script cannot brand its own banners, and `terminal-notifier` does not
+help: its binary predates the framework macOS now uses. The menu bar is the
+channel that cannot be suppressed, and the one to rely on.
 
 One step needs root and is therefore **yours to run** — `make install` prints it
 with your username filled in:

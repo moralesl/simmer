@@ -187,33 +187,26 @@ set_disablesleep() { # <0|1>
 #   · An AppleScript applet with its own bundle id and icon: `display
 #     notification` is attributed to the OSA host, Script Editor. Tested.
 #   · SwiftBar's swiftbar://notify: works, but the banner is branded SwiftBar.
-#   · terminal-notifier -appIcon / -contentImage: both rely on private APIs that
-#     no longer exist. On macOS 26 the notification is delivered and the flags do
-#     nothing. Tested on 26.5.1 with terminal-notifier 2.0.0.
+#   · terminal-notifier: the binary inside its bundle is dated 2017 and uses
+#     NSUserNotification, which Apple removed. It registers in the legacy
+#     database -- `-list ALL` shows the entries -- but nothing is ever displayed.
+#     Not a settings problem; the tool cannot work on macOS 26.
 #
 # The only remaining route is a signed, notarised app bundle of our own, which is
 # a different kind of project than a shell script and out of proportion to a
 # banner icon.
 #
-# So terminal-notifier is used when present purely because its banners reliably
-# *appear*, where Script Editor's are commonly suppressed to "none" and thus
-# delivered-but-never-shown. It is a ladder, but a deterministic one: the branch
-# depends on what is installed, not on what happens to be running, so every path
-# on a given machine looks the same. The menu bar remains the channel that cannot
-# be suppressed, and that is the one to rely on.
+# So: osascript, one channel, everywhere. It posts as "Script Editor", whose
+# alert style is commonly "none" -- delivered but never shown, which reads as
+# broken and is worth checking before blaming the tool.
+#
+# Evidence that a *modern* bundle would work: SwiftBar's notifications display
+# fine on this machine. The route to banners of our own is therefore a small
+# signed app using the UserNotifications framework -- see ARCHITECTURE.md. Until
+# then the menu bar is the channel that cannot be suppressed, and the one to
+# rely on.
 notify() { # <title> <subtitle> <body> [system sound]
-  local title="$1" subtitle="$2" body="$3"
-  if command -v terminal-notifier >/dev/null 2>&1; then
-    # -group means a new banner REPLACES the previous simmer one instead of
-    # stacking: at any moment there is one, saying the current thing.
-    local args
-    args=(-title "$title" -message "${body:- }" -group ai.simmer)
-    [ -n "$subtitle" ] && args=("${args[@]}" -subtitle "$subtitle")
-    terminal-notifier "${args[@]}" >/dev/null 2>&1 ||
-      notify_via_osascript "$title" "$subtitle" "$body"
-  else
-    notify_via_osascript "$title" "$subtitle" "$body"
-  fi
+  notify_via_osascript "$1" "$2" "$3"
   # Not decoration: the sound is what carries when a banner is suppressed, and
   # the menu bar is the indicator nothing can drop.
   [ -n "${4:-}" ] && [ -f "/System/Library/Sounds/$4.aiff" ] &&
@@ -646,7 +639,7 @@ cmd_doctor() {
   # without ever prompting. Testing with `sudo -n pmset -g` would fail even
   # with the rule installed, because -g is deliberately not in the allowlist.
   say "passwordless pmset rule"            "sudo -nl $PMSET -a disablesleep 0"
-  say "notification channel"               "command -v terminal-notifier || command -v osascript"
+  say "notification channel"               "command -v osascript"
   say "state directory writable"           "[ -w '$STATE' ]"
   say "caffeinate present"                 "command -v caffeinate"
   echo
@@ -665,17 +658,11 @@ cmd_doctor() {
 
   # Which channel is about to be used matters more than a generic warning: they
   # fail for completely different reasons.
-  if command -v terminal-notifier >/dev/null 2>&1; then
-    echo "Notifications post through terminal-notifier. Its icon, not simmer's --"
-    echo "a shell script cannot brand a macOS banner; see ARCHITECTURE.md."
-    echo "If nothing appears: System Settings > Notifications > terminal-notifier"
-    echo "> Alert style: Banners."
-  else
-    echo "Notifications post as \"Script Editor\" -- a shell script cannot brand its"
-    echo "own banners. terminal-notifier at least shows up: brew install terminal-notifier"
-    echo "If nothing appears: System Settings > Notifications > Script Editor"
-    echo "> Alert style: Banners."
-  fi
+  echo "Notifications post as \"Script Editor\" -- macOS attributes them to the"
+  echo "scripting host, and a shell script cannot change that."
+  echo
+  echo "If nothing appears they are arriving but not being displayed. Check:"
+  echo "  System Settings > Notifications > Script Editor > Alert style: Banners"
   echo
   echo "Firing one now."
   notify "simmer doctor" "notifications are working" "This banner is the test." "Tink"
