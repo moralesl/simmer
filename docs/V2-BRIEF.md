@@ -87,10 +87,17 @@ Tested on macOS 26.5.1, Apple silicon, August 2026.
 | `caffeinate -ims` leaves the display free to sleep; `-dims` holds it | v1 default is `-ims`, which is right |
 | `launchctl bootout` returns *before* the job is gone | wait for it, or `bootstrap` fails with `5: Input/output error` |
 
-**Open research, high value:** Amphetamine documents a *public* API for
-closed-display mode. If that is real, a signed helper could hold the lid **without
-root**, removing the sudoers step entirely. Nobody has checked. Do this first —
-it may reshape the whole install story.
+**Closed 2026-08-22: there is no unprivileged path to holding the lid.**
+Tested: an IOKit assertion with `AppliesOnLidClose` returns `kIOReturnNotPrivileged`
+(0xe00002c1) for a non-root process, on both `PreventSystemSleep` and
+`PreventUserIdleSystemSleep`; the identical assertion without the property succeeds,
+which is merely what caffeinate already does. Independent confirmation: LidRun, a
+commercial product for exactly this use case ("keep Claude Code running when your
+MacBook is closed"), ships `pmset -a disablesleep` behind a privileged helper with
+auto-reversion and a 20% battery floor — simmer's architecture, including the same
+default. The sudoers rule stays, as a validated design rather than a workaround;
+the remaining softening is packaging: offer the one sudo command interactively at
+install.
 
 ### Notifications
 
@@ -191,9 +198,9 @@ apology.
    Ad-hoc suffices; the verified recipe is above. The A/B against a trusted
    self-signed cert showed no difference, so no certificate step exists at all.
 
-Spike 1 (closed-display without root) remains the biggest prize and is untouched.
-If it also lands, v2 needs neither sudo nor a certificate nor any paid account —
-an install with no scary step whatsoever.
+Spike 1 (closed-display without root) is closed, negative — see the awake facts.
+The privileged step is irreducible; v2's job is to make it graceful (one prompted
+sudo at install), not to remove it.
 
 ## Starting prompt
 
