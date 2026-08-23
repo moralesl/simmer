@@ -83,6 +83,30 @@ Under `~/Library/Application Support/SwiftBar/Plugins/`, SwiftBar creates a dire
 Removing a plugin symlink leaves that tree behind, so a renamed plugin accumulates ghosts — `awake.10s.sh` was still there long after the tool was called `simmer`.
 They are empty directories, so `rmdir` bottom-up is the right tool: it refuses if anything is actually in them, where `rm -rf` would not.
 
+### A seam that covers *most* of the side effects is not a seam
+
+The spike's suite advertised itself as hermetic: "no sudo, no real power state
+touched, nothing left behind".
+It had ten `SIMMER_FAKE_*` variables covering the sleep switch, the battery, thermal pressure, the lock delay and the clock — and **zero** covering `caffeinate`, which every single claim spawned as a detached child process holding a real power assertion.
+
+Found by checking for orphans before declaring the machine clean: **222
+`caffeinate` processes**, 219 of them orphaned to `ppid 1`, 13 with no `-t` and therefore never expiring.
+`pmset -g assertions` confirmed they were actively holding `PreventUserIdleSystemSleep` and `PreventDiskIdle`.
+The machine had been prevented from idle-sleeping by leaked test fixtures.
+
+Two independent causes, both instructive:
+
+1. **The seam had a hole.** Anything with a side effect outside the process has to
+   go through the seam, not just the things that are hard to test. `caffeinate`
+   was easy to call and therefore never questioned.
+2. **The test helper bypassed the only cleanup path.** `clear_all() { rm -f
+   "$CLAIMS"/*; }` deleted claim files directly, and `retire_claim()` — the only
+   code that kills the recorded child pid — never ran. A fixture that manipulates
+   state behind the implementation's back will leak whatever the implementation
+   was responsible for.
+
+For v1: no detached child processes at all. See `DESIGN-NOTES.md`.
+
 ### A malformed file in `/etc/sudoers.d` can break `sudo` entirely
 
 Not just the rule — `sudo` itself, which on a laptop with one admin account is a genuinely bad afternoon.

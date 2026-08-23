@@ -120,6 +120,13 @@ without changing the machine under the tester:
 | `XDG_STATE_HOME=<dir>` | state isolation |
 | `SIMMER_RUN_CHUNK` / `SIMMER_RUN_INTERVAL` | run's renewal clocks |
 
+**Every side effect outside the process must be behind this seam, not merely the
+ones that are awkward to test.** The spike learned this by leaking 222 orphaned
+`caffeinate` processes from a suite that called itself hermetic: ten seam
+variables, and none of them covering the one call that spawned a detached child
+holding a real power assertion. If an implementation shells out or spawns
+anything, that has a `SIMMER_FAKE_*` too.
+
 `SIMMER_FAKE_NOW` is not a convenience. Warn-once, the reminder interval and
 deadline crossings are the paths a differential run has to compare, and without a
 substitutable clock they are reachable only by hand-writing timestamps into state

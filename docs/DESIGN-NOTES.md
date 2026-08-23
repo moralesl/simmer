@@ -82,6 +82,33 @@ It converts a silent misuse into a visible one.
 With a cap available, `--until <cap>` is strictly better in almost every case.
 Keep `forever` (it is in the contract) but demote it: offer it in the menu bar only under ⌥, and have it print the cap when one is in force, since the honest answer to "forever" is then "until 23:00".
 
+### ↑ No detached child processes. Hold the assertion in-process
+
+The spike gave every claim a "second, independent clock": `nohup caffeinate -ims
+-t <seconds> &`.
+The reasoning was that if the guard died, that timer would still expire.
+
+What it actually produced was **222 orphaned processes**, 13 of them with no
+timeout at all, holding real power assertions on a machine that was supposed to be clean.
+Every one was `ppid 1`, because `nohup` is exactly how you make a process nobody owns.
+
+For v1, do not spawn anything. Hold the assertion in-process with
+`IOPMAssertionCreateWithName`, and let it die with the process — which is the *correct* lifetime, not a limitation.
+Three things fall out:
+
+- An orphan becomes structurally impossible rather than merely unlikely. There is
+  no child to leak.
+- The "what if the guard dies" case is already covered better, by the LaunchAgent
+  backstop tick that `BRIEF.md` commits to. A timer inside a process that has
+  died is not a backstop; a separate scheduled process is.
+- It goes behind the seam like everything else, so a test never touches real
+  power state.
+
+Worth being precise about what is lost: nothing that mattered. An IOKit assertion
+cannot hold a closed lid — `PLATFORM-FACTS.md` closed that question negatively — so `caffeinate` was never the thing keeping the machine awake with the lid shut.
+`pmset -a disablesleep` is.
+The child process was belt-and-braces for *idle* sleep only, and it cost 222 orphans.
+
 ### ↓ A daemon, a config file, named presets
 
 The spike went ten months without wanting any of them.

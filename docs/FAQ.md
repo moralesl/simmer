@@ -68,6 +68,11 @@ Source fetched by `git` or `curl` and compiled locally runs with no warning, no 
 Verified against a trusted self-signed certificate: no difference.
 The recipe and its traps are in `PLATFORM-FACTS.md`.
 
+**Does simmer spawn background processes?**
+v1: no. It holds its power assertion in-process, so there is nothing to orphan.
+The v0.1 spike used a detached `caffeinate` per claim and leaked 222 of them; see
+`LEARNINGS.md`.
+
 **Where is the state?** `$XDG_STATE_HOME/simmer/` (default `~/.local/state/simmer/`): one flat `key=value` file per claim under `claims/`, the `cap`, and the log.
 Flat rather than JSON so a menu bar can read it without making `jq` a prerequisite for seeing a countdown.
 Written temp-file-then-rename, never edited in place.
