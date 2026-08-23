@@ -118,6 +118,42 @@ Two independent causes, both instructive:
 
 For v1: no detached child processes at all. See `DESIGN-NOTES.md`.
 
+### An installer that checks for a *capability* silently adopts a stranger's grant
+
+The spike's installer decided whether to write its sudoers rule like this:
+
+```bash
+if sudo -nl /usr/bin/pmset -a disablesleep 0 >/dev/null 2>&1; then
+  say "sudoers rule already in place"
+```
+
+That is a check for the **capability**, not for **its own file**.
+On this machine the capability was already granted — by `/etc/sudoers.d/awake`, written years earlier when the tool had a different name.
+So simmer reported "already in place" on every install, never wrote `/etc/sudoers.d/simmer`, and quietly ran on a rule it did not own.
+
+Three consequences, and the third is the one that bites:
+
+1. `make uninstall` printed *"Left alone on purpose: /etc/sudoers.d/simmer"* — a
+   file that had never existed. The uninstall instructions were wrong.
+2. The real grant survived every uninstall, under a name nobody would think to
+   look for.
+3. Auditing the machine reported the rule as present and simmer-owned, because
+   the only evidence anyone looked at was `sudo -nl`.
+
+**For v1: check for its own file AND the capability, and report the difference.**
+
+| own file | capability | say |
+|---|---|---|
+| present | yes | fine, nothing to do |
+| absent | yes | *"something else already grants this — `sudo grep -rn disablesleep /etc/sudoers.d/`"*. Do not adopt it silently |
+| absent | no | install it |
+
+And uninstall may only claim to leave behind what it actually wrote.
+
+This was the third artifact from the pre-rename `awake` era found in one session,
+after `awake.log` in the state directory and `awake.10s.sh` in SwiftBar's plugin tree.
+A tool that gets renamed leaves grants and state under the old name, and nothing goes looking for them.
+
 ### A malformed file in `/etc/sudoers.d` can break `sudo` entirely
 
 Not just the rule — `sudo` itself, which on a laptop with one admin account is a genuinely bad afternoon.

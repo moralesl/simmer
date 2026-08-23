@@ -16,6 +16,9 @@ v1 does hold an idle-sleep assertion of its own, in-process, but that is belt-an
 So a two-line `/etc/sudoers.d` rule, scoped to exactly `pmset -a disablesleep 0` and `pmset -a disablesleep 1` and nothing else.
 Asked once, at install, and the rule is printed in full before it is asked for.
 
+**I removed simmer but `sudo -l` still shows the pmset rule.** Look for it under another name: `sudo grep -rn disablesleep /etc/sudoers /etc/sudoers.d/`.
+This machine carried one called `awake`, from before the tool was renamed, and every simmer install adopted it silently instead of writing its own.
+
 **What is a claim?** Your request for awake time: a deadline, a reason, a battery floor, and your name on it.
 The Mac stays awake until the latest live claim ends.
 

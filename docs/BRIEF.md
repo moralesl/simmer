@@ -71,6 +71,10 @@ Then launch the app once so the notification permission banner appears with simm
 
 Never a `.dmg`, never a browser-downloaded zip: macOS attaches quarantine to browser-style downloads and nothing else, so source fetched by `git` or `curl` and compiled locally runs with no Gatekeeper warning, no certificate and no Apple account.
 
+The privileged step has one rule of its own: **the installer checks for its own
+file, not merely for the capability.** The spike checked `sudo -nl` and therefore adopted a grant left by the tool's previous name, never wrote its own rule, and told people to remove a file that did not exist (`LEARNINGS.md`).
+Finding the capability granted by something else is a thing to *report*, never to assume.
+
 Developers get a Homebrew tap instead — having brew *guarantees* the Command Line Tools, so the formula can compile locally with no binaries in git.
 
 ## In scope for v1
