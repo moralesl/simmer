@@ -14,10 +14,14 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The differential needs the pinned `v1.0.0` reference, which lives in a
+          # tag. A shallow clone has neither.
+          fetch-depth: 0
 
       - name: Shell syntax
         run: |
-          for f in bin/simmer install.sh test/simmer-test.sh \
+          for f in bin/simmer install.sh test/simmer-test.sh test/differential.sh \
                    integrations/swiftbar/*.sh integrations/raycast/*.sh \
                    integrations/alfred/*.sh; do
             bash -n "$f" || exit 1
@@ -42,3 +46,10 @@ jobs:
 
       - name: Test suite
         run: make test
+
+      # Does this still answer what the previous implementation answered? The
+      # only check that catches a message, an exit code, a field name or a state
+      # value drifting -- the class of change where every unit test still passes.
+      # Skips itself, loudly, when the reference tag is not in the clone.
+      - name: Differential against v1
+        run: make diff

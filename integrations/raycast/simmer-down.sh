@@ -19,4 +19,4 @@ if [ ! -x "${SIMMER:-}" ]; then
   done
 fi
 [ -x "${SIMMER:-}" ] || { echo "simmer not installed -- github.com/moralesl/simmer"; exit 0; }
-exec "$SIMMER" down
+exec "$SIMMER" down --owner raycast
