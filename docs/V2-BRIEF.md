@@ -5,74 +5,99 @@ what was *learned* rather than from what was *shipped*. Read the "verified
 platform facts" section before designing anything — most of it was bought with
 failed attempts, and re-deriving it costs the same again.
 
-## What v2 is for
+## Decided 2026-08-23: fresh Swift v2, v1 frozen as the executable spec
 
-**One core, three ways to reach it, and no seams between them.**
+Luis approved the rewrite. The shape:
 
-- **CLI** — for people in a terminal and for agents
-- **Menu bar** — the always-visible truth, which macOS cannot suppress
-- **Launcher (Raycast)** — status and control without a terminal
+- **One .app** containing everything: the menu bar (own NSStatusItem, pot icon),
+  the guard (event-driven — IOKit power/battery/thermal callbacks instead of a
+  30s poll), the notifier (the bundle IS the identity), and the CLI as a binary
+  inside `Contents/MacOS/`, symlinked onto PATH. Raycast/Alfred stay shims that
+  exec the CLI — adding a surface must stay a one-file affair.
+- **CONTRACTS.md is the law.** The CLI surface, exit codes, machine output and
+  the test seam stay byte-compatible, so the v1 suite (92 assertions) runs
+  unmodified against the v2 binary — differential testing against v1 is the
+  safety mechanism that replaces incremental caution.
+- **Install**: clone/brew → build → ONE native admin password prompt (spike B,
+  verified: `do shell script … with administrator privileges` works from an
+  unsigned context and runs as root) writes the sudoers rule → notification
+  permission banner (verified earlier, own icon) → done. No pasted sudo, no
+  cert, no account, nothing downloaded past Gatekeeper.
+- **Git**: same repo; tag `v1`, branch `v1`; `main` becomes Swift when the suite
+  passes against it; v1 may be pruned later.
+- Spike A (ad-hoc NSStatusItem) — see facts table; Spike B — passed.
 
-Judged against three audiences, in this order:
+## D1 (proposed): the claims ledger — the outside-the-box change
 
-1. **An agent** can take, check and hand back time, and can tell how much is left,
-   without parsing prose.
-2. **A human** can see at a glance what is holding their Mac awake and why.
-3. **A non-technical colleague** can install it and use it without a terminal.
+v1 models ONE lease with an owner, which forces conflict rules (`--force`,
+refusals). Reality is concurrent: an agent needs until 15:00, the human until
+15:30, a build until 14:45. Power management itself is counted assertions, not a
+single switch — simmer should be too:
 
-Point 3 is the one v1 fails. Everything else is refinement.
+- `simmer 2h -r x` creates a **claim** (id, owner, reason, deadline). Everyone
+  can hold one; nobody can touch anyone else's. `--force` and owner refusal
+  disappear *by construction* (contract guarantee 4 gets stronger, not weaker).
+- The machine stays awake until the LATEST live claim; the guard retires claims
+  individually on their deadlines; floor/thermal end all of them.
+- `budget` answers over the aggregate (the machine's guarantee, which is what an
+  agent actually needs); `status` lists claims; the menu bar shows the union
+  countdown with per-claim release.
+- `simmer down` releases *your* claims; `down --all` everything.
 
-## Keep — v1 got these right
+Cost: state becomes a claims dir instead of one lease file (format=2), and the
+v1 suite's owner-refusal assertions become documented deltas. Benefit: the
+entire conflict UX disappears, and multi-agent machines (Luis's reality) stop
+fighting over one slot.
 
-- **The lease and the guard.** Borrow the switch with a deadline; something other
-  than memory hands it back. Four release conditions: deadline, battery floor,
-  explicit release, and *found enabled with no lease* (the self-healing branch,
-  which is what makes forgetting structurally impossible).
-- **One writer of state.** Exactly one component touches `pmset` and the lease.
-- **The test seam.** Every OS read/write behind a function that tests can
-  substitute. It is why the suite is hermetic, and it is the single best decision
-  in v1. Generalise it: any OS call, not just power.
-- **The agent contract.** `budget --need 20m` answering in the exit code —
-  `0` room, `1` not enough, `3` no lease at all. `3` must stay distinct from `1`:
-  a small budget and an absent guarantee are different things.
-- **`--owner` plus refusal.** An automated job must not silently overwrite a
-  lease a human set.
+## Also new in v2 (cheap now, designed in rather than bolted on)
 
-## Change — each earned by a specific failure
+- **events.jsonl** — append-only, versioned event stream (took, extended,
+  warned, released+why). Feeds `simmer log`, the menu bar history, and:
+- **`simmer watch`** — stream events as they happen; agents react instead of
+  poll, and hooks become composition (`simmer watch | while read …`) instead of
+  a feature.
+- **`simmer why`** — "why is this Mac awake?" / "why did it sleep at 03:12?"
+  answered from events, for humans.
+- **`--lock`** — lock the screen when taking a claim (the gap COMPARISON.md
+  names; Amphetamine is currently the only tool offering it).
 
-1. **The core renders every surface.** v1 had three separate renderers (SwiftBar
-   130 lines, Alfred 127, Raycast ×4) parsing the same state. That duplication
-   produced six copies of a binary-resolver, two Raycast commands that were dead
-   for a day, and a menu bar icon drawn twice. v2: `simmer render menubar|raycast`
-   in the core. Front-ends become one line, and a fourth surface costs one line.
+## Menu bar design
 
-2. **Swift, not bash.** Two reasons. `/bin/bash` is 3.2, which cost real bugs
-   (`shift` under `set -e`, `${var,,}`, array quoting, `eval` in tests). And a
-   signed bundle is the *only* way to own the notification identity — in Swift
-   that stops being a fight.
+The menu bar has exactly two jobs: **ambient truth** (zero clicks) and the
+**80% actions** (one click). Everything else is deliberately CLI.
 
-3. **One app, not four moving parts.** Now unblocked for zero dollars: the
-   ad-hoc recipe means the app can own its notification identity, so the menu
-   bar, the guard and the notifier can be one locally-built bundle with the pot
-   icon everywhere.
+- Icon = template SF Symbol + countdown text: quiet moon when idle, `42m` when
+  active, orange under 5 min, red for orphan/error. Light/dark follows the
+  system because template images do.
+- Idle menu: presets 30m · 1h · 2h · 4h, "Until…", nothing else.
+- Active menu: status header (until · reason · battery/floor), per-claim rows
+  when D1 lands, Extend +15m / +1h, Release.
+- **⌥ (Option) is the power layer**, the macOS-native convention: holding ⌥
+  swaps Extend→+3h, Release→Release all, reveals "forever", and turns every
+  action into **"Copy as CLI command"** — the menu teaches the CLI instead of
+  hiding it, which is the agent-tool bridge in one feature.
+- Settings window (login item, default floor, transport, doctor, log): behind a
+  single "Settings…" item. Never in the top level.
+- Never in the menu at all: force semantics, owner juggling, transports.
 
-   (previously:) v1 is a script, a LaunchAgent, a SwiftBar
-   plugin and launcher scripts. A Swift menu-bar app can *be* the menu bar, the
-   guard (as a login item) and the notifier, with a small CLI alongside sharing
-   the same state. A non-technical colleague then installs **one thing**.
+## Build phases
 
-4. **Spike every platform primitive before designing on it.** The notification
-   layer was rebuilt four times because an unverified assumption became a
-   premise. Write five lines, watch it work, *then* design.
-
-5. **Anything OS-version-dependent is a setting plus a self-test, on day one.**
-   `simmer notify-test` should have been the first design, not the fifth.
-
-6. **Start extracted, complete.** README with badges, ARCHITECTURE, CHANGELOG,
-   CI and a `make`-style interface in the *initial* commit. v1 accreted these
-   over six commits and still reads that way.
+1. `Sources/SimmerCore` — lease/claims, guard logic, budget, render, seam.
+2. CLI target passing the ported v1 suite (byte-compatible surface).
+3. The app: NSStatusItem + event-driven guard + notifier merged; differential
+   runs against v1 throughout.
+4. Install: build + admin prompt + permission banner; brew tap.
+5. Swap main; tag v1.
 
 ## Verified platform facts — do not re-derive these
+
+New for v2 (2026-08-23):
+
+| Fact | Status |
+|---|---|
+| Native admin prompt (`do shell script … with administrator privileges`) from an unsigned context | ✅ verified — ran as root after one password dialog |
+| Ad-hoc app shows its own NSStatusItem (menu bar) | spike built and launched; awaiting eyes-on confirmation |
+
 
 Tested on macOS 26.5.1, Apple silicon, August 2026.
 
@@ -205,19 +230,18 @@ sudo at install), not to remove it.
 ## Starting prompt
 
 ```
-Read docs/V2-BRIEF.md in ~/workspace/tools/simmer, plus ARCHITECTURE.md and
-docs/FOR-AGENTS.md for the current design and the agent contract.
+Read CONTRACTS.md, docs/V2-BRIEF.md, ARCHITECTURE.md and docs/FOR-AGENTS.md in
+~/workspace/tools/simmer. v1 (bash, on main until the swap) is the reference
+implementation and its test suite is the acceptance test.
 
-I want to rebuild simmer as v2: one core with three interaction surfaces (CLI,
-menu bar, Raycast) that an agent can drive and a human can observe, and that a
-non-technical colleague can install without a terminal. Same product, better
-built.
+Build simmer v2: one Swift .app containing the menu bar, the event-driven guard,
+the notifier and the CLI, per the decided shape and build phases in the brief.
+The CLI surface, exit codes, machine output and test seam are contract-frozen —
+the v1 suite must pass unmodified against the v2 binary before anything else is
+polished. Decision D1 (claims ledger) is approved/rejected in CONTRACTS.md — read
+it there, do not relitigate it.
 
-Start with the two spikes named in the brief — the closed-display API without
-root, and a signed notification from our own bundle. Show me the results before
-designing anything. Do not carry over v1 code; carry over the contracts:
-the lease and guard semantics, budget's exit codes, --owner, and the test seam.
-
-The brief lists six open decisions. Ask me the ones that block you, in the order
-they block you.
+Work in phases with atomic commits; differential-test against the v1 binary in
+the fake environment after every phase. Platform facts in the brief are verified
+— do not re-spike them. Ask Luis only what a phase genuinely blocks on.
 ```
