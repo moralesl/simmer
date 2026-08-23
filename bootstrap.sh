@@ -53,7 +53,9 @@ else
 fi
 
 step "building and installing (a minute or two)"
-make -C "$DIR" install
+# NOTES=0: this script performs the two remaining steps itself right below,
+# so make must not tell the reader to do them.
+make -C "$DIR" install NOTES=0
 
 # ── the one privileged step ─────────────────────────────────────────────────
 # Only root can flip `pmset -a disablesleep`, and the guard must be able to
