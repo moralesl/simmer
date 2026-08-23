@@ -1,14 +1,18 @@
 import Foundation
 
 /// Canonical verbs, with the everyday spellings kept as documented sugar
-/// (DESIGN-NOTES, adopted): `simmer 2h` is `claim 2h`, `+20m` is `extend 20m`,
+/// (CONTRACTS.md § v1 surface additions): `simmer 2h` is `claim 2h`,
+/// `+20m` is `extend 20m`,
 /// `down` is `release`. Normalising up front keeps the parser regular — every
 /// new verb would otherwise risk colliding with something that looks like a
 /// duration.
 enum Normalize {
+    /// Exactly the subcommands SimmerRoot declares — a name here that has no
+    /// subcommand behind it reaches the raw parser, whose "Unexpected
+    /// argument" is the one refusal in the surface that names no fix.
     static let verbs: Set<String> = [
         "claim", "extend", "release", "cap", "status", "budget", "run",
-        "guard", "doctor", "log", "render", "notify-test", "notify-post",
+        "guard", "doctor", "log", "render", "notify-test",
     ]
 
     static func arguments(_ args: [String]) -> [String] {

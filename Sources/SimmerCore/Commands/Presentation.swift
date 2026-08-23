@@ -43,7 +43,11 @@ enum Present {
             ("left", .int(left)),
             ("reason", .string(claim.reason)),
             ("min_battery", .int(claim.minBattery)),
-            ("require_ac", .int(claim.requireAC ? 1 : 0)),
+            // A boolean, like every other yes/no field here and in
+            // events.jsonl. It shipped as 0/1 before v1.0 froze the surface;
+            // one field with two types across two machine surfaces of one
+            // binary is exactly the drift the append-only rule exists to stop.
+            ("require_ac", .bool(claim.requireAC)),
             ("since", .int(claim.started)),
             ("human", .bool(SimmerEnvironment.isHumanOwnerName(claim.owner))),
         ])
@@ -51,7 +55,7 @@ enum Present {
 
     /// The aggregate tail every mutating command's --json carries, so one call
     /// answers "what changed AND what will the machine do now" — no second
-    /// round-trip (DESIGN-NOTES, adopted).
+    /// round-trip (CONTRACTS.md § v1 surface additions).
     static func aggregateJSON(_ aggregate: Aggregate) -> [(String, JSONValue)] {
         [
             ("state", .string(aggregate.state.rawValue)),

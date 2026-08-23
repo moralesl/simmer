@@ -2,9 +2,9 @@ import Foundation
 
 /// The friendly help — what someone typing --help needs, not what a
 /// maintainer needs (that lives in the docs). Includes the complete exit-code
-/// table: a caller that has to guess treats every non-zero as fatal, and
-/// `simmer release` refusing is not the same as it failing (DESIGN-NOTES,
-/// adopted).
+/// table, which CONTRACTS.md § v1 surface additions requires published here: a
+/// caller that has to guess treats every non-zero as fatal, and `simmer
+/// release` refusing is not the same as it failing.
 enum Help {
     static let text = """
 simmer keeps this Mac awake for a while — lid closed — then lets it sleep again.
@@ -20,7 +20,9 @@ TRY THIS
 HOW LONG
   simmer 45                  45 minutes — a bare number means minutes
   simmer 90m · 2h · 1h30m    the usual spellings all work
-  simmer --until 23:00       until 11pm tonight
+  simmer 1d                  a day — overnight wants --require-ac too
+  simmer --until 23:00       until 11pm tonight (a time already past means
+                             tomorrow, and the output says "tomorrow")
   simmer forever             no end time; it reminds you every 30 minutes
 
 EVERYONE GETS THEIR OWN CLAIM
@@ -69,8 +71,14 @@ CHANGING THE DEFAULTS
 CHECKING ON IT
   simmer log                 what the watchdog has actually done
   simmer doctor              is everything wired up? fires a test notification
-  simmer notify-test         one banner per transport — see which your Mac shows
+  simmer notify-test         queue one banner and say whether it can arrive —
+                             banners come from Simmer.app or not at all
+  simmer render swiftbar     draw a launcher surface (also: raycast, alfred)
   simmer --version
+
+REMOVING IT
+  make -C ~/.local/share/simmer uninstall     the app, the CLI, the guard
+  sudo rm /etc/sudoers.d/simmer               the sudo rule (needs root)
 
 FOR SCRIPTS AND AGENTS
   simmer budget --need 20m   "is there room to start a 20-minute job?"
