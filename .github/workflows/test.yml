@@ -1,9 +1,11 @@
-# v1 — the Swift package — builds and its two suites pass. Hermetic:
-# SIMMER_FAKE_* substitutes every power read, the switch is a file, the clock
-# is SIMMER_FAKE_NOW; no sudo, nothing touched on the runner.
+# Both suites, hermetic: SIMMER_FAKE_* substitutes every power read, the
+# switch is a file, the clock is SIMMER_FAKE_NOW; no sudo, nothing touched on
+# the runner.
 #
-# The v0.1 bash spike left the working tree on 2026-08-23 and lives at the
-# git tag `v0.1`, so there is nothing archived left to guard here.
+# Two OS versions, because the platform floor is macOS 14 and simmer reads the
+# machine by parsing `pmset` and `sysadminctl` output — text that is free to
+# change between releases. A green run on the newest macOS says nothing about
+# the oldest one simmer claims to support.
 name: test
 
 on:
@@ -13,11 +15,19 @@ on:
   workflow_dispatch:
 
 jobs:
-  v1:
-    # macOS because the whole tool is macOS power management.
-    runs-on: macos-latest
+  suites:
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-14 is the declared floor (Package.swift), macos-15 the one
+        # most contributors are actually on.
+        os: [macos-14, macos-15]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: swift --version
 
       - name: Build (release, all products)
         run: swift build -c release
@@ -28,7 +38,7 @@ jobs:
       - name: Bundle assembles and signs ad-hoc
         run: make app
 
-      - name: Templates parse
+      - name: Templates and installer parse
         run: |
           plutil -lint launchd/guard.plist.template app/Info.plist.template
           bash -n bootstrap.sh
