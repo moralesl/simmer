@@ -184,12 +184,13 @@ public enum Commands {
                 outcome.notifications.append(NotificationRequest(
                     title: "☕ Simmering, no deadline",
                     subtitle: "reminder every 30 min · floor \(input.minBattery)%",
-                    body: input.reason.isEmpty ? "Ends with simmer down." : input.reason))
+                    body: input.reason.isEmpty ? "Ends with simmer down." : input.reason,
+                    actionable: true))
             } else {
                 outcome.notifications.append(NotificationRequest(
                     title: "☕ Simmering until \(Formats.hhmm(after.until))",
                     subtitle: "\(Durations.human(after.until - ctx.now)) · lid may close",
-                    body: input.reason))
+                    body: input.reason, actionable: true))
             }
         }
 
@@ -284,12 +285,13 @@ public enum Commands {
             // formatted as a time — that reads "01:00".
             if after.until == 0 {
                 outcome.notifications.append(NotificationRequest(
-                    title: "☕ Extended", subtitle: "still no deadline overall", body: claim.reason))
+                    title: "☕ Extended", subtitle: "still no deadline overall",
+                    body: claim.reason, actionable: true))
             } else {
                 outcome.notifications.append(NotificationRequest(
                     title: "☕ Extended until \(Formats.hhmm(after.until))",
                     subtitle: "\(Durations.human(after.until - ctx.now)) left",
-                    body: claim.reason))
+                    body: claim.reason, actionable: true))
             }
         }
 

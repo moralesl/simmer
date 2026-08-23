@@ -129,10 +129,14 @@ final class RunCoordinator {
                     // --max reached: the claim lapses, the command does NOT.
                     ctx.ledger.log("run: --max budget exhausted, no longer renewing (\(claim.reason))",
                                    now: ctx.now)
-                    Notify.post(NotificationRequest(
-                        title: "☕ run budget exhausted",
-                        subtitle: "sleep re-allowed, command still running",
-                        body: claim.reason), env: Runtime.environment())
+                    Runtime.emit({
+                        var outcome = Outcome()
+                        outcome.notifications.append(NotificationRequest(
+                            title: "☕ run budget exhausted",
+                            subtitle: "sleep re-allowed, command still running",
+                            body: claim.reason))
+                        return outcome
+                    }())
                     return
                 }
                 var target = ctx.now + chunk

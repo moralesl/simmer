@@ -176,14 +176,23 @@ The obvious bundle layout — app executable `Contents/MacOS/Simmer`, CLI `Conte
 Nothing errors; the bundle even signs.
 Found on 2026-08-23 because the launch check watched process lifetime rather than trusting the build. v1's app executable is therefore `simmer-app` (`CFBundleExecutable` does not have to match the app's name), and the CLI keeps the `Contents/MacOS/simmer` path the docs promise.
 
-### Reinstalling an ad-hoc bundle appears to reset its notification grant
+### The notification grant belongs to the EXECUTABLE, not the bundle — and a second binary in the bundle reads its own
 
-Observed 2026-08-23, twice: `.dev2` was authorized and delivering banners; one `make install` later (rebuild + `codesign --sign -` + `lsregister -u`/`-f`
-+ same path, same bundle id) the status read `notDetermined` again.
-  Two suspects, not yet separated: the `lsregister -u` of the outgoing bundle, or the ad-hoc re-sign — `--sign -` mints a new code identity every build, and macOS may key the grant to it.
-  The experiment that separates them: authorize, reinstall *without* `-u` (unchanged binary), check; then rebuild-and-resign, check.
-  If the re-sign is the cause, every update costs colleagues an Allow click, and the fix is signing with a stable self-signed certificate instead of `-` — PLATFORM-FACTS already verified the two behave identically for the *first* grant.
-  Downgrade, not breakage: the app re-asks on next launch.
+The costliest misread of 2026-08-23, in two acts.
+Act one: `notify-post --status` (the CLI binary, exec'd directly from `Contents/MacOS/`) said `notDetermined` right after a reinstall — diagnosed as "reinstalling resets the grant", written up as such, wrong.
+Act two: banners posted by the APP kept working the whole time, on the same bundle id, across the same reinstall.
+The tell: status read `notDetermined` at the very moment a Simmer-branded banner sat on screen.
+
+What is actually true on this machine: with two executables in one ad-hoc bundle, each reads (and would request) its **own** authorization state.
+The app's grant was never reset; the CLI's was never granted, so every CLI-posted banner silently dropped — which is also the real reason the osascript fallback kept firing before it was removed.
+
+Consequences, all structural now:
+
+- **The app is the only poster.** The CLI and the guard enqueue into `$STATE/notify-spool.jsonl`; the app drains it every few seconds and posts, action buttons included.
+  App not running = no banners, which is honest — the menu bar is gone then too.
+- **The CLI never links UserNotifications at all** (enforced in Package.swift): asking UN anything from the CLI answers questions about the wrong executable.
+- Doctor and notify-test read the app's heartbeat file (`$STATE/app.status`), never UN.
+- `SIMMER_NOTIFIER_APP` is retired: there is no notifier bundle to point anywhere — the spool lives under `XDG_STATE_HOME` and is seam-isolated by construction.
 
 ### A CLT-only toolchain hides swift-testing from `swift test`
 

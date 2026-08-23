@@ -53,13 +53,16 @@ struct DoctorCLI: ParsableCommand {
             }
         }
 
-        let bundleBinary = Notify.bundleBinary(env: env)
-        if FileManager.default.isExecutableFile(atPath: bundleBinary) {
-            let status = Shell.run(bundleBinary, ["notify-post", "--status"])
-                .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            check("notifications authorized for Simmer", status == "authorized")
-        } else {
-            check("Simmer.app installed (the only notification identity)", false)
+        // The app's heartbeat, never UNUserNotificationCenter from here: this
+        // executable would be told about its own never-granted state
+        // (LEARNINGS.md — that misread cost a wrong diagnosis once already).
+        let appStatus = ctx.ledger.readAppStatus()
+        let appRunning = appStatus.map {
+            Shell.run("/bin/ps", ["-p", String($0.pid)]).status == 0
+        } ?? false
+        check("Simmer.app running (posts every banner, draws the menu bar)", appRunning)
+        if appRunning, let appStatus {
+            check("notifications authorized for Simmer", appStatus.notify == "authorized")
         }
 
         check("claims directory writable",
@@ -95,10 +98,11 @@ struct DoctorCLI: ParsableCommand {
 
         // The exact state matters more than a generic warning: pending and
         // denied fail for completely different reasons, with different fixes.
-        if FileManager.default.isExecutableFile(atPath: bundleBinary) {
-            let status = Shell.run(bundleBinary, ["notify-post", "--status"])
-                .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            switch status {
+        if !appRunning {
+            print("Simmer.app is not running, so no banners at all — simmer never")
+            print("borrows another app's identity. Fix: open -a Simmer (or make install).")
+        } else {
+            switch appStatus?.notify {
             case "authorized":
                 print("Notifications post as \"Simmer\", with simmer's own icon.")
             case "notDetermined":
@@ -110,18 +114,20 @@ struct DoctorCLI: ParsableCommand {
                 print("System Settings > Notifications > Simmer. Until then, no banners:")
                 print("simmer posts under its own name or not at all.")
             }
-        } else {
-            print("Simmer.app is not installed, so no banners at all — simmer never")
-            print("borrows another app's identity. Fix: make install.")
         }
         print("")
         if env.notifyTransport == "none" {
-            print("SIMMER_NOTIFY=none — not firing a test banner.")
+            print("SIMMER_NOTIFY=none — not queuing a test banner.")
         } else {
-            print("Firing one now.")
-            Notify.post(NotificationRequest(title: "simmer doctor",
-                                            subtitle: "notifications are working",
-                                            body: "This banner is the test."), env: env)
+            print("Queuing one now — the app posts it within a few seconds.")
+            Runtime.emit({
+                var outcome = Outcome()
+                outcome.notifications.append(NotificationRequest(
+                    title: "simmer doctor",
+                    subtitle: "notifications are working",
+                    body: "This banner is the test."))
+                return outcome
+            }())
         }
         throw ExitCode(failures > 0 ? 1 : 0)
     }

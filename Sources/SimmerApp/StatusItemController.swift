@@ -69,9 +69,34 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             item.action = #selector(runAction(_:))
             item.representedObject = ActionBox(action)
         } else {
+            // Information rows: auto-disabled (no action), but NOT dimmed —
+            // an attributed title keeps its ink, and "2 claims" in
+            // disabled-gray reads as "nothing here". Learned from use.
             item.isEnabled = false
+            item.attributedTitle = informationTitle(model)
         }
         return item
+    }
+
+    private func informationTitle(_ model: MenuItemModel) -> NSAttributedString {
+        let menuFont = NSFont.menuFont(ofSize: 0)
+        if model.isProminent {
+            return NSAttributedString(string: model.title, attributes: [
+                .foregroundColor: NSColor.labelColor,
+                .font: NSFont.boldSystemFont(ofSize: menuFont.pointSize),
+            ])
+        }
+        let title = NSMutableAttributedString(string: model.title, attributes: [
+            .foregroundColor: NSColor.labelColor,
+            .font: menuFont,
+        ])
+        // The trailing "— until 17:00" is context, not the point: secondary ink.
+        if let range = model.title.range(of: " — ", options: .backwards) {
+            let nsRange = NSRange(range.lowerBound..<model.title.endIndex, in: model.title)
+            title.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor,
+                               range: nsRange)
+        }
+        return title
     }
 
     @objc private func runAction(_ sender: NSMenuItem) {

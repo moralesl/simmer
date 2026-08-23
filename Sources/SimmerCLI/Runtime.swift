@@ -47,8 +47,17 @@ enum Runtime {
         for line in outcome.stderr {
             FileHandle.standardError.write(Data((line + "\n").utf8))
         }
+        // The app is the only poster — macOS binds the notification grant to
+        // the executable that asked, and this executable never asks
+        // (LEARNINGS.md). Banners go through the spool; the app drains it
+        // within seconds. App not running = no banners, honestly: the menu
+        // bar is gone then too.
+        guard !outcome.notifications.isEmpty else { return }
+        let env = environment()
+        guard env.notifyTransport != "none" else { return }
+        let ledger = Ledger(stateDir: env.stateDir)
         for notification in outcome.notifications {
-            Notify.post(notification, env: environment())
+            ledger.enqueueNotification(notification, now: env.now())
         }
     }
 }

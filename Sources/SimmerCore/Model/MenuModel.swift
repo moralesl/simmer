@@ -21,28 +21,33 @@ public struct MenuItemModel: Equatable, Sendable {
     public var title: String
     /// SF Symbol name, drawn as the item's image.
     public var symbol: String?
-    /// nil = a disabled information row.
+    /// nil = an information row. Information is NOT dimmed: the renderer
+    /// gives it real label colors, because "2 claims" in disabled-gray reads
+    /// as "nothing here" — which is exactly how it got misread in use.
     public var action: MenuAction?
     /// Shown only while ⌥ is held — the power layer.
     public var isAlternate: Bool
+    /// The one leading line that answers "what is my Mac doing" — drawn bold.
+    public var isProminent: Bool
     public var children: [MenuItemModel]
     public var isSeparator: Bool
 
     public static let separator = MenuItemModel(title: "", isSeparator: true)
 
     public init(title: String, symbol: String? = nil, action: MenuAction? = nil,
-                isAlternate: Bool = false, children: [MenuItemModel] = [],
-                isSeparator: Bool = false) {
+                isAlternate: Bool = false, isProminent: Bool = false,
+                children: [MenuItemModel] = [], isSeparator: Bool = false) {
         self.title = title
         self.symbol = symbol
         self.action = action
         self.isAlternate = isAlternate
+        self.isProminent = isProminent
         self.children = children
         self.isSeparator = isSeparator
     }
 
-    static func header(_ title: String) -> MenuItemModel {
-        MenuItemModel(title: title)
+    static func header(_ title: String, prominent: Bool = false) -> MenuItemModel {
+        MenuItemModel(title: title, isProminent: prominent)
     }
 }
 
@@ -54,7 +59,7 @@ public enum MenuModel {
 
         switch aggregate.state {
         case .idle:
-            items.append(.header("Sleep allowed — \(batteryLine)"))
+            items.append(.header("Sleep allowed — \(batteryLine)", prominent: true))
             items.append(.separator)
             items.append(.header("Keep awake for…"))
             for (title, duration) in [("30 minutes", "30m"), ("1 hour", "1h"), ("2 hours", "2h")] {
@@ -69,7 +74,7 @@ public enum MenuModel {
                                        action: .claimForever, isAlternate: true))
 
         case .orphan:
-            items.append(.header("Sleep is disabled with nothing claiming it"))
+            items.append(.header("Sleep is disabled with nothing claiming it", prominent: true))
             items.append(.header("Nobody is scheduled to hand it back — is the guard running?"))
             items.append(.separator)
             items.append(MenuItemModel(title: "Allow sleep now", symbol: "moon.zzz.fill",
@@ -81,7 +86,7 @@ public enum MenuModel {
             let untilText = aggregate.until == 0
                 ? "until further notice" : "until \(Formats.hhmm(aggregate.until))"
             let claims = aggregate.count == 1 ? "1 claim" : "\(aggregate.count) claims"
-            items.append(.header("Awake \(untilText) — \(claims)"))
+            items.append(.header("Awake \(untilText) — \(claims)", prominent: true))
             items.append(.separator)
             for entry in aggregate.live {
                 let deadline = entry.effectiveUntil == 0

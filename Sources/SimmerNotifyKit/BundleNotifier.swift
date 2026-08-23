@@ -2,18 +2,36 @@ import Foundation
 import SimmerCore
 import UserNotifications
 
-/// The one UNUserNotificationCenter implementation, shared by the CLI's
-/// `notify-post` and the app. Two hand-kept copies of this glue is how the
-/// CLI once requested authorization from the wrong context and burned a
-/// bundle id (LEARNINGS.md).
+/// The one UNUserNotificationCenter implementation. Only the APP links this:
+/// macOS binds the notification grant to the executable that requested it, so
+/// a second executable in the same bundle reads its own never-granted state —
+/// the misread that produced a wrong LEARNINGS diagnosis. The CLI therefore
+/// never touches UN at all; it enqueues into the ledger's spool and the app
+/// posts from here.
 ///
-/// Deliberately does NOT expose requestAuthorization: the permission request
-/// belongs to the app alone, launched via LaunchServices, where macOS shows
-/// it as a real banner. Everything here only reads the verdict and posts
-/// under it.
+/// requestAuthorization still lives in the app's Notifier, not here: asking
+/// is a UI moment, posting is not.
 public enum BundleNotifier {
+    public static let aggregateCategory = "simmer.aggregate"
+
     /// nil bundle id = not running from inside a bundle; posting would throw.
     public static var available: Bool { Bundle.main.bundleIdentifier != nil }
+
+    /// The Extend/Release buttons every actionable banner carries.
+    /// Idempotent; the app calls it once at launch.
+    public static func registerCategories() {
+        guard available else { return }
+        let extend = UNNotificationAction(identifier: "simmer.extend30",
+                                          title: "Extend 30 min")
+        let release = UNNotificationAction(identifier: "simmer.release",
+                                           title: "Release",
+                                           options: [.destructive])
+        UNUserNotificationCenter.current().setNotificationCategories([
+            UNNotificationCategory(identifier: aggregateCategory,
+                                   actions: [extend, release],
+                                   intentIdentifiers: []),
+        ])
+    }
 
     public static func authorizationStatus() -> String {
         guard available else { return "unbundled" }
@@ -32,33 +50,17 @@ public enum BundleNotifier {
         return status
     }
 
-    public static func content(for request: NotificationRequest,
-                               category: String? = nil) -> UNMutableNotificationContent {
+    /// Fire-and-forget from the app's main flow; UN handles delivery.
+    public static func post(_ request: NotificationRequest) {
+        guard available else { return }
         let content = UNMutableNotificationContent()
         content.title = request.title
         if !request.subtitle.isEmpty { content.subtitle = request.subtitle }
         if !request.body.isEmpty { content.body = request.body }
         if request.sound { content.sound = .default }
-        if let category { content.categoryIdentifier = category }
-        return content
-    }
-
-    /// Post synchronously, returning 0 only when the banner was accepted.
-    /// Non-zero = not (or not yet) authorized — callers drop the message;
-    /// the menu bar is the channel that cannot be suppressed.
-    public static func post(_ request: NotificationRequest,
-                            category: String? = nil) -> Int32 {
-        guard available, authorizationStatus() == "authorized" else { return 1 }
-        let semaphore = DispatchSemaphore(value: 0)
-        var failed = false
+        if request.actionable { content.categoryIdentifier = aggregateCategory }
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: UUID().uuidString,
-                                  content: content(for: request, category: category),
-                                  trigger: nil)) { error in
-            failed = error != nil
-            semaphore.signal()
-        }
-        _ = semaphore.wait(timeout: .now() + 10)
-        return failed ? 1 : 0
+                                  content: content, trigger: nil))
     }
 }

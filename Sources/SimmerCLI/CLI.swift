@@ -24,8 +24,7 @@ struct SimmerRoot: ParsableCommand {
         abstract: "Keeps this Mac awake for a bounded time — lid closed — then lets it sleep again.",
         subcommands: [ClaimCLI.self, ExtendCLI.self, ReleaseCLI.self, CapCLI.self,
                       StatusCLI.self, BudgetCLI.self, RunCLI.self, GuardCLI.self,
-                      DoctorCLI.self, LogCLI.self, RenderCLI.self,
-                      NotifyTestCLI.self, NotifyPostCLI.self]
+                      DoctorCLI.self, LogCLI.self, RenderCLI.self, NotifyTestCLI.self]
     )
 }
 
@@ -239,67 +238,46 @@ struct RenderCLI: ParsableCommand {
     }
 }
 
-// MARK: notify-post (hidden) — post as the bundle this binary lives in
-
-struct NotifyPostCLI: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "notify-post", shouldDisplay: false)
-
-    @Argument var title: String = ""
-    @Argument var subtitle: String = ""
-    @Argument var body: String = ""
-
-    @Flag(name: .customLong("silent")) var silent = false
-    @Flag(name: .customLong("status"),
-          help: "Print the authorization status instead of posting.")
-    var status = false
-
-    func run() throws {
-        if status {
-            print(Notify.authorizationStatus())
-            throw ExitCode.success
-        }
-        throw ExitCode(Notify.postAsBundle(title: title, subtitle: subtitle,
-                                           body: body, sound: !silent))
-    }
-}
-
 // MARK: notify-test
 
 struct NotifyTestCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "notify-test",
-        abstract: "Fire one test banner as Simmer — there is no other identity.")
+        abstract: "Queue one test banner for the app — Simmer is the only identity that posts.")
 
     @OptionGroup var common: CommonOptions
 
     func run() throws {
-        let env = Runtime.environment()
-        let bundleBinary = Notify.bundleBinary(env: env)
-        guard FileManager.default.isExecutableFile(atPath: bundleBinary) else {
-            print("Simmer.app is not installed, so there is nothing that can post.")
-            print("simmer only ever posts under its own name — no borrowed identities.")
-            print("Fix: make install, then open -a Simmer and click Allow once.")
+        let ctx = Runtime.context(ownerFlag: common.owner)
+        // The app is the only poster (its executable holds the grant), so the
+        // honest test is: enqueue, then report what the app last said about
+        // itself — never ask UNUserNotificationCenter from this process,
+        // which would be told about ITS OWN never-granted state.
+        ctx.ledger.enqueueNotification(NotificationRequest(
+            title: "simmer notify-test",
+            subtitle: "notifications are working",
+            body: "This banner is the test — pot icon, buttons and all.",
+            actionable: true), now: ctx.now)
+
+        guard let status = ctx.ledger.readAppStatus(),
+              Shell.run("/bin/ps", ["-p", String(status.pid)]).status == 0 else {
+            print("Queued — but Simmer.app is not running, so nobody will post it.")
+            print("open -a Simmer  (banners and the menu bar live in the app)")
             throw ExitCode(1)
         }
-        let status = Shell.run(bundleBinary, ["notify-post", "--status"])
-            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch status {
+        switch status.notify {
         case "authorized":
-            _ = Shell.run(bundleBinary, ["notify-post", "simmer notify-test",
-                                         "notifications are working",
-                                         "This banner is the test — pot icon and all."])
-            print("Sent, as \"Simmer\" with simmer's own icon.")
+            print("Queued — the banner arrives as \"Simmer\" within a few seconds.")
         case "notDetermined":
-            print("Waiting for permission: open -a Simmer and click Allow on the banner.")
+            print("Queued — but macOS is still waiting for you to click Allow on")
+            print("Simmer's permission banner. open -a Simmer shows it again.")
             throw ExitCode(1)
         case "denied":
-            print("Notifications for \"Simmer\" are DENIED — macOS caches that per app.")
+            print("Queued — but notifications for \"Simmer\" are DENIED.")
             print("Re-enable in System Settings > Notifications > Simmer.")
             throw ExitCode(1)
         default:
-            print("Could not read the notification status (\(status)).")
-            throw ExitCode(1)
+            print("Queued — the app has not reported its permission state yet.")
         }
         print("")
         print("Notifications are optional either way: the menu bar always shows the")

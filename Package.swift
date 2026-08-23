@@ -25,11 +25,13 @@ let package = Package(
             dependencies: ["SimmerCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // The CLI deliberately does NOT link SimmerNotifyKit: only the app's
+        // executable holds the notification grant, so the CLI never touches
+        // UserNotifications — it enqueues into the spool instead.
         .executableTarget(
             name: "simmer",
             dependencies: [
                 "SimmerCore",
-                "SimmerNotifyKit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/SimmerCLI",

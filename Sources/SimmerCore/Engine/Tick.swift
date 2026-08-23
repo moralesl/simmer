@@ -84,7 +84,8 @@ public enum Tick {
                     outcome.notifications.append(NotificationRequest(
                         title: "🔌 Battery \(percent)%, floor \(claim.minBattery)%",
                         subtitle: "plug in, or simmer hands the switch back soon",
-                        body: claim.reason.isEmpty ? claim.owner : claim.reason))
+                        body: claim.reason.isEmpty ? claim.owner : claim.reason,
+                        actionable: true))
                     ledger.log("pre-floor warning for \(claim.owner) at \(percent)% (floor \(claim.minBattery)%)",
                                now: ctx.now)
                     ledger.event("prefloor_warn", now: ctx.now, [
@@ -128,7 +129,8 @@ public enum Tick {
                 outcome.notifications.append(NotificationRequest(
                     title: "☕ \(Durations.human(left)) left",
                     subtitle: "then this Mac sleeps",
-                    body: "simmer +30m extends it.\(reasonPart)"))
+                    body: "simmer +30m extends it.\(reasonPart)",
+                    actionable: true))
                 ledger.event("warn", now: ctx.now, [
                     ("owner", .string(defining.owner)),
                     ("until", .int(aggregate.until)),
@@ -143,7 +145,8 @@ public enum Tick {
             outcome.notifications.append(NotificationRequest(
                 title: "☕ Still simmering, no deadline",
                 subtitle: "running \(Durations.human(ctx.now - defining.started))",
-                body: defining.reason.isEmpty ? "simmer down ends it." : defining.reason))
+                body: defining.reason.isEmpty ? "simmer down ends it." : defining.reason,
+                actionable: true))
             ledger.event("remind", now: ctx.now, [
                 ("owner", .string(defining.owner)),
                 ("running", .int(ctx.now - defining.started)),

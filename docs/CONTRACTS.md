@@ -89,8 +89,8 @@ Any implementation MUST honour these, or it cannot be tested without root and wi
 | `SIMMER_FAKE_LOCKDELAY=<seconds>` | screen-lock grace after the lid closes |
 | `SIMMER_FAKE_NOW=<epoch>` | **the clock.** Relative arithmetic reads from it; absolute formatting is unaffected |
 | `SIMMER_HUMAN=1` | the caller carries human authority regardless of owner |
-| `SIMMER_NOTIFY=<transport\|none>` | notification routing |
-| `SIMMER_NOTIFIER_APP=<path>` | notifier bundle override |
+| `SIMMER_NOTIFY=<transport\|none>` | `none` silences. In v1 there is exactly one transport: the CLI enqueues into `$STATE/notify-spool.jsonl` and the app — the only executable holding a notification grant — posts. The spool is the assertable surface |
+| `SIMMER_NOTIFIER_APP=<path>` | **retired in v1** (was: notifier bundle override). The spool lives under `XDG_STATE_HOME`, so notification routing is seam-isolated by construction; see LEARNINGS on per-executable grants |
 | `SIMMER_BIN=<path>` | which binary integrations exec |
 | `XDG_STATE_HOME=<dir>` | state isolation |
 | `SIMMER_RUN_CHUNK` / `SIMMER_RUN_INTERVAL` | run's renewal clocks |

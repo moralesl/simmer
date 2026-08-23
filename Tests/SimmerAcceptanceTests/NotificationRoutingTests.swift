@@ -1,94 +1,94 @@
 import Foundation
 import Testing
 
-/// Notification routing, tested hermetically: SIMMER_NOTIFIER_APP points at a
-/// fake bundle whose `simmer` is a shell script appending its arguments to a
-/// log. What lands there is exactly what the CLI would have handed the real
-/// bundle — identity, once-ness and silence are all assertable without a
-/// single real banner. (The seam rule again: this posting path is a side
-/// effect outside the process, so it too must be substitutable.)
+/// Notification routing, tested hermetically at the spool: the app is the
+/// only process that ever posts (macOS binds the grant to the executable —
+/// LEARNINGS.md), so what the CLI and the guard *enqueue* is exactly the
+/// contract to assert. Once-ness, silence and the action buttons are all
+/// here, without a single real banner.
 extension Sim {
-    /// Installs the capture bundle; returns the log it writes and the env to run with.
-    func installFakeNotifier() -> (log: URL, env: [String: String]) {
-        let app = root.appendingPathComponent("FakeSimmer.app")
-        let macos = app.appendingPathComponent("Contents/MacOS")
-        try! FileManager.default.createDirectory(at: macos, withIntermediateDirectories: true)
-        let log = root.appendingPathComponent("notify.log")
-        let script = "#!/bin/sh\necho \"$@\" >> \"\(log.path)\"\n"
-        let binary = macos.appendingPathComponent("simmer")
-        try! script.write(to: binary, atomically: true, encoding: .utf8)
-        try! FileManager.default.setAttributes([.posixPermissions: 0o755],
-                                               ofItemAtPath: binary.path)
-        return (log, ["SIMMER_NOTIFY": "bundle", "SIMMER_NOTIFIER_APP": app.path])
+    func spoolEntries() -> [[String: Any]] {
+        guard let text = try? String(contentsOf: stateDir.appendingPathComponent("notify-spool.jsonl"),
+                                     encoding: .utf8) else { return [] }
+        return text.split(separator: "\n").compactMap {
+            try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+        }
     }
 
-    func notifyLines(_ log: URL) -> [String] {
-        ((try? String(contentsOf: log, encoding: .utf8)) ?? "")
-            .split(separator: "\n").map(String.init)
+    func spoolTitles() -> [String] {
+        spoolEntries().compactMap { $0["title"] as? String }
     }
+
+    /// The default harness env mutes notifications; these tests turn them on.
+    static let notifying = ["SIMMER_NOTIFY": "app"]
 }
 
 @Suite struct NotificationRoutingTests {
-    @Test func aClaimPostsExactlyOneBannerThroughTheBundle() {
+    @Test func aClaimQueuesExactlyOneActionableBanner() {
         let sim = Sim(); defer { sim.tearDown() }
-        let (log, env) = sim.installFakeNotifier()
-        sim.run(["15m", "--owner", "terminal"], env: env)
-        let lines = sim.notifyLines(log)
-        #expect(lines.count == 1)
-        #expect(lines.first?.contains("notify-post") == true)
-        #expect(lines.first?.contains("Simmering until") == true)
+        sim.run(["15m", "--owner", "terminal"], env: Sim.notifying)
+        let entries = sim.spoolEntries()
+        #expect(entries.count == 1)
+        #expect((entries.first?["title"] as? String)?.contains("Simmering until") == true)
+        // The Extend/Release buttons ride on CLI-triggered banners too.
+        #expect(entries.first?["actionable"] as? Bool == true)
+        #expect(entries.first?["v"] as? Int == 1)
+        #expect(entries.first?["ts"] as? Int == Sim.epoch)
     }
 
     @Test func aRepeatClickInsideTheSameMinuteIsNotNews() {
         let sim = Sim(); defer { sim.tearDown() }
-        let (log, env) = sim.installFakeNotifier()
-        // The double-banner from the first live install: two menu clicks,
-        // seconds apart, both formatting the same HH:MM.
-        sim.run(["15m", "--owner", "menubar"], env: env)
-        sim.run(["15m", "--owner", "menubar"], now: Sim.epoch + 7, env: env)
-        #expect(sim.notifyLines(log).count == 1)
+        // The double-banner from the first live install: two clicks, seconds
+        // apart, both formatting the same HH:MM.
+        sim.run(["15m", "--owner", "menubar"], env: Sim.notifying)
+        sim.run(["15m", "--owner", "menubar"], now: Sim.epoch + 7, env: Sim.notifying)
+        #expect(sim.spoolEntries().count == 1)
         // Moving the deadline across a minute IS news again.
-        sim.run(["15m", "--owner", "menubar"], now: Sim.epoch + 120, env: env)
-        #expect(sim.notifyLines(log).count == 2)
+        sim.run(["15m", "--owner", "menubar"], now: Sim.epoch + 120, env: Sim.notifying)
+        #expect(sim.spoolEntries().count == 2)
     }
 
     @Test func aClaimInsideALongerOneIsSilent() {
         let sim = Sim(); defer { sim.tearDown() }
-        let (log, env) = sim.installFakeNotifier()
-        sim.run(["2h", "--owner", "terminal"], env: env)
-        sim.run(["30m", "--owner", "agent"], env: env)
-        #expect(sim.notifyLines(log).count == 1) // only the first changed the promise
+        sim.run(["2h", "--owner", "terminal"], env: Sim.notifying)
+        sim.run(["30m", "--owner", "agent"], env: Sim.notifying)
+        #expect(sim.spoolEntries().count == 1) // only the first changed the promise
     }
 
-    @Test func theDeadlineWarningReachesTheBundleOnce() {
+    @Test func theGuardQueuesItsWarningOnce() {
         let sim = Sim(); defer { sim.tearDown() }
-        let (log, env) = sim.installFakeNotifier()
-        sim.run(["30m", "--owner", "terminal"], env: env)
-        sim.run(["guard"], now: Sim.epoch + 1600, env: env)
-        sim.run(["guard"], now: Sim.epoch + 1700, env: env)
-        let warnings = sim.notifyLines(log).filter { $0.contains("left") }
+        sim.run(["30m", "--owner", "terminal"], env: Sim.notifying)
+        sim.run(["guard"], now: Sim.epoch + 1600, env: Sim.notifying)
+        sim.run(["guard"], now: Sim.epoch + 1700, env: Sim.notifying)
+        let warnings = sim.spoolEntries().filter {
+            ($0["title"] as? String)?.contains("left") == true
+        }
         #expect(warnings.count == 1)
+        #expect(warnings.first?["actionable"] as? Bool == true)
     }
 
-    @Test func releasingSaysSleepAllowedAgain() {
+    @Test func releasingSaysSleepAllowedAgainWithoutButtons() {
         let sim = Sim(); defer { sim.tearDown() }
-        let (log, env) = sim.installFakeNotifier()
-        sim.run(["15m", "--owner", "terminal"], env: env)
-        sim.run(["down", "--owner", "terminal"], env: env)
-        #expect(sim.notifyLines(log).last?.contains("Sleep allowed again") == true)
+        sim.run(["15m", "--owner", "terminal"], env: Sim.notifying)
+        sim.run(["down", "--owner", "terminal"], env: Sim.notifying)
+        let last = sim.spoolEntries().last
+        #expect((last?["title"] as? String)?.contains("Sleep allowed again") == true)
+        // Nothing to extend or release on an idle machine: no buttons.
+        #expect(last?["actionable"] as? Bool == false)
     }
 
-    @Test func noneMeansSilenceAndMissingBundleMeansSilence() {
+    @Test func noneMeansNothingIsEvenQueued() {
         let sim = Sim(); defer { sim.tearDown() }
-        let (log, env) = sim.installFakeNotifier()
-        var muted = env
-        muted["SIMMER_NOTIFY"] = "none"
-        sim.run(["15m", "--owner", "terminal"], env: muted)
-        #expect(sim.notifyLines(log).isEmpty)
-        // No bundle installed: dropped, never re-routed to a borrowed identity.
-        sim.run(["1h", "--owner", "terminal"],
-                env: ["SIMMER_NOTIFY": "bundle",
-                      "SIMMER_NOTIFIER_APP": sim.root.appendingPathComponent("NoSuch.app").path])
-        #expect(sim.notifyLines(log).isEmpty)
+        sim.run(["15m", "--owner", "terminal"]) // harness default: SIMMER_NOTIFY=none
+        #expect(sim.spoolEntries().isEmpty)
+    }
+
+    @Test func notifyTestQueuesAndTellsTheTruthAboutTheApp() {
+        let sim = Sim(); defer { sim.tearDown() }
+        // No app heartbeat: queued, but the caller is told nobody will post it.
+        let result = sim.run(["notify-test"], env: Sim.notifying)
+        #expect(result.code == 1)
+        #expect(result.out.contains("not running"))
+        #expect(sim.spoolTitles().contains("simmer notify-test"))
     }
 }

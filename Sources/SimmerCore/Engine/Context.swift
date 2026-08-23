@@ -70,19 +70,27 @@ public struct Outcome {
     }
 }
 
-/// A notification the boundary should post. The sound rides inside the
-/// notification payload (UNNotificationSound in the app / bundle path) — v1
-/// spawns no afplay children, or children of any other kind.
+/// A notification the app should post — the app is the ONLY poster: macOS
+/// binds the authorization to the executable that asked, so the CLI reading
+/// "its own" state inside the same bundle sees notDetermined forever
+/// (LEARNINGS.md). CLI and guard enqueue these into the spool; the app
+/// drains and posts. The sound rides inside the payload — no afplay
+/// children, or children of any other kind.
 public struct NotificationRequest: Sendable, Equatable {
     public var title: String
     public var subtitle: String
     public var body: String
     public var sound: Bool
+    /// Carries the Extend/Release buttons. True for "you still hold time"
+    /// banners; false when there is nothing sensible to extend or release.
+    public var actionable: Bool
 
-    public init(title: String, subtitle: String = "", body: String = "", sound: Bool = true) {
+    public init(title: String, subtitle: String = "", body: String = "", sound: Bool = true,
+                actionable: Bool = false) {
         self.title = title
         self.subtitle = subtitle
         self.body = body
         self.sound = sound
+        self.actionable = actionable
     }
 }

@@ -3,44 +3,52 @@ import SimmerCore
 import SimmerNotifyKit
 import UserNotifications
 
-/// The app IS the notification identity — an installed, LaunchServices-
-/// registered, ad-hoc-signed bundle owns its banners (PLATFORM-FACTS.md).
-/// Banners carry buttons because the app owns the bundle: Extend from a
-/// banner is the exact moment someone wants it.
+/// The app IS the notification identity, and the app is the ONLY poster —
+/// its executable holds the grant (LEARNINGS.md). Its own outcomes post
+/// directly; everything the CLI and the guard want said arrives through the
+/// ledger's spool and is posted here, buttons included.
 ///
-/// This is also the ONLY place in the whole tool that may call
+/// This is also the only place in the whole tool that may call
 /// requestAuthorization: the app is LaunchServices-launched, so the request
-/// arrives as a real banner. The posting glue is SimmerNotifyKit, shared
-/// with the CLI's notify-post.
+/// arrives as a real banner with the pot icon.
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = Notifier()
-    static let aggregateCategory = "simmer.aggregate"
+    private var spoolTimer: Timer?
 
     func setUp() {
         guard BundleNotifier.available else { return }
-        let center = UNUserNotificationCenter.current()
-        center.delegate = self
-        let extend = UNNotificationAction(identifier: "simmer.extend30",
-                                          title: "Extend 30 min")
-        let release = UNNotificationAction(identifier: "simmer.release",
-                                           title: "Release",
-                                           options: [.destructive])
-        center.setNotificationCategories([
-            UNNotificationCategory(identifier: Self.aggregateCategory,
-                                   actions: [extend, release],
-                                   intentIdentifiers: []),
-        ])
-        // First launch (via LaunchServices) is what makes macOS show the
-        // permission request as a banner with simmer's own icon.
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        UNUserNotificationCenter.current().delegate = self
+        BundleNotifier.registerCategories()
+        UNUserNotificationCenter.current()
+            .requestAuthorization(options: [.alert, .sound]) { _, _ in
+                Notifier.shared.publishStatus()
+            }
+        publishStatus()
+        // Drain what the CLI and the guard queued — every few seconds, and
+        // the heartbeat doctor reads rides along.
+        spoolTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
+            Notifier.shared.drainSpool()
+            Notifier.shared.publishStatus()
+        }
     }
 
     func post(_ notifications: [NotificationRequest]) {
-        guard !notifications.isEmpty,
-              AppState.shared.environment.notifyTransport != "none" else { return }
-        for request in notifications {
-            _ = BundleNotifier.post(request, category: Self.aggregateCategory)
-        }
+        guard AppState.shared.environment.notifyTransport != "none" else { return }
+        for request in notifications { BundleNotifier.post(request) }
+    }
+
+    func drainSpool() {
+        let ctx = AppState.shared.context()
+        post(ctx.ledger.drainNotifications(now: ctx.now))
+    }
+
+    /// The heartbeat: pid + authorization state, for doctor and notify-test.
+    /// They must never ask UN themselves — they would be told about their own
+    /// executable's never-granted state.
+    func publishStatus() {
+        let ctx = AppState.shared.context()
+        ctx.ledger.writeAppStatus(notifyStatus: BundleNotifier.authorizationStatus(),
+                                  now: ctx.now)
     }
 
     func authorizationStatus(_ completion: @escaping (UNAuthorizationStatus) -> Void) {

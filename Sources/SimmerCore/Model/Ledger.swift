@@ -117,6 +117,91 @@ public struct Ledger: Sendable {
         append(JSONValue.object(pairs).serialized() + "\n", to: eventsFile)
     }
 
+    // MARK: the notification spool — the CLI's channel TO the app
+    //
+    // macOS binds notification authorization to the executable that asked,
+    // so only the app can post (LEARNINGS.md). CLI and guard append their
+    // banners here; the app drains and posts within seconds. App not
+    // running = no banners, which is honest: the menu bar is gone too.
+
+    public var spoolFile: URL { stateDir.appendingPathComponent("notify-spool.jsonl") }
+    public var appStatusFile: URL { stateDir.appendingPathComponent("app.status") }
+
+    public func enqueueNotification(_ request: NotificationRequest, now: Int) {
+        let json = JSONValue.object([
+            ("v", .int(1)),
+            ("ts", .int(now)),
+            ("title", .string(request.title)),
+            ("subtitle", .string(request.subtitle)),
+            ("body", .string(request.body)),
+            ("sound", .bool(request.sound)),
+            ("actionable", .bool(request.actionable)),
+        ])
+        append(json.serialized() + "\n", to: spoolFile)
+    }
+
+    /// Claims the whole spool atomically (rename), so a racing append lands
+    /// in a fresh file instead of being lost mid-read. Entries older than
+    /// `maxAge` are dropped: they queued while the app was not running, and
+    /// a stale banner is worse than none.
+    public func drainNotifications(now: Int, maxAge: Int = 120) -> [NotificationRequest] {
+        let draining = spoolFile.appendingPathExtension("draining")
+        guard (try? FileManager.default.moveItem(at: spoolFile, to: draining)) != nil,
+              let text = try? String(contentsOf: draining, encoding: .utf8) else { return [] }
+        defer { try? FileManager.default.removeItem(at: draining) }
+        var requests: [NotificationRequest] = []
+        for line in text.split(separator: "\n") {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8))
+                    as? [String: Any] else { continue }
+            let ts = object["ts"] as? Int ?? 0
+            if now - ts > maxAge {
+                log("dropped a stale banner (queued \(now - ts)s ago): \(object["title"] as? String ?? "?")",
+                    now: now)
+                continue
+            }
+            requests.append(NotificationRequest(
+                title: object["title"] as? String ?? "",
+                subtitle: object["subtitle"] as? String ?? "",
+                body: object["body"] as? String ?? "",
+                sound: object["sound"] as? Bool ?? true,
+                actionable: object["actionable"] as? Bool ?? false))
+        }
+        return requests
+    }
+
+    // MARK: the app's heartbeat — what doctor reads instead of asking UN
+    //
+    // The CLI must never ask UNUserNotificationCenter anything: it would be
+    // told about ITS OWN executable's (never-granted) state, which is the
+    // misread that produced a wrong LEARNINGS entry before this file existed.
+
+    public func writeAppStatus(notifyStatus: String, now: Int) {
+        atomicWrite("pid=\(getpid())\nnotify=\(notifyStatus)\nts=\(now)\n", to: appStatusFile)
+    }
+
+    public struct AppStatus {
+        public var pid: Int
+        public var notify: String
+        public var ts: Int
+    }
+
+    public func readAppStatus() -> AppStatus? {
+        guard let text = try? String(contentsOf: appStatusFile, encoding: .utf8) else { return nil }
+        var pid = 0, ts = 0
+        var notify = "unknown"
+        for line in text.split(separator: "\n") {
+            guard let eq = line.firstIndex(of: "=") else { continue }
+            let key = String(line[..<eq]), value = String(line[line.index(after: eq)...])
+            switch key {
+            case "pid": pid = Int(value) ?? 0
+            case "notify": notify = value
+            case "ts": ts = Int(value) ?? 0
+            default: break
+            }
+        }
+        return AppStatus(pid: pid, notify: notify, ts: ts)
+    }
+
     // MARK: migration from the single lease (format=1)
 
     /// Read once, converted, deleted. Someone upgrading mid-lease must not
