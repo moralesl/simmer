@@ -21,7 +21,7 @@ jobs:
 
       - name: Shell syntax
         run: |
-          for f in bin/simmer install.sh test/simmer-test.sh test/differential.sh \
+          for f in bin/simmer install.sh bootstrap.sh test/simmer-test.sh test/differential.sh \
                    integrations/swiftbar/*.sh integrations/raycast/*.sh \
                    integrations/alfred/*.sh; do
             bash -n "$f" || exit 1

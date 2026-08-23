@@ -100,15 +100,29 @@ An agent that runs into it gets a truthful budget answer — `capped: true`, and
 
 ## Install
 
+One paste, nothing to know beforehand:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/moralesl/simmer/main/bootstrap.sh | bash
+```
+
+It checks that Apple's Command Line Tools are really there (`/usr/bin/git` exists even when they are not, which is the trap), clones to `~/.local/share/simmer`, builds, and asks **once** for an administrator password — through a native macOS dialog, after printing the exact two-line sudo rule it is about to install.
+
+Or do it yourself:
+
 ```bash
 git clone https://github.com/moralesl/simmer
 cd simmer
 make install
 ```
 
-Clone it anywhere — the installer resolves its own location, so nothing is tied to a particular path.
+Clone it anywhere — the installer resolves its own location, so nothing is tied to a particular path. What it will *not* do is guess: piped straight from `curl` it has no path on disk, so it stops and points at the bootstrap rather than reading whatever directory you were standing in.
 
-That links `simmer` into `~/.local/bin` and starts the guard as a LaunchAgent.
+Either way you get `simmer` in `~/.local/bin` and the guard running as a LaunchAgent.
+
+### Why there is no download link
+
+macOS attaches its quarantine flag to *browser-style downloads*, so a `.dmg` or a zip would hit "unidentified developer". `git clone` and `curl` attach nothing — a bundle built locally and fetched this way runs with no warning at all, no certificate and no Apple account involved. So simmer is only ever distributed as source that compiles on your machine.
 
 ### Notifications
 

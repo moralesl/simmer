@@ -2,12 +2,43 @@
 # simmer installer. `make install` and `make check` front this; it also runs
 # standalone, which is what makes a one-line remote install possible later.
 #
-# Nothing here asks for a password. The one step that needs root -- the sudoers
-# rule that lets the guard hand the switch back unattended -- is printed for you
-# to run. An installer that sudos is an installer nobody can audit in a hurry.
+# The one step that needs root -- the sudoers rule that lets the guard hand the
+# switch back unattended -- is always OFFERED and never taken: the two-line rule
+# is printed in full before anything is asked, so what runs as root is exactly
+# what was read. How it asks depends on what is there to ask with:
+#
+#   a terminal on stdin   ->  the familiar sudo password prompt
+#   no stdin, but a tty   ->  consent read from /dev/tty, then ONE native macOS
+#                             authorisation dialog. This is the `curl | bash`
+#                             case, where stdin is the script itself.
+#   neither               ->  the command is printed for you to run
+#
+# SIMMER_ASSUME_NO=1 forces the last branch. That is for automation and tests --
+# an installer that can block on an invisible dialog is an installer that hangs
+# a CI job.
 set -euo pipefail
 
-SIMMER_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Under `curl … | bash` there is no BASH_SOURCE, so dirname yields "." and this
+# silently became WHATEVER DIRECTORY THE USER HAPPENED TO BE IN -- after which
+# swiftc would compile "$SIMMER_HOME/notifier/main.swift" from a path that is not
+# simmer. A wrong answer is worse than no answer, so the guess is checked against
+# files only this repo has, and a failure names the fix.
+SIMMER_HOME="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
+if [ -z "$SIMMER_HOME" ] || [ ! -f "$SIMMER_HOME/bin/simmer" ] || [ ! -f "$SIMMER_HOME/notifier/main.swift" ]; then
+  cat >&2 <<'NOREPO'
+simmer: this installer needs the repository around it, and cannot find it.
+
+That is what happens when it is piped straight from curl -- a piped script has
+no path on disk, so it cannot locate the files it installs.
+
+Use the bootstrap instead, which clones first and then runs this:
+  curl -fsSL https://raw.githubusercontent.com/moralesl/simmer/main/bootstrap.sh | bash
+
+Or clone it yourself:
+  git clone https://github.com/moralesl/simmer && cd simmer && make install
+NOREPO
+  exit 2
+fi
 PREFIX="${PREFIX:-$HOME/.local/bin}"
 LABEL=com.github.moralesl.simmer-guard
 AGENT="$HOME/Library/LaunchAgents/$LABEL.plist"
@@ -61,6 +92,29 @@ reload_agent() {
   launchctl bootstrap "$domain" "$AGENT"
 }
 
+# The privileged step, asked for the way macOS asks: one native authorisation
+# dialog rather than a sudo prompt on a tty that may not exist. Verified to run
+# as root from an unsigned, unnotarised context -- no certificate, no Apple
+# account (docs/V2-BRIEF.md, spike B).
+#
+# The file has been through `visudo -c` before this runs, and the shell string is
+# a fixed command over two fixed paths with no user input anywhere in it.
+install_sudoers_via_dialog() {
+  local src="$SIMMER_HOME/.build/simmer.sudoers"
+  if osascript -e "do shell script \"install -m 440 -o root -g wheel '$src' /etc/sudoers.d/simmer\" with administrator privileges" >/dev/null 2>&1; then
+    if sudo -nl /usr/bin/pmset -a disablesleep 0 >/dev/null 2>&1; then
+      say "sudoers rule installed -- the guard can now release unattended"
+    else
+      say "rule written, but sudo does not honour it yet."
+      say "check with: sudo -nl /usr/bin/pmset -a disablesleep 0"
+    fi
+  else
+    echo "  not installed (cancelled, or the password was wrong). Run it later with:"
+    echo "    sudo install -m 440 -o root -g wheel \\"
+    echo "      \"$src\" /etc/sudoers.d/simmer"
+  fi
+}
+
 cmd_install() {
   echo "Installing simmer from $SIMMER_HOME"
   mkdir -p "$PREFIX" "$STATE" "$HOME/Library/LaunchAgents"
@@ -79,6 +133,17 @@ cmd_install() {
   # nothing either.
   mkdir -p "$SIMMER_HOME/.build"
   sed "s|__USER__|$(id -un)|g" "$SIMMER_HOME/sudoers.d/simmer" > "$SIMMER_HOME/.build/simmer.sudoers"
+
+  # Check it BEFORE it goes anywhere near /etc/sudoers.d. A malformed file there
+  # does not merely fail to grant pmset -- it can break sudo for everything,
+  # which on a laptop with no other admin account is a genuinely bad afternoon.
+  # visudo -c needs no root to check a file we own.
+  if ! visudo -c -f "$SIMMER_HOME/.build/simmer.sudoers" >/dev/null 2>&1; then
+    echo "❌ the generated sudo rule does not parse -- refusing to install it." >&2
+    echo "   file: $SIMMER_HOME/.build/simmer.sudoers" >&2
+    visudo -c -f "$SIMMER_HOME/.build/simmer.sudoers" 2>&1 | sed 's/^/   /' >&2
+    return 1
+  fi
 
   echo
   if sudo -nl /usr/bin/pmset -a disablesleep 0 >/dev/null 2>&1; then
@@ -100,6 +165,26 @@ cmd_install() {
           say "sudoers rule installed" ||
           echo "  failed -- run it yourself later:
     sudo install -m 440 -o root -g wheel \"$SIMMER_HOME/.build/simmer.sudoers\" /etc/sudoers.d/simmer" ;;
+      *)
+        echo "  Skipped. Run it later with:"
+        echo "    sudo install -m 440 -o root -g wheel \\"
+        echo "      \"$SIMMER_HOME/.build/simmer.sudoers\" /etc/sudoers.d/simmer" ;;
+    esac
+  elif [ "${SIMMER_ASSUME_NO:-0}" != 1 ] && [ -e /dev/tty ]; then
+    # No tty on stdin, but a terminal exists -- which is exactly the bootstrap
+    # case, where stdin is the script itself. Reading the consent from /dev/tty
+    # keeps the "offered, never sneaked" rule instead of falling back to a dead
+    # end that a non-technical colleague cannot act on.
+    echo "One step needs an administrator password. It installs this two-line sudo"
+    echo "rule so the watchdog can hand the sleep switch back with nobody at the"
+    echo "keyboard -- without it, simmer works but only while you are logged in:"
+    echo
+    sed 's/^/    /' "$SIMMER_HOME/.build/simmer.sudoers" | grep -v '^    #'
+    echo
+    printf "  Install it now? macOS will ask for your password. [y/N] "
+    read -r answer < /dev/tty || answer=n
+    case "$answer" in
+      [yY]*) install_sudoers_via_dialog ;;
       *)
         echo "  Skipped. Run it later with:"
         echo "    sudo install -m 440 -o root -g wheel \\"
