@@ -33,7 +33,7 @@ Use `simmer down --all` to end everything; only a human may.
 **Why can an agent not use `down --all`?** Because ending work someone else started is not an agent's call.
 A human can release any claim; an agent only its own.
 It is enforced against honest actors, not as a security boundary — nothing stops a process passing `--owner terminal`, and on a single-user Mac nothing could.
-The agent protocol will state it as an obligation (being rebuilt for v1; the v0.1 wording is at `archive/v0.1-spike/FOR-AGENTS.md`).
+The agent protocol states it as an obligation — [FOR-AGENTS.md](FOR-AGENTS.md).
 
 **What is the cap for?** "Nothing past 23:00, whoever asks."
 It clips every claim, the ones already held and the ones taken later.
@@ -82,14 +82,9 @@ Written temp-file-then-rename, never edited in place.
 Human sentences may be reworded at any time.
 `budget` answers the decision question in its exit code: `0` there is room, `1` not enough, `3` **nothing is holding the Mac awake** — which is an absent guarantee, not a small budget, and code that conflates the two keeps working while the machine sleeps under it.
 
-**Where did the Raycast, Alfred and SwiftBar commands go?** Deferred.
-The app has its own menu bar now, so a SwiftBar plugin would be a second competing one.
-`simmer render swiftbar|raycast|alfred` stays in the core; the shims come back after the first release.
+**Where did the Raycast and Alfred commands go?** On the roadmap ([ROADMAP.md](ROADMAP.md)).
+`simmer render raycast|alfred` is already in the core and tested; the launcher shims wait for first-release feedback.
+A SwiftBar plugin is deliberately never coming — the app is the menu bar.
 
-**What is `archive/v0.1-spike/`?** A complete, tested bash implementation of the same contract.
-It proved the model and bought the platform facts.
-Read it for reference; nothing in v1 imports, copies or sources from it.
-`make -C archive/v0.1-spike test` still runs green.
-
-**Why does the archived code call itself 2.0.0-dev?** The project renumbered afterwards.
-That whole directory is v0.1; the Swift application is v1.
+**Where is the bash version?** At the git tag `v0.1` — a complete, tested implementation of the same contract that proved the model and bought the platform facts.
+Nothing in v1 imports from it, so it no longer lives in the working tree: `git show v0.1:archive/v0.1-spike/README.md` if you are curious.

@@ -6,7 +6,7 @@
 
 **Keep your Mac awake for a bounded time — lid closed — then let it sleep again.**
 
-[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey?logo=apple)](#) [![status](https://img.shields.io/badge/v1-swift-brightgreen)](docs/BRIEF.md)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey?logo=apple)](#) [![status](https://img.shields.io/badge/v1-swift-brightgreen)](docs/CONTRACTS.md)
 
 </div>
 
@@ -48,14 +48,13 @@ Sources/SimmerApp/   NSStatusItem · IOKit callbacks · UNUserNotificationCenter
 Tests/               unit suite + an acceptance suite that drives the BUILT
                      binary under the seam variables (honours SIMMER_BIN)
 
+AGENTS.md            working ON this repo: read order, commands, iron rules.
+docs/FOR-AGENTS.md   USING simmer from an agent: budget, owners, obligations.
 docs/CONTRACTS.md    the law, in prose: surface, exit codes, machine output,
                      and the reasoning behind every choice.
 docs/LEARNINGS.md    every trap already paid for. Read this first.
-docs/BRIEF.md        what v1 is; docs/PLATFORM-FACTS.md — what macOS permits.
-docs/DESIGN-NOTES.md interaction design, marked take/consider/leave.
-
-archive/v0.1-spike/  the bash spike that proved the model. Reference only;
-                     v1 imports nothing from it.
+docs/PLATFORM-FACTS.md  what macOS actually permits, verified.
+docs/ROADMAP.md      decided but not built. docs/FAQ.md — short answers.
 ```
 
 ## Why it exists
@@ -107,11 +106,16 @@ make uninstall   # removes exactly what install wrote
 ```
 
 The acceptance suite honours `SIMMER_BIN`, so it can gate any implementation of [docs/CONTRACTS.md](docs/CONTRACTS.md) — that is what makes it the executable form of the contract.
-During development the app builds under the bundle id `io.github.moralesl.simmer.dev`; the clean production id is spent only at release, because macOS caches a notification permission verdict per bundle id forever ([docs/LEARNINGS.md](docs/LEARNINGS.md) § 1).
+During development the app builds under a `.devN` bundle id; the clean production id is spent only at release, because macOS caches a notification permission verdict per bundle id forever ([docs/LEARNINGS.md](docs/LEARNINGS.md) § 1).
 
-Wondering about Amphetamine, LidRun or plain `caffeinate`?
-[archive/v0.1-spike/COMPARISON.md](archive/v0.1-spike/COMPARISON.md) is an honest comparison — including when NOT to use simmer.
-It is in the archive because it will be rewritten against v1, not because it stopped being true.
+## For agents
+
+An agent doing long work on this Mac should hold its own claim — that is the point of the model.
+The protocol is one page: [docs/FOR-AGENTS.md](docs/FOR-AGENTS.md).
+The two-line version: `simmer budget --need 30m` before starting (exit 3 means the lid can interrupt you at any moment), and `simmer 45m -r "why" --owner agent:<work> --json` to claim.
+Never `down --all`, never a human owner name.
+
+The bash spike that preceded v1 lives at the git tag `v0.1` — reference only.
 
 ## License
 

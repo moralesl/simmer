@@ -1,8 +1,9 @@
-# Two things are guarded here. First: v1 — the Swift package — builds and its
-# two suites pass (hermetic: SIMMER_FAKE_* substitutes every power read, the
-# switch is a file, no sudo, nothing touched). Second: the ARCHIVED v0.1
-# reference stays runnable — it is reference material for the contract, and a
-# reference that silently rots is worse than none.
+# v1 — the Swift package — builds and its two suites pass. Hermetic:
+# SIMMER_FAKE_* substitutes every power read, the switch is a file, the clock
+# is SIMMER_FAKE_NOW; no sudo, nothing touched on the runner.
+#
+# The v0.1 bash spike left the working tree on 2026-08-23 and lives at the
+# git tag `v0.1`, so there is nothing archived left to guard here.
 name: test
 
 on:
@@ -13,8 +14,7 @@ on:
 
 jobs:
   v1:
-    # macOS because the whole tool is macOS power management. No sudo, no
-    # runner privileges: the suites drive the binary through the seam.
+    # macOS because the whole tool is macOS power management.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,37 +32,3 @@ jobs:
         run: |
           plutil -lint launchd/guard.plist.template app/Info.plist.template
           bash -n bootstrap.sh
-
-  reference:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # The differential needs the pinned `v0.0-lease` tag; a shallow
-          # clone does not have it.
-          fetch-depth: 0
-
-      - name: Shell syntax
-        run: |
-          for f in archive/v0.1-spike/bin/simmer \
-                   archive/v0.1-spike/install.sh archive/v0.1-spike/bootstrap.sh \
-                   archive/v0.1-spike/test/*.sh \
-                   archive/v0.1-spike/integrations/*/*.sh; do
-            bash -n "$f" || exit 1
-          done
-
-      - name: Property lists parse
-        run: plutil -lint archive/v0.1-spike/launchd/*.plist archive/v0.1-spike/integrations/alfred/Simmer/info.plist
-
-      # bin/simmer targets /bin/bash, which is 3.2 on macOS. Runners also ship
-      # a modern bash, so this asserts the constraint rather than trusting it.
-      - name: Runs under bash 3.2
-        run: |
-          /bin/bash --version | head -1
-          /bin/bash archive/v0.1-spike/bin/simmer --version
-
-      - name: Reference suite
-        run: make -C archive/v0.1-spike test
-
-      - name: Reference differential
-        run: make -C archive/v0.1-spike diff

@@ -1,7 +1,7 @@
 # Learnings
 
 Everything this project has already paid for.
-The point of the page is that nobody pays twice — a fresh session should read this and `BRIEF.md` and then know as much as the session that finished before it.
+The point of the page is that nobody pays twice — a fresh session should read this and `CONTRACTS.md` and then know as much as the session that finished before it.
 
 Three kinds of thing live here: platform traps, decisions already taken, and decisions still open.
 The last section is the one to read first.
@@ -17,7 +17,7 @@ They are blocked on a person deciding.
 |---|---|---|
 | 1 | **Bundle id during development.** `io.github.moralesl.simmer` is *currently authorized* for notifications on Luis's Mac. macOS caches a permission verdict per bundle id **forever**, and a denial can never be undone for that id. A half-built v1 app could burn it. **Decided and implemented:** the Makefile defaults to a `.devN` id (`.dev` was burned on its first install day — see § 3); promotion is `make install BUNDLE_ID=io.github.moralesl.simmer`, a release-checklist step, never a default. See the bundle-id inventory in § 3. | Kept here because it is irreversible and easy to forget. |
 | 2 | **Distribution audience.** Answered once as "mixed, some non-technical", which is why `bootstrap.sh` exists. Worth re-confirming, because it decides whether a Homebrew tap or the one-paste line is the real channel — and therefore how much packaging work v1 owes. | Only you know who they are. |
-| 3 | **Raycast / Alfred / SwiftBar.** Decided: **not** in v1; added afterwards. `simmer render <surface>` stays core and stays tested; only the shims are deferred. Left here because "afterwards" has no date yet. | Scheduling. |
+| 3 | **Raycast / Alfred.** Decided: not in v1; shims on `ROADMAP.md`, after first-release feedback. SwiftBar closed 2026-08-23: never — the app is the menu bar. | Scheduling only. |
 
 ---
 
@@ -91,7 +91,7 @@ Zero hits for `caffeinate` in any steering file, settings file or hook; the pare
 
 Worth knowing for two reasons.
 It is a false positive when auditing simmer's own leaks, so match on simmer's `-ims`/`-dims` signature rather than on the process name.
-And it is the sharpest argument for the integration in `DESIGN-NOTES.md`: the tool being used to build simmer is itself holding an invisible, unaccountable, lid-incapable assertion.
+And it is the sharpest argument for the Claude Code integration (now `ROADMAP.md`): the tool being used to build simmer is itself holding an invisible, unaccountable, lid-incapable assertion.
 
 ### A seam that covers *most* of the side effects is not a seam
 
@@ -109,8 +109,7 @@ Two independent causes, both instructive:
 2. **The test helper bypassed the only cleanup path.** `clear_all() { rm -f "$CLAIMS"/*; }` deleted claim files directly, and `retire_claim()` — the only code that kills the recorded child pid — never ran.
    A fixture that manipulates state behind the implementation's back will leak whatever the implementation was responsible for.
 
-For v1: no detached child processes at all.
-See `DESIGN-NOTES.md`.
+For v1: no detached child processes at all. v1 holds its idle-sleep assertion in-process (`Sources/SimmerApp/AppState.swift`).
 
 ### Bundle-id inventory — verified against LaunchServices, 2026-08-23
 
@@ -227,7 +226,7 @@ A suite tests what you thought of.
 
 ### Two suites, two questions — the shape worth rebuilding
 
-Both live in `archive/v0.1-spike/test/` now and gate nothing.
+Both live at the git tag `v0.1` (`archive/v0.1-spike/test/`) and gate nothing.
 The *shape* is what to carry across:
 
 - **Is this implementation internally right?** One hermetic suite over the whole CLI surface, honouring `SIMMER_BIN` so it is not welded to one binary.
@@ -300,4 +299,4 @@ Event-driven alone was rejected: a login item is a process a user can quit, and 
 `simmer render <surface>` stays in the core and stays tested; only the files that call it wait.
 
 **Not yet contracted, and nothing may depend on them:** `--lock`, `events.jsonl`, `simmer watch`, `simmer why`.
-See `BRIEF.md`.
+See `ROADMAP.md`.

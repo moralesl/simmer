@@ -5,11 +5,12 @@ The v0.1 spike (bash) and v1 (Swift) both honour this page; the test suite is th
 
 **This page is the law, in prose.** v1 is being written from scratch and brings its own tests; it does not inherit the spike's harness.
 
-Two instruments exist in `archive/v0.1-spike/`, and they are reference material rather than v1's gate — read them for what a thorough test of this contract looks like, then write v1's own:
+The v0.1 spike and its two instruments live at the git tag `v0.1` (`git show v0.1:archive/…` — the tree no longer carries them).
+They were reference material rather than v1's gate; v1's own suites now exist under `Tests/`:
 
-- `make -C archive/v0.1-spike test` — 175 hermetic assertions over the surface below.
+- `make -C archive/v0.1-spike test` (at the tag) — 175 hermetic assertions over the surface below.
   Honours `SIMMER_BIN`, so it *can* be pointed at a v1 binary, but v1 owes no allegiance to it.
-- `make -C archive/v0.1-spike diff` — a differential harness: identical CLI scenarios against two binaries, normalised and diffed, with contract-bearing lines compared exactly and prose allowed to differ.
+- `make -C archive/v0.1-spike diff` (at the tag) — a differential harness: identical CLI scenarios against two binaries, normalised and diffed, with contract-bearing lines compared exactly and prose allowed to differ.
   The idea is worth stealing even if the script is not.
 
 Whatever v1 writes instead must still be able to answer: does an implementation satisfy every row below, including the exit codes and the machine output, without root and without changing the machine under the tester?
@@ -137,7 +138,7 @@ These are the readings the implementation and the suite encode; they are settled
 Human primacy is enforced against honest actors, not as a security boundary: nothing stops a process passing `--owner terminal`, and on a single-user Mac nothing could.
 What it buys is that an agent following the protocol cannot take a human's time away by accident, which is the failure that actually happens.
 The agent protocol states the obligation not to claim human authority.
-It is being rebuilt for v1; the v0.1 wording is at `archive/v0.1-spike/FOR-AGENTS.md`.
+The v1 statement of that obligation is `FOR-AGENTS.md`, in this directory.
 
 ### Deltas from `format=1`, each deliberate
 
@@ -161,7 +162,7 @@ It is being rebuilt for v1; the v0.1 wording is at `archive/v0.1-spike/FOR-AGENT
 
 ## v1 surface additions — blessed 2026-08-23, all additive
 
-The DESIGN-NOTES "take" items, adopted as contract:
+The design-notes "take" items (the interaction proposals, consumed into this contract on adoption; their full text is in git history), adopted as contract:
 
 - **Canonical verbs, sugar kept.** `claim` / `extend` / `release` are the grammar; `simmer 2h`, `simmer +20m`, `simmer down|off|stop` stay as documented, tested aliases.
   The alias set is exactly the surface above.
@@ -183,5 +184,5 @@ The DESIGN-NOTES "take" items, adopted as contract:
 
 - `--lock` (lock the screen on take).
   Listed here so no implementation invents behaviour for it; it enters the surface above only together with its tests.
-- `events.jsonl`, `simmer watch`, `simmer why` — planned, see `BRIEF.md`.
+- `simmer watch`, `simmer why` — planned consumers of `events.jsonl`, see `ROADMAP.md`.
   Nothing may depend on them yet.
