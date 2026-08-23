@@ -57,10 +57,9 @@ struct DoctorCLI: ParsableCommand {
         if FileManager.default.isExecutableFile(atPath: bundleBinary) {
             let status = Shell.run(bundleBinary, ["notify-post", "--status"])
                 .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            check("notifier bundle authorized", status == "authorized")
+            check("notifications authorized for Simmer", status == "authorized")
         } else {
-            check("notification fallback (osascript)",
-                  FileManager.default.isExecutableFile(atPath: "/usr/bin/osascript"))
+            check("Simmer.app installed (the only notification identity)", false)
         }
 
         check("claims directory writable",
@@ -94,8 +93,8 @@ struct DoctorCLI: ParsableCommand {
             print("")
         }
 
-        // Which channel is about to be used matters more than a generic
-        // warning: they fail for completely different reasons.
+        // The exact state matters more than a generic warning: pending and
+        // denied fail for completely different reasons, with different fixes.
         if FileManager.default.isExecutableFile(atPath: bundleBinary) {
             let status = Shell.run(bundleBinary, ["notify-post", "--status"])
                 .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -103,15 +102,17 @@ struct DoctorCLI: ParsableCommand {
             case "authorized":
                 print("Notifications post as \"Simmer\", with simmer's own icon.")
             case "notDetermined":
-                print("Simmer's permission banner is pending — click Allow when it appears")
-                print("(launching Simmer.app fires it again).")
+                print("Simmer's permission banner is pending — open -a Simmer and click")
+                print("Allow when it appears. Until then, no banners: simmer posts under")
+                print("its own name or not at all.")
             default:
                 print("Notifications for \"Simmer\" were DENIED. Re-enable in")
-                print("System Settings > Notifications > Simmer.")
+                print("System Settings > Notifications > Simmer. Until then, no banners:")
+                print("simmer posts under its own name or not at all.")
             }
         } else {
-            print("No Simmer.app installed, so banners post as \"Script Editor\".")
-            print("Fix: make install (builds and registers the bundle).")
+            print("Simmer.app is not installed, so no banners at all — simmer never")
+            print("borrows another app's identity. Fix: make install.")
         }
         print("")
         if env.notifyTransport == "none" {

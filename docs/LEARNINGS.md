@@ -15,7 +15,7 @@ They are blocked on a person deciding.
 
 | # | Question | Why it needs you |
 |---|---|---|
-| 1 | **Bundle id during development.** `io.github.moralesl.simmer` is *currently authorized* for notifications on Luis's Mac. macOS caches a permission verdict per bundle id **forever**, and a denial can never be undone for that id. A half-built v1 app could burn it. **Decided and implemented:** the Makefile defaults to `io.github.moralesl.simmer.dev`; promotion is `make install BUNDLE_ID=io.github.moralesl.simmer`, a release-checklist step, never a default. See the bundle-id inventory in § 3. | Kept here because it is irreversible and easy to forget. |
+| 1 | **Bundle id during development.** `io.github.moralesl.simmer` is *currently authorized* for notifications on Luis's Mac. macOS caches a permission verdict per bundle id **forever**, and a denial can never be undone for that id. A half-built v1 app could burn it. **Decided and implemented:** the Makefile defaults to a `.devN` id (`.dev` was burned on its first install day — see § 3); promotion is `make install BUNDLE_ID=io.github.moralesl.simmer`, a release-checklist step, never a default. See the bundle-id inventory in § 3. | Kept here because it is irreversible and easy to forget. |
 | 2 | **Distribution audience.** Answered once as "mixed, some non-technical", which is why `bootstrap.sh` exists. Worth re-confirming, because it decides whether a Homebrew tap or the one-paste line is the real channel — and therefore how much packaging work v1 owes. | Only you know who they are. |
 | 3 | **Raycast / Alfred / SwiftBar.** Decided: **not** in v1; added afterwards. `simmer render <surface>` stays core and stays tested; only the shims are deferred. Left here because "afterwards" has no date yet. | Scheduling. |
 
@@ -120,7 +120,8 @@ So the ids this project has already touched are a resource that can only be spen
 | Bundle id | State | Use it? |
 |---|---|---|
 | `io.github.moralesl.simmer` | **0 references in LaunchServices.** Clean. The bundle that held it was removed and unregistered | **The production id.** Register it only once the app is known-good |
-| `io.github.moralesl.simmer.dev` | never used | Development. Burn this one freely |
+| `io.github.moralesl.simmer.dev` | **burned 2026-08-23**, on its first install: denied while its permission banner was pending. The CLI's `notify-post` had called `requestAuthorization` from a non-LaunchServices context — the suspected cause (same shape as the `/tmp` burn below); whether a Don't-Allow click contributed is unresolved. Either way: only the app may ever request authorization now; the CLI reads the verdict and posts under it | Never. Reversible only by hand in System Settings |
+| `io.github.moralesl.simmer.dev2` | current development id (Makefile default) | Development. Burn freely |
 | `io.github.moralesl.simmer.barspike` | was registered by a `SimmerBar.app` left in a previous session's scratchpad, carrying a notification activity type. Unregistered and the bundle deleted on 2026-08-23 | Do not reuse. Its history is unknown |
 | `ai.causaprima.simmer.notifier` | **burned.** Denied on a first run from `/tmp`, and that verdict is permanent | Never |
 

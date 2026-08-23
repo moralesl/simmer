@@ -269,34 +269,40 @@ struct NotifyPostCLI: ParsableCommand {
 struct NotifyTestCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "notify-test",
-        abstract: "Fire one notification through every transport — whichever you SEE is the one that works.")
+        abstract: "Fire one test banner as Simmer — there is no other identity.")
 
     @OptionGroup var common: CommonOptions
 
     func run() throws {
         let env = Runtime.environment()
-        print("Firing one notification through each transport.")
-        print("Whichever you SEE is the one that works. Then set it, e.g.:")
-        print("  echo 'export SIMMER_NOTIFY=osascript' >> ~/.zshrc")
-        print("")
         let bundleBinary = Notify.bundleBinary(env: env)
-        if FileManager.default.isExecutableFile(atPath: bundleBinary) {
-            let status = Shell.run(bundleBinary, ["notify-post", "--status"])
-                .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            _ = Shell.run(bundleBinary, ["notify-post", "simmer via bundle",
-                                         "transport test", "the pot icon means use bundle"])
-            print("  bundle     sent (status: \(status))")
-        } else {
-            print("  bundle     skipped — Simmer.app not installed (make install)")
+        guard FileManager.default.isExecutableFile(atPath: bundleBinary) else {
+            print("Simmer.app is not installed, so there is nothing that can post.")
+            print("simmer only ever posts under its own name — no borrowed identities.")
+            print("Fix: make install, then open -a Simmer and click Allow once.")
+            throw ExitCode(1)
         }
-        Notify.post(NotificationRequest(title: "simmer via osascript",
-                                        subtitle: "transport test",
-                                        body: "if you see this, use osascript"),
-                    env: SimmerEnvironment(env: ["SIMMER_NOTIFY": "osascript"],
-                                           isTTY: false, executablePath: env.binPath))
-        print("  osascript  sent")
+        let status = Shell.run(bundleBinary, ["notify-post", "--status"])
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch status {
+        case "authorized":
+            _ = Shell.run(bundleBinary, ["notify-post", "simmer notify-test",
+                                         "notifications are working",
+                                         "This banner is the test — pot icon and all."])
+            print("Sent, as \"Simmer\" with simmer's own icon.")
+        case "notDetermined":
+            print("Waiting for permission: open -a Simmer and click Allow on the banner.")
+            throw ExitCode(1)
+        case "denied":
+            print("Notifications for \"Simmer\" are DENIED — macOS caches that per app.")
+            print("Re-enable in System Settings > Notifications > Simmer.")
+            throw ExitCode(1)
+        default:
+            print("Could not read the notification status (\(status)).")
+            throw ExitCode(1)
+        }
         print("")
-        print("Nothing at all? The menu bar always shows the truth and cannot be")
-        print("suppressed — SIMMER_NOTIFY=none is a legitimate choice.")
+        print("Notifications are optional either way: the menu bar always shows the")
+        print("truth and cannot be suppressed — SIMMER_NOTIFY=none is a legitimate choice.")
     }
 }

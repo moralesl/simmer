@@ -9,8 +9,7 @@ The reasoning behind them is in `CONTRACTS.md`; what the platform permits is in 
 It never leaves the switch on with nothing scheduled to turn it off.
 
 **Why not `caffeinate`?** It does not survive the lid.
-On Apple silicon the machine sleeps the moment you close it no matter which assertions are held, so no assertion of any kind can be the mechanism — only `pmset -a disablesleep` holds a closed lid, and only root can set it.
-v1 does hold an idle-sleep assertion of its own, in-process, but that is belt-and-braces and never the thing doing the work.
+On Apple silicon the machine sleeps the moment you close it no matter which assertions are held, so no assertion of any kind can be the mechanism — only `pmset -a disablesleep` holds a closed lid, and only root can set it. v1 does hold an idle-sleep assertion of its own, in-process, but that is belt-and-braces and never the thing doing the work.
 
 **Why does it need my password?** Only root can flip that switch, and the guard has to be able to flip it back while nobody is at the keyboard.
 So a two-line `/etc/sudoers.d` rule, scoped to exactly `pmset -a disablesleep 0` and `pmset -a disablesleep 1` and nothing else.
@@ -59,7 +58,7 @@ You took a claim because you are walking away, so a lit screen costs exactly the
 **Is my laptop locked in my bag?** That is your Lock Screen setting, not simmer's — but simmer is the tool that turns a lax setting into a *running, unlocked* laptop in a bag, so it says so when it takes a claim and `doctor` reports it.
 
 **Nothing appears when a claim ends.** Notifications are optional and fire on **aggregate** changes only, never per claim.
-`simmer notify-test` fires one through every channel so you can see which your Mac shows.
+`simmer notify-test` fires one test banner and tells you exactly why nothing arrives when it does not — simmer posts under its own name or not at all, never as Script Editor or any other borrowed identity.
 The menu bar always tells the truth and cannot be suppressed.
 
 ## Building it
@@ -71,10 +70,9 @@ Source fetched by `git` or `curl` and compiled locally runs with no warning, no 
 Verified against a trusted self-signed certificate: no difference.
 The recipe and its traps are in `PLATFORM-FACTS.md`.
 
-**Does simmer spawn background processes?**
-v1: no. It holds its power assertion in-process, so there is nothing to orphan.
-The v0.1 spike used a detached `caffeinate` per claim and leaked 222 of them; see
-`LEARNINGS.md`.
+**Does simmer spawn background processes?** v1: no.
+It holds its power assertion in-process, so there is nothing to orphan.
+The v0.1 spike used a detached `caffeinate` per claim and leaked 222 of them; see `LEARNINGS.md`.
 
 **Where is the state?** `$XDG_STATE_HOME/simmer/` (default `~/.local/state/simmer/`): one flat `key=value` file per claim under `claims/`, the `cap`, and the log.
 Flat rather than JSON so a menu bar can read it without making `jq` a prerequisite for seeing a countdown.
