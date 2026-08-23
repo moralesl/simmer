@@ -42,6 +42,25 @@ import Testing
         #expect(StatusTitle.secondsUntilChange(active(left: 290)) == 51)
     }
 
+    /// The property the app's expiry handling rests on: following this
+    /// schedule, the last wake of an active claim lands in the second AFTER
+    /// the deadline — so the process that knows when the deadline is settles
+    /// the switch then, instead of leaving the machine held awake by nobody
+    /// until the guard's next pass.
+    @Test func theLastWakeLandsJustAfterTheDeadline() {
+        for start in [45, 61, 125, 301, 900, 3600] {
+            var left = start
+            var wakes = 0
+            while left > 0 {
+                left -= StatusTitle.secondsUntilChange(active(left: left))
+                wakes += 1
+                #expect(wakes < 200, "the schedule must converge, not crawl")
+            }
+            // Exactly one second past the deadline, never more.
+            #expect(left == -1)
+        }
+    }
+
     @Test func nothingIsScheduledWhenNothingCanChangeOnItsOwn() {
         let idle = Aggregate.compute(claims: [], cap: nil, now: 1000, sleepDisabled: false)
         let orphan = Aggregate.compute(claims: [], cap: nil, now: 1000, sleepDisabled: true)

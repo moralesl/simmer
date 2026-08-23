@@ -134,9 +134,16 @@ public enum Commands {
                              [("why", .string("claim by \(ctx.owner)"))])
         }
 
+        // A deadline set from INSIDE the warning window needs no warning: the
+        // act of asking for two minutes is the notification that two minutes
+        // is all there is. Otherwise `simmer 1m` answers itself seconds later
+        // with "under 1 min left · simmer +30m extends it".
+        let bornWarned = untilEpoch != 0 && untilEpoch - ctx.now <= Tick.warnSeconds
+
         let claim = Claim(owner: ctx.owner, until: untilEpoch, started: started,
                           reason: input.reason, minBattery: input.minBattery,
                           requireAC: input.requireAC, displayOn: input.displayOn,
+                          warned: bornWarned,
                           reminded: ctx.now)
         // The switch is already on. If the claim cannot be recorded, nothing
         // holds it open and nothing schedules it back down — so settle here
@@ -267,7 +274,10 @@ public enum Commands {
 
         let before = ctx.aggregate()
         claim.until = target
-        claim.warned = false
+        // Re-arm the warning for the new deadline — unless the new deadline is
+        // itself inside the warning window, which the extending caller just
+        // chose knowingly.
+        claim.warned = target - ctx.now <= Tick.warnSeconds
         // Same rule as claiming: an extension that did not reach disk must not
         // be announced. Here the old deadline still stands, so there is
         // nothing to settle — only something to admit.

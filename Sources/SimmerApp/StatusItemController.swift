@@ -69,6 +69,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let due = min(StatusTitle.secondsUntilChange(aggregate), Self.backstopSeconds)
         refreshTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(max(due, 1)),
                                             repeats: false) { [weak self] _ in
+            // A tick, not just a redraw. The app knows exactly when the
+            // deadline is, so it is the process that should act on it: a
+            // deadline crossing is settled here and now instead of waiting for
+            // the LaunchAgent's next pass. Without this there is a window
+            // after every expiry where the switch is on with nothing claiming
+            // it — true, alarming to read in the menu, and entirely avoidable.
+            // tick() is idempotent, so the guard arriving later is harmless.
+            AppState.shared.tick()
             self?.refreshTitle()
         }
     }

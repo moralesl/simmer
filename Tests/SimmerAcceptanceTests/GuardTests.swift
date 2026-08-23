@@ -4,7 +4,7 @@ import Testing
 /// The guard's branches — deadline crossings, the battery floor, the charger,
 /// thermal, warn-once, the reminder interval. Reachable only because of
 /// SIMMER_FAKE_NOW and the power seam; without them these are the least
-/// verified paths in the tool (LEARNINGS.md § 4).
+/// verified paths in the tool (PLATFORM-FACTS.md).
 @Suite struct GuardTests {
     @Test func aDeadlineCrossingRetiresTheClaimAndHandsBackTheSwitch() {
         let sim = Sim(); defer { sim.tearDown() }
@@ -82,6 +82,39 @@ import Testing
         #expect(sim.claimField("test", "warned") == "1")
         sim.run(["guard"], now: Sim.epoch + 1700)
         #expect(sim.events(named: "warn").count == 1)
+    }
+
+    /// A deadline chosen from inside the warning window is its own warning.
+    /// `simmer 1m` used to answer itself seconds later with "under 1 min left ·
+    /// simmer +30m extends it", which is the tool talking to itself.
+    @Test func aDeadlineSetInsideTheWindowDoesNotWarn() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["1m", "--owner", "test"])
+        #expect(sim.claimField("test", "warned") == "1")
+        sim.run(["guard"], now: Sim.epoch + 15)
+        #expect(sim.events(named: "warn").isEmpty)
+        // It still ends on time, and says so — the end is news, the countdown is not.
+        sim.run(["guard"], now: Sim.epoch + 61)
+        #expect(sim.claimCount == 0)
+        #expect(sim.switchValue == "0")
+
+        // Extending into the window is the same choice, made knowingly.
+        sim.run(["2h", "--owner", "other"])
+        sim.run(["+2m", "--owner", "other"], now: Sim.epoch + 100)
+        #expect(sim.claimField("other", "warned") == "1")
+        sim.run(["guard"], now: Sim.epoch + 130)
+        #expect(sim.events(named: "warn").isEmpty)
+    }
+
+    /// A cap landing inside the window is also a deliberate act by a person who
+    /// has just read what it means.
+    @Test func aCapInsideTheWindowDoesNotWarnTheClaimsItClips() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["2h", "--owner", "agent"])
+        sim.run(["cap", "3m", "--owner", "terminal"])
+        #expect(sim.claimField("agent", "warned") == "1")
+        sim.run(["guard"], now: Sim.epoch + 30)
+        #expect(sim.events(named: "warn").isEmpty)
     }
 
     @Test func extendingReArmsTheDeadlineWarning() {

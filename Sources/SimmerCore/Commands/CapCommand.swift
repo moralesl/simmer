@@ -85,7 +85,10 @@ extension Commands {
             var clipped = 0
             for var claim in ctx.ledger.claims() where claim.until == 0 || claim.until > target {
                 claim.until = target
-                claim.warned = false
+                // The clipped deadline gets its own warning, unless the cap
+                // lands inside the window — where a person setting the cap has
+                // just been told, by the cap's own output, what it means.
+                claim.warned = target - ctx.now <= Tick.warnSeconds
                 ctx.ledger.write(claim)
                 clipped += 1
             }

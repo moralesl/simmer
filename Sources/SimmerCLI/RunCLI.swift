@@ -11,7 +11,7 @@ import SimmerCore
 ///
 /// The renewer is a thread INSIDE this process, which lives for the run
 /// anyway. v1 spawns nothing detached — the spike's nohup'd second clock is
-/// how it leaked 222 orphans (LEARNINGS.md).
+/// how it leaked 222 orphans (PLATFORM-FACTS.md).
 struct RunCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "run",
@@ -145,6 +145,10 @@ final class RunCoordinator {
                 if let cap = ctx.ledger.readCap(), target > cap.until { target = cap.until }
                 if target > claim.until {
                     claim.until = target
+                    // A renewal inside the warning window means --max or the
+                    // cap is about to end the claim while the command runs.
+                    // That warning is worth having: nobody chose this deadline
+                    // just now, it arrived.
                     claim.warned = false
                     ctx.ledger.write(claim)
                     ctx.ledger.log("run: renewed until \(Formats.hhmm(target))", now: ctx.now)
