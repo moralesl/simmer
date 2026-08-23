@@ -225,8 +225,18 @@ public enum Commands {
         return outcome
     }
 
-    /// `simmer extend 20m` / `simmer +20m`. From NOW, not from the old
-    /// deadline: after "+20m", twenty minutes should be left.
+    /// `simmer extend 20m` / `simmer +20m`. **Added to the existing deadline**:
+    /// a claim due at 23:00 plus `+20m` is due at 23:20.
+    ///
+    /// This read from-now until v1.0, on the argument that after "+20m" twenty
+    /// minutes should be left. It is the wrong trade: `+` and the word
+    /// "extend" both mean addition to every reader, and the from-now reading
+    /// silently discarded the difference — a 4-hour claim plus `+15m` left
+    /// fifteen minutes and still reported `{"action":"extended"}`. Losing
+    /// awake time is the failure this whole tool exists to prevent, and
+    /// `simmer <duration>` was always the spelling for setting a deadline from
+    /// now, so nothing was lost by making the two mean different things
+    /// (CONTRACTS.md § Surface guarantees).
     public static func extend(_ durationText: String, json: Bool, ctx: Context) -> Outcome {
         var outcome = Outcome()
         let text = durationText.hasPrefix("+") ? String(durationText.dropFirst()) : durationText
@@ -249,7 +259,13 @@ public enum Commands {
             return outcome
         }
 
-        var target = ctx.now + seconds
+        // Added to the deadline the claim already has — but never to one that
+        // has already passed. A claim whose time is up but which the guard has
+        // not retired yet would otherwise have the addition land in the past,
+        // producing a claim that is *still* expired and an "extended" that
+        // extended nothing.
+        let base = max(claim.until, ctx.now)
+        var target = base + seconds
         var clippedByCap = false
         var capUntil = 0
         if let cap = ctx.ledger.readCap() {
@@ -296,7 +312,13 @@ public enum Commands {
         let after = ctx.aggregate()
 
         ctx.ledger.log("extended \(ctx.owner) until \(Formats.hhmm(target))", now: ctx.now)
-        outcome.stdout.append("☕ simmering until \(Formats.hhmmDated(target, now: ctx.now)) (\(Durations.human(target - ctx.now)))")
+        // Name the amount added, not only the resulting deadline: "until 23:20"
+        // alone cannot tell you whether the addition was applied to the old
+        // deadline or to the clock, which is the exact confusion this change
+        // removes.
+        // The cap can absorb part of the addition, so report what actually
+        // landed rather than what was asked for.
+        outcome.stdout.append("☕ simmering until \(Formats.hhmmDated(target, now: ctx.now)) (\(Durations.human(target - ctx.now))) · \(Durations.human(target - base)) added")
         if clippedByCap {
             outcome.stdout.append("   clipped by the cap at \(Formats.hhmm(capUntil))")
         }

@@ -98,11 +98,17 @@ import Testing
         #expect(sim.claimCount == 0)
         #expect(sim.switchValue == "0")
 
-        // Extending into the window is the same choice, made knowingly.
-        sim.run(["2h", "--owner", "other"])
-        sim.run(["+2m", "--owner", "other"], now: Sim.epoch + 100)
+        // Staying inside the window is the same choice, made knowingly: a
+        // small addition to a claim that is nearly over leaves it nearly over.
+        //
+        // Since extend ADDS, a long claim can no longer be dragged into the
+        // warning window by extending it — that case is now unreachable rather
+        // than merely handled.
+        sim.run(["1m", "--owner", "other"])
+        sim.run(["+2m", "--owner", "other"], now: Sim.epoch + 10)
+        #expect(sim.claimField("other", "until") == String(Sim.epoch + 60 + 120))
         #expect(sim.claimField("other", "warned") == "1")
-        sim.run(["guard"], now: Sim.epoch + 130)
+        sim.run(["guard"], now: Sim.epoch + 40)
         #expect(sim.events(named: "warn").isEmpty)
     }
 
@@ -122,9 +128,12 @@ import Testing
         sim.run(["30m", "--owner", "test"])
         sim.run(["guard"], now: Sim.epoch + 1600)
         #expect(sim.events(named: "warn").count == 1)
+        // extend ADDS: the 30m claim due at epoch+1800 becomes due at
+        // epoch+3600, whatever o'clock the extension happened to be typed at.
         sim.run(["+30m", "--owner", "test"], now: Sim.epoch + 1600)
         #expect(sim.claimField("test", "warned") == "0")
-        sim.run(["guard"], now: Sim.epoch + 1600 + 1501) // inside the new window
+        #expect(sim.claimField("test", "until") == String(Sim.epoch + 3600))
+        sim.run(["guard"], now: Sim.epoch + 3600 - 200) // inside the new window
         #expect(sim.events(named: "warn").count == 2)
     }
 

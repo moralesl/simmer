@@ -1,11 +1,30 @@
 import Foundation
 
 /// Who is speaking in menus and titles.
+///
+/// The glyph names the DOOR the claim came through, not merely whether a
+/// person is behind it: with three or four claims live, "which of these is
+/// mine" is the question being asked, and two identical 👤 rows do not answer
+/// it. `human` in `--json` is the machine spelling of the same fact and stays
+/// the one to script against — this is presentation, reworded freely
+/// (contract guarantee 5).
 public enum Owners {
+    /// One table, one place. Every surface — `simmer status`, the menu, the
+    /// launcher renders — reads it, so a new owner kind cannot get a different
+    /// face depending on where you look at it.
     public static func glyph(_ owner: String) -> String {
-        if owner == "run" || owner.hasPrefix("run:") { return "⚙" }
-        if SimmerEnvironment.isHumanOwnerName(owner) { return "👤" }
-        return "🤖"
+        if owner == "run" || owner.hasPrefix("run:") { return "⚙️" }
+        if owner.hasPrefix("agent:") { return "🤖" }
+        switch owner {
+        case "menubar": return "🖥️"
+        case "terminal": return "⌨️"
+        case "raycast", "alfred": return "🚀"
+        // The anonymous non-tty fallback. Distinct from 🤖 on purpose: it is
+        // precisely an actor that did NOT name itself, which is what the
+        // claim-time nudge is about, and a robot face would hide that.
+        case "script": return "📜"
+        default: return "🤖"
+        }
     }
 }
 

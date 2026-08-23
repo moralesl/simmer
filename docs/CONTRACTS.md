@@ -15,7 +15,7 @@ simmer <duration> [-r reason] [--min-battery N] [--until HH:MM] [--owner name]
        [--require-ac] [--display-on] [--force]   claim (or replace own) awake time
 simmer forever [...]                            no deadline; reminded, floor still applies
 simmer run [-r] [--max D] [--force] -- <cmd>    awake exactly while <cmd> runs
-simmer +<duration> | extend <duration>          move YOUR claim's deadline, from now
+simmer +<duration> | extend <duration>          add to YOUR claim's deadline
 simmer down                                     hand YOUR claim back
 simmer down --all                               hand everything back (humans only)
 simmer cap <HH:MM|duration> | cap off | cap     the human ceiling
@@ -52,6 +52,10 @@ Callers that conflate them keep working while the machine sleeps.
 
 `status --machine`: `key=value` lines — `state` (active·forever·idle·orphan), `until` (epoch, 0=none), `left`, `left_short`, `reason`, `owner`, `min_battery`, `battery`, `on_battery`, `sleep_disabled`, `since`, `claim_count`, `cap` (epoch, 0=none).
 `status --json` / `budget --json`: the same data as one JSON object; numbers are numbers, `fits` is `true|false|null`, `seconds_left` is `-1` for no deadline, `capped` is `true` when the deadline reported IS the cap, and `claims` is an array with one object per live claim (`id`, `owner`, `until`, `left`, `reason`, `min_battery`, `require_ac`, `since`, `human`).
+
+**"No deadline" is spelled two ways, deliberately, and here is which.** `until` is `0`; a per-claim `left` and `budget`'s `seconds_left` are `-1`; the *aggregate* `left` is `0`, because it is a countdown and there is nothing to count.
+Read `state == "forever"` — or `until == 0` — as the question "is there a deadline at all"; never infer it from a `left` of 0, which an active claim reaches legitimately in its final second.
+The two spellings are frozen: both shipped before v1.0 and the append-only rule covers conventions, not only names.
 Fields are append-only; removing or renaming one is a major version, **and so is changing one's type.**
 
 **Yes/no fields are JSON booleans**, everywhere they appear: `require_ac`, `human`, `capped`, `clipped_by_cap`, `fits`, and every boolean in `events.jsonl`.
@@ -145,6 +149,7 @@ An implementation migrating a single-lease predecessor owes these differences; t
 | `simmer down` releases whoever's lease | releases **yours** | an agent must not end a human's claim |
 | `simmer down` from a non-tty holding no claim released everything | **refused**, with the list | same reason. A human in that position still releases everything, and is told whose it was |
 | `simmer +20m` needed no ownership | needs a claim of yours | "extend" has to mean something specific once there are several |
+| `simmer +20m` set the deadline to now+20m | **adds** 20 minutes to it | see § Surface guarantees — a "+" that subtracts is the one surprise this tool cannot afford |
 | `run` proved ownership with a `[run <pid>]` token in the reason | owner is `run:<pid>`; the reason is just the command | the identity moved to where identity lives |
 | a `run` could be replaced mid-flight | cannot happen | by construction: its owner is `run:<pid>` |
 
@@ -161,9 +166,18 @@ An implementation migrating a single-lease predecessor owes these differences; t
 All additive to the surface above:
 
 - **Canonical verbs, sugar kept.** `claim` / `extend` / `release` are the grammar; `simmer 2h`, `simmer +20m`, `simmer down|off|stop` stay as documented, tested aliases.
+
+- **`extend` adds; it never shortens.** `simmer +20m` on a claim due at 23:00 means 23:20, not "20 minutes from now".
+  The word and the `+` both mean addition to every reader, and the earlier from-now reading could silently discard hours: a 4-hour claim plus `+15m` left fifteen minutes, reported as `{"action":"extended"}`.
+  Losing awake time is the one thing this tool exists to prevent, so a surface where the fix for "I need slightly longer" can cost hours is wrong however well documented.
+  `simmer <duration>` remains the way to *set* a deadline from now, and the two spellings now mean visibly different things.
+  A claim already past its deadline but not yet retired extends from **now**, never from the stale deadline — otherwise the addition lands in the past.
   The alias set is exactly the surface above.
-- **`--json` on every command**, not just `status` and `budget`.
+- **`--json` on every command that has a machine answer**: `claim`, `extend`, `release`, `cap`, `status`, `budget`, `log`, `doctor`.
   A mutating command returns one object: what changed plus the resulting aggregate — `{"action":"claimed|extended|released|cap_set|cap_lifted|refused", "claim": {…}, "clipped_by_cap":bool, "state", "until", "left", "claim_count", "cap", "capped"}`.
+  `notify-test` and `render` have none and **refuse** the flag rather than accepting and ignoring it: a flag that is silently dropped is indistinguishable, to the caller, from one that worked.
+  (`render`'s surfaces *are* its machine output; `--json` there would be a fourth surface nobody asked for.)
+  `everyVerbHonoursJSON` is the gate — it walks the whole verb list, so a new command cannot join the surface without answering this question one way or the other.
   A refusal with `--json` prints `{"action":"refused","error":"…"}` and still exits 1.
 - **The exit-code table is complete and published** (in `--help` and here): budget 0/1/3 · run passes through · claim/extend/release/cap 0 ok, 1 refused · doctor 0/1.
   Parse errors are 1, never an ArgumentParser 64.

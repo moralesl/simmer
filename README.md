@@ -81,11 +81,14 @@ Awake time is **counted, not owned**.
 You, an agent and a build can each hold a *claim*; the Mac stays awake until the last one ends, and nobody can take anybody else's away.
 
 ```
-claims/terminal    👤  refactor         until 17:00  ─┐
+claims/terminal    ⌨️  refactor         until 17:00  ─┐
 claims/agent:eval  🤖  eval batch       until 15:45   ├─ the machine
-claims/run:4821    ⚙   npm test         until 15:20  ─┘   sleeps at 17:00
+claims/run:4821    ⚙️  npm test         until 15:20  ─┘   sleeps at 17:00
 cap                ⛔  nothing past     23:00        ──── unless you say sooner
 ```
+
+The glyph is the door the claim came through — ⌨️ a prompt, 🖥️ the menu bar, 🚀 a launcher, ⚙️ a wrapped command, 🤖 an agent, 📜 something that never named itself.
+With four claims live, "which of these is mine" is the question actually being asked.
 
 A claim's id **is** its owner, which is the whole ownership model: "extend mine", "release mine" and "replace mine" need no registry and cannot be ambiguous, because one actor physically cannot address another's file.
 There is no `--force` — the conflict it existed to resolve cannot occur.
@@ -106,7 +109,9 @@ make uninstall   # removes exactly what install wrote
 ```
 
 The acceptance suite honours `SIMMER_BIN`, so it can gate any implementation of [docs/CONTRACTS.md](docs/CONTRACTS.md) — that is what makes it the executable form of the contract.
-During development the app builds under a `.devN` bundle id; the clean production id is spent only at release, because macOS caches a notification permission verdict per bundle id forever ([docs/PLATFORM-FACTS.md](docs/PLATFORM-FACTS.md) § 1).
+`io.github.moralesl.simmer` is the production bundle id, promoted for v1.0.0.
+Develop under a throwaway one — `make BUNDLE_ID=io.github.moralesl.simmer.dev3 app` — because macOS caches a notification permission verdict per bundle id forever and a denial can never be undone ([docs/PLATFORM-FACTS.md](docs/PLATFORM-FACTS.md) § 1).
+Ids already spent are listed in the Makefile, next to the line that sets it.
 
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md).
 Reporting something sensitive: [SECURITY.md](SECURITY.md).

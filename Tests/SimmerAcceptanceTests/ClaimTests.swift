@@ -154,7 +154,7 @@ import Testing
         #expect(sim.claimField("agent", "started") == String(Sim.epoch))
     }
 
-    @Test func extendMovesOnlyMyClaimFromNow() {
+    @Test func extendAddsToMyClaimAndTouchesNobodyElses() {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["2h", "--owner", "terminal"])
         sim.run(["30m", "--owner", "agent"])
@@ -162,8 +162,35 @@ import Testing
         let extend = sim.run(["+10m", "--owner", "agent"], now: Sim.epoch + 60)
         #expect(extend.code == 0)
         #expect(sim.claimField("terminal", "until") == othersUntil)
-        // From now, not from the old deadline.
-        #expect(sim.claimField("agent", "until") == String(Sim.epoch + 60 + 600))
+        // Added to the deadline it had (epoch+1800), NOT set to now+10m.
+        #expect(sim.claimField("agent", "until") == String(Sim.epoch + 1800 + 600))
+        #expect(extend.out.contains("10 min added"))
+    }
+
+    /// The regression this semantics change exists for: `+15m` on a long claim
+    /// used to leave fifteen minutes and call it "extended", discarding hours
+    /// of awake time — the one failure the whole tool exists to prevent.
+    @Test func extendingALongClaimByALittleNeverShortensIt() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "overnight eval", "--owner", "agent:evals"])
+        let before = Int(sim.claimField("agent:evals", "until") ?? "0") ?? 0
+        let result = sim.run(["+15m", "--owner", "agent:evals"])
+        #expect(result.code == 0)
+        let after = Int(sim.claimField("agent:evals", "until") ?? "0") ?? 0
+        #expect(after == before + 900)
+        #expect(after > before)
+    }
+
+    /// A claim whose deadline has passed but which the guard has not retired
+    /// yet: adding to the stale deadline would land the extension in the past,
+    /// producing a still-expired claim reported as extended.
+    @Test func extendingAStaleDeadlineCountsFromNow() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["10m", "--owner", "agent"])
+        let late = Sim.epoch + 3600
+        let result = sim.run(["+10m", "--owner", "agent"], now: late)
+        #expect(result.code == 0)
+        #expect(sim.claimField("agent", "until") == String(late + 600))
     }
 
     @Test func extendNeedsAClaimOfYourOwn() {

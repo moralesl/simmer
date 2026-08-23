@@ -32,7 +32,8 @@ Cite the contract, not them.
 - **No detached child processes.** The spike leaked 222 orphaned caffeinates; v1 spawns nothing it does not wait for.
 - **Only the app touches UserNotifications.** The CLI enqueues into the spool (`$STATE/notify-spool.jsonl`); the grant belongs to the app's executable (`docs/PLATFORM-FACTS.md`).
   The CLI target must not link SimmerNotifyKit.
-- **Bundle ids are spent, never recovered.** Development builds use the `.devN` id from the Makefile; `io.github.moralesl.simmer` is promoted only at release.
+- **Bundle ids are spent, never recovered.** `io.github.moralesl.simmer` is the production id, promoted for v1.0.0 — never point that line at a fresh id to try something.
+  Develop under a throwaway (`make BUNDLE_ID=…dev3 app`); the Makefile keeps the ledger of ids already burned.
   Never let a test bundle ask for notification permission under a production id.
 - **SimmerCore stays pure**: no AppKit, no printing, no argv, no globals.
   The CLI and the app are renderers over it — that is what keeps them from disagreeing.
@@ -42,5 +43,12 @@ Cite the contract, not them.
   Asserted against raw JSON text — `as? Bool` accepts `0`/`1` and would miss it.
 - **A verb in `Normalize.verbs` must have a subcommand behind it.** Otherwise it reaches the raw parser, whose "Unexpected argument" is the one refusal in the surface that names no fix.
   `everyDocumentedVerbResolves` is the gate.
+- **No surface may cost a caller awake time it already holds.** `extend` adds; a button or menu item saying "more" adds.
+  Anything that *sets* a deadline says so in its label, because the one thing this tool exists to prevent is time quietly disappearing.
+  `extendingALongClaimByALittleNeverShortensIt` and `moreTimeExtendsTheMenuBarsOwnClaimRatherThanReplacingIt` are the gates; the app's banner button goes through the same branch.
+- **`--json` is honoured or refused, never accepted and dropped.** A silently ignored flag is indistinguishable from one that worked — that is how `--help` came to promise a surface four commands did not have.
+  `everyVerbHonoursJSON` walks the whole verb list, so a new command cannot join the surface without answering the question.
+- **A flag's own validation belongs to simmer, not to ArgumentParser.** Parser diagnostics name internal subcommand spellings nobody typed and write nothing to stdout, so a `--json` caller gets an empty stream instead of the contracted refusal object.
+  Take the value as `String`, validate it, and refuse through `Outcome.failure` — as `budget --need` and `claim --min-battery` do.
 
 The bash spike (v0.1) that preceded this implementation lives at the git tag `v0.1` — reference material only; nothing imports from it.

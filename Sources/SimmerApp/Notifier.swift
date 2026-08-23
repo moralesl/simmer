@@ -72,11 +72,17 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         DispatchQueue.main.async {
             switch response.actionIdentifier {
             case "simmer.extend30":
-                // A fresh menubar claim: guarantees 30 more minutes through
-                // the aggregate without touching anyone else's claim.
+                // Add to the menu bar's own claim, or take one if it holds
+                // none. Always a fresh claim would SET the deadline to 30
+                // minutes from now, which shortens a longer claim of its own —
+                // the same trap the menu items had. Either way nobody else's
+                // claim is touched, and either way there are at least 30 more
+                // minutes than there were.
                 AppState.shared.perform { ctx in
-                    Commands.claim(ClaimInput(durationText: "30m",
-                                              reason: "extended from a banner"), ctx: ctx)
+                    ctx.ledger.claim(owner: ctx.owner) != nil
+                        ? Commands.extend("30m", json: false, ctx: ctx)
+                        : Commands.claim(ClaimInput(durationText: "30m",
+                                                    reason: "extended from a banner"), ctx: ctx)
                 }
             case "simmer.release":
                 AppState.shared.perform { ctx in

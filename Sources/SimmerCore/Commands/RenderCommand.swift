@@ -49,9 +49,11 @@ extension Commands {
             }
             lines.append(contentsOf: claimRowsSwiftBar(aggregate))
             lines.append("---")
-            lines.append(act("Extend 15 minutes", "+15m", "--owner", "menubar"))
-            lines.append(act("Extend 1 hour", "+1h", "--owner", "menubar"))
-            lines.append(act("Extend 3 hours", "+3h", "--owner", "menubar"))
+            // "15 more minutes", not "Extend 15 minutes": the second reads as
+            // "make it fifteen", which is what these items used to do.
+            lines.append(act("15 more minutes", "+15m", "--owner", "menubar"))
+            lines.append(act("1 more hour", "+1h", "--owner", "menubar"))
+            lines.append(act("3 more hours", "+3h", "--owner", "menubar"))
             lines.append("---")
             lines.append(act("Release mine", "down", "--owner", "menubar"))
             lines.append(act("Release everything", "down", "--all", "--owner", "menubar"))
@@ -188,15 +190,15 @@ extension Commands {
                 if q.contains(":") {
                     item("Move your deadline to \(q)", "Replaces your own claim", "--until \(q)", iconOn)
                 } else if q.hasPrefix("+") {
-                    item("Extend by \(q.dropFirst())", "Counted from now", q, iconOn)
+                    item("Add \(q.dropFirst())", "Added to your current deadline", q, iconOn)
                 } else {
                     item("Replace yours with \(q)", "Counted from now", q, iconOn)
                 }
             }
             item("Release mine", "Hand your own claim back", "down", iconOff)
             item("Release everything", "Ends every claim — humans only", "down --all", iconOff)
-            item("Extend 15 minutes", "Deadline moves to 15 minutes from now", "+15m", iconOn)
-            item("Extend 1 hour", "Deadline moves to 1 hour from now", "+1h", iconOn)
+            item("15 more minutes", "Adds 15 minutes to your deadline", "+15m", iconOn)
+            item("1 more hour", "Adds 1 hour to your deadline", "+1h", iconOn)
         case .forever:
             let reason = aggregate.reason.isEmpty ? "no reason given" : aggregate.reason
             item("Simmering with no deadline · since \(Formats.hhmm(aggregate.since))",

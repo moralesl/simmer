@@ -147,6 +147,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         switch box.action {
         case .claim(let duration):
             AppState.shared.perform { Commands.claim(ClaimInput(durationText: duration), ctx: $0) }
+        case .extend(let duration):
+            AppState.shared.perform { Commands.extend(duration, json: false, ctx: $0) }
         case .claimForever:
             AppState.shared.perform { Commands.claim(ClaimInput(forever: true), ctx: $0) }
         case .releaseMine:

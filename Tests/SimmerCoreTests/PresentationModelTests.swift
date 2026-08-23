@@ -85,12 +85,48 @@ import Testing
                                    claim("agent:evals", until: 2000)])
         #expect(items.first?.title.hasPrefix("Awake until") == true)
         #expect(items.first?.title.contains("2 claims") == true)
-        // one info row per claim, with its glyph
+        // one info row per claim, with the glyph of the door it came through
         #expect(items.contains { $0.title.contains("🤖 agent:evals") && $0.action == nil })
-        #expect(items.contains { $0.title.contains("👤 terminal") && $0.action == nil })
-        // extend acts on the menubar's OWN claim, ⌥ for the big step
+        #expect(items.contains { $0.title.contains("⌨️ terminal") && $0.action == nil })
+        // The menu bar holds nothing here, so "more" has to start by taking a
+        // claim — there is nothing of its own to add to.
         #expect(items.contains { $0.action == .claim("15m") && !$0.isAlternate })
         #expect(items.contains { $0.action == .claim("3h") && $0.isAlternate })
+    }
+
+    /// "Awake 15 more minutes" must ADD fifteen minutes. Routed through
+    /// `.claim` it set the deadline to now+15m, so on a long claim the item
+    /// quietly cut hours off — the label promised one thing and the verb did
+    /// another. Once the menu bar holds a claim, "more" means extend.
+    @Test func moreTimeExtendsTheMenuBarsOwnClaimRatherThanReplacingIt() {
+        let items = build(claims: [claim("menubar", until: 40_000),
+                                   claim("agent:evals", until: 2000)])
+        #expect(items.contains { $0.action == .extend("15m") && !$0.isAlternate })
+        #expect(items.contains { $0.action == .extend("3h") && $0.isAlternate })
+        #expect(!items.contains { $0.action == .claim("15m") })
+    }
+
+    /// One table, read by every surface. A new owner kind getting a different
+    /// face in the menu than in `simmer status` is the drift this prevents.
+    @Test func everyOwnerKindHasItsOwnFace() {
+        #expect(Owners.glyph("menubar") == "🖥️")
+        #expect(Owners.glyph("terminal") == "⌨️")
+        #expect(Owners.glyph("raycast") == "🚀")
+        #expect(Owners.glyph("alfred") == "🚀")
+        #expect(Owners.glyph("run:4821") == "⚙️")
+        #expect(Owners.glyph("agent:evals") == "🤖")
+        // The anonymous non-tty fallback is its own thing: an actor that did
+        // not name itself, which a robot face would hide.
+        #expect(Owners.glyph("script") == "📜")
+        // Anything unrecognised reads as an automated caller, not as a person:
+        // failing toward "not human" is the safe direction for a glyph whose
+        // job is telling you which of these claims is yours.
+        #expect(Owners.glyph("jenkins-worker-3") == "🤖")
+        // Every human owner name must be visually distinct from every
+        // non-human one — the whole point of splitting 👤 apart.
+        let humanFaces = Set(["terminal", "menubar", "raycast", "alfred"].map(Owners.glyph))
+        let otherFaces = Set(["agent:x", "run:1", "script", "whatever"].map(Owners.glyph))
+        #expect(humanFaces.isDisjoint(with: otherFaces))
     }
 
     @Test func releaseNamesItsBlastRadius() {

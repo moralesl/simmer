@@ -7,6 +7,11 @@ public enum MenuAction: Equatable, Sendable {
     /// Take/replace the menu bar's own claim — the only way to guarantee more
     /// time without touching anyone else's (CONTRACTS.md § the claims ledger).
     case claim(String)
+    /// Add to the menu bar's own claim. Distinct from `.claim` because "Awake
+    /// 15 more minutes" must ADD fifteen minutes: routed through `.claim` it
+    /// set the deadline to now+15m, so the item quietly cut a long claim short
+    /// — the label promised one thing and the verb did another.
+    case extend(String)
     case claimForever
     case releaseMine
     case releaseAll
@@ -95,10 +100,16 @@ public enum MenuModel {
                 items.append(.header("\(Owners.glyph(entry.claim.owner)) \(entry.claim.owner)\(reason) — \(deadline)"))
             }
             items.append(.separator)
+            // "more" means more. Whether the menu bar already holds a claim
+            // decides which verb delivers that: extend adds to one that
+            // exists, and with none of its own there is nothing to add to, so
+            // the first press takes one.
+            let mine = aggregate.live.first { $0.claim.owner == "menubar" }
+            let more: (String) -> MenuAction = { mine == nil ? .claim($0) : .extend($0) }
             items.append(MenuItemModel(title: "Awake 15 more minutes",
-                                       symbol: "cup.and.saucer.fill", action: .claim("15m")))
+                                       symbol: "cup.and.saucer.fill", action: more("15m")))
             items.append(MenuItemModel(title: "Awake 3 more hours",
-                                       symbol: "cup.and.saucer.fill", action: .claim("3h"),
+                                       symbol: "cup.and.saucer.fill", action: more("3h"),
                                        isAlternate: true))
             items.append(contentsOf: releaseItems(aggregate))
         }

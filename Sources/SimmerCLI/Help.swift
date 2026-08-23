@@ -14,7 +14,8 @@ TRY THIS
   simmer 2h -r "big build"   ...and say what for, so you can see it later
   simmer run -- npm test     stay awake exactly as long as this command runs
   simmer                     how much longer? what for? who else is asking?
-  simmer +30m                need longer: 30 more minutes from now
+  simmer +30m                need longer: adds 30 minutes to your deadline
+                             (simmer 30m SETS it to 30 minutes from now)
   simmer down                finished early, let it sleep
 
 HOW LONG
@@ -86,7 +87,12 @@ FOR SCRIPTS AND AGENTS
   simmer status --json       the whole state as one JSON object, aggregate at
                              the top level, every claim in .claims
   simmer status --machine    the same as key=value lines, when jq is not around
-  --json                     on EVERY command: what changed, plus the aggregate
+  --json                     claim · extend · release · cap · status · budget ·
+                             log · doctor. A mutating command answers with what
+                             changed plus the resulting aggregate, so one call
+                             is enough. notify-test and render refuse it rather
+                             than accept it and do nothing
+  simmer doctor --json       health as one object: every check, plus the state
 
 EXIT CODES ARE API
   budget         0 fits (or no deadline) · 1 not enough · 3 NOTHING CLAIMED —

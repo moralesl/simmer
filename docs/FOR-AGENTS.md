@@ -41,12 +41,14 @@ Conflating them means working while the machine sleeps under you.
 
 ```bash
 simmer 45m -r "eval batch" --owner agent:evals --json    # claim
-simmer +15m --owner agent:evals --json                   # extend YOURS, from now
+simmer +15m --owner agent:evals --json                   # add 15m to YOURS
 simmer down --owner agent:evals                          # release YOURS when done
 simmer run --max 2h -- npm test                          # or: exactly while a command runs
 ```
 
+- **`+15m` adds to your deadline; `15m` sets it.** Use `+` for "this is taking longer than I thought" and a bare duration for "this is how long I now need in total" — the first can never cost you time you already hold.
 - Every mutating command takes `--json` and answers with what changed plus the resulting aggregate — one call, no second round-trip.
+  So do `log` and `doctor`; `notify-test` and `render` refuse the flag rather than ignore it.
 - `simmer run` is the claim that cannot be forgotten: released on any exit, self-expiring within one chunk even after SIGKILL, and it never kills your command — `--max` bounds the awake time, not the work.
 - Release what you claimed when you finish.
   The guard would catch it at the deadline anyway, but leaving claims behind is leaving your name on time nobody is using.

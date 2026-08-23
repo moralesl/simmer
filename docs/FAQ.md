@@ -46,6 +46,10 @@ A human can release any claim; an agent only its own.
 It is enforced against honest actors, not as a security boundary — nothing stops a process passing `--owner terminal`, and on a single-user Mac nothing could.
 The agent protocol states it as an obligation — [FOR-AGENTS.md](FOR-AGENTS.md).
 
+**What is the difference between `simmer +30m` and `simmer 30m`?** `+30m` **adds** half an hour to your deadline; `30m` **sets** your deadline to half an hour from now.
+So on a claim running until 23:00, `+30m` gets you 23:30 and `30m` gets you 30 minutes.
+Before v1.0 both meant the second thing, which meant `+15m` on a four-hour claim silently left fifteen minutes.
+
 **What is the cap for?** "Nothing past 23:00, whoever asks."
 It clips every claim, the ones already held and the ones taken later.
 It is a human instrument: an agent can read it and gets a truthful `budget` answer when it hits it, but cannot move it.
