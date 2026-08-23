@@ -5,11 +5,18 @@
 # the build must work exactly there (PLATFORM-FACTS.md).
 
 PREFIX       ?= $(HOME)/Applications
-# Development id. Promote to io.github.moralesl.simmer only when the app is
-# known-good: macOS caches a notification permission verdict per bundle id
-# FOREVER, and a denial can never be undone (PLATFORM-FACTS.md).
-# Ids already spent on the maintainer's Mac: .dev (denied on first install).
-BUNDLE_ID    ?= io.github.moralesl.simmer.dev2
+# THE production id, promoted for v1.0.0. macOS caches a notification
+# permission verdict per bundle id FOREVER and a denial can never be undone
+# (PLATFORM-FACTS.md § 1), so this line is a one-way door: never point it at a
+# fresh id to "test something", and never let a test bundle ask for permission
+# under it.
+#
+# Ids spent on the maintainer's Mac, and therefore unusable:
+#   .dev   — denied on first install
+#   .dev2  — the development id v1.0.0 was built under
+# Development after this point uses .dev3 (make BUNDLE_ID=…dev3 app), which is
+# then spent too. There is no supply problem; there is no recovery either.
+BUNDLE_ID    ?= io.github.moralesl.simmer
 GUARD_LABEL   = io.github.moralesl.simmer.guard
 # Single-sourced from SimmerCore — the CLI, the app and this plist must agree.
 VERSION      := $(shell sed -n 's/.*string = "\(.*\)".*/\1/p' Sources/SimmerCore/Version.swift)
