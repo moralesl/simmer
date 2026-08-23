@@ -8,6 +8,13 @@ public enum StatusMode {
 }
 
 extension Commands {
+    /// The `status --json` object as a value rather than a string, so a caller
+    /// can nest it. `doctor --json` does, which is what stops a second
+    /// hand-kept copy of a contracted field list existing.
+    public static func statusObject(ctx: Context) -> JSONValue {
+        Present.statusJSON(ctx: ctx)
+    }
+
     public static func status(mode: StatusMode, ctx: Context) -> Outcome {
         var outcome = Outcome()
         let aggregate = ctx.aggregate()
@@ -36,27 +43,7 @@ extension Commands {
             ]
 
         case .json:
-            let claims = aggregate.live.map {
-                Present.claimJSON($0.claim, effectiveUntil: $0.effectiveUntil, now: ctx.now)
-            }
-            outcome.stdout = [JSONValue.object([
-                ("state", .string(aggregate.state.rawValue)),
-                ("until", .int(aggregate.until)),
-                ("left", .int(aggregate.left)),
-                ("left_short", .string(aggregate.leftShort)),
-                ("reason", .string(aggregate.reason)),
-                ("min_battery", .int(aggregate.minBattery)),
-                ("battery", battery.map { JSONValue.int($0) } ?? .null),
-                ("on_battery", .int(onBattery ? 1 : 0)),
-                ("sleep_disabled", .int(sleepDisabled ? 1 : 0)),
-                ("since", .int(aggregate.since)),
-                ("owner", .string(aggregate.owner)),
-                ("claim_count", .int(aggregate.count)),
-                ("cap", .int(aggregate.cap)),
-                ("capped", .bool(aggregate.capped)),
-                ("claims", .array(claims)),
-                ("version", .string(ctx.version)),
-            ]).serialized()]
+            outcome.stdout = [statusObject(ctx: ctx).serialized()]
 
         case .human:
             if aggregate.count == 0 {
@@ -93,15 +80,27 @@ extension Commands {
     }
 
     /// `simmer log [n]` — what the guard has actually done.
-    public static func logTail(_ n: Int, ctx: Context) -> Outcome {
+    public static func logTail(_ n: Int, json: Bool = false, ctx: Context) -> Outcome {
         var outcome = Outcome()
-        guard let text = try? String(contentsOf: ctx.ledger.logFile, encoding: .utf8),
-              !text.isEmpty else {
+        let text = (try? String(contentsOf: ctx.ledger.logFile, encoding: .utf8)) ?? ""
+        let tail = text.split(separator: "\n", omittingEmptySubsequences: true)
+            .suffix(max(n, 0)).map(String.init)
+        if json {
+            // An empty log is `[]`, not a sentence: "no log yet" is the human
+            // answer to the same question and a parser should not have to
+            // recognise prose to learn there is nothing there.
+            outcome.stdout = [JSONValue.object([
+                ("lines", .array(tail.map { .string($0) })),
+                ("count", .int(tail.count)),
+                ("path", .string(ctx.ledger.logFile.path)),
+            ]).serialized()]
+            return outcome
+        }
+        guard !tail.isEmpty else {
             outcome.stdout.append("no log yet")
             return outcome
         }
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
-        outcome.stdout = lines.suffix(max(n, 0)).map(String.init)
+        outcome.stdout = tail
         return outcome
     }
 }

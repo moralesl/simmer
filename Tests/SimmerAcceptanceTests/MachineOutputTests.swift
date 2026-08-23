@@ -379,6 +379,106 @@ import Testing
         #expect(!result.combined.contains("Unexpected argument"))
     }
 
+    /// `--json` is either honoured or refused — never accepted and dropped.
+    ///
+    /// `--help` and CONTRACTS.md both promised "--json on every command" while
+    /// `log`, `doctor`, `notify-test` and `render` accepted the flag, printed
+    /// prose and exited 0. A caller cannot tell that from a flag that worked,
+    /// so the promise was worse than no promise. This walks the whole verb list
+    /// rather than the four that were wrong: a new command cannot join the
+    /// surface without answering the question one way or the other.
+    @Test(arguments: ["claim", "extend", "release", "cap", "status", "budget",
+                      "doctor", "log", "render", "notify-test"])
+    func everyVerbHonoursJSON(_ verb: String) {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["2h", "--owner", "terminal"]) // something for them to describe
+        // Arguments each verb needs to get past its own parser.
+        let extras: [String: [String]] = [
+            "claim": ["30m"], "extend": ["10m"], "cap": ["1h"], "render": ["raycast"],
+        ]
+        let result = sim.run([verb] + (extras[verb] ?? []) + ["--json", "--owner", "terminal"])
+
+        let stdout = result.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !stdout.isEmpty else {
+            // The refusing verbs say so on stderr and exit non-zero. Silence
+            // plus exit 0 is the failure mode this test exists for.
+            #expect(result.code != 0, "\(verb) --json produced nothing and exited 0")
+            #expect(result.err.contains("no JSON form"), "\(verb): \(result.err)")
+            return
+        }
+        #expect((try? JSONSerialization.jsonObject(with: Data(stdout.utf8))) != nil,
+                "\(verb) --json emitted non-JSON on stdout: \(stdout.prefix(120))")
+    }
+
+    @Test func theTwoVerbsWithoutAMachineAnswerSaySo() {
+        let sim = Sim(); defer { sim.tearDown() }
+        for verb in [["notify-test"], ["render", "raycast"]] {
+            let result = sim.run(verb + ["--json"])
+            #expect(result.code == 1)
+            #expect(result.err.contains("no JSON form"))
+            // A refusal that names no fix is the one thing the surface forbids.
+            #expect(result.err.contains("simmer"))
+            #expect(result.out.isEmpty)
+        }
+    }
+
+    @Test func logJSONIsAnArrayEvenWhenEmpty() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let empty = sim.json(sim.run(["log", "--json"]))
+        #expect(empty["lines"] as? [String] == [])
+        #expect(empty["count"] as? Int == 0)
+        sim.run(["30m", "--owner", "test"])
+        let after = sim.json(sim.run(["log", "--json"]))
+        #expect((after["count"] as? Int ?? 0) > 0)
+        #expect((after["lines"] as? [String] ?? []).contains { $0.contains("claim test") })
+    }
+
+    /// doctor's health answer, for an agent diagnosing itself. Under the seam
+    /// the app is deliberately absent, so its row must be informational — a
+    /// check that can never pass in a sandbox makes doctor the one command CI
+    /// can never assert on.
+    @Test func doctorJSONReportsChecksAndIsNotRedForAnAbsentAppUnderTheSeam() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["doctor", "--json"])
+        let object = sim.json(result)
+        #expect(object["version"] != nil)
+        #expect(object["seam_active"] as? Bool == true)
+        let checks = object["checks"] as? [[String: Any]] ?? []
+        #expect(!checks.isEmpty)
+        let appRow = checks.first { $0["id"] as? String == "app_running" }
+        #expect(appRow != nil)
+        #expect(appRow?["ok"] is NSNull, "the app check must be informational under the seam")
+        // The nested status object is the same shape `status --json` emits.
+        let status = object["status"] as? [String: Any] ?? [:]
+        #expect(status["state"] as? String == "idle")
+        #expect(status["claims"] as? [Any] != nil)
+    }
+
+    /// A floor outside 0–100 is not a battery level, and used to survive to be
+    /// compared against one ("battery 80% <= floor 200%" describes the wrong
+    /// problem). The attached `=` form throughout: a value beginning with `-`
+    /// is genuinely ambiguous in separated form, and every parser rejects it.
+    @Test func minBatteryOutsideZeroToHundredIsRefusedInSimmersOwnVoice() {
+        let sim = Sim(); defer { sim.tearDown() }
+        // No empty-string case: `--min-battery=` is a missing value, which the
+        // parser owns and diagnoses before simmer sees anything.
+        for bad in ["abc", "200", "101", "-5", "12.5"] {
+            let result = sim.run(["1h", "--min-battery=\(bad)", "--owner", "test", "--json"])
+            #expect(result.code == 1, "--min-battery=\(bad) was accepted")
+            // The contracted refusal object, on stdout, for every bad value —
+            // ArgumentParser's own diagnosis wrote nothing there at all.
+            let object = sim.json(result)
+            #expect(object["action"] as? String == "refused", "--min-battery=\(bad)")
+            // And never the parser's voice, which names a subcommand nobody typed.
+            #expect(!result.combined.contains("Usage: simmer claim"))
+        }
+        // The boundaries themselves are legal. The harness runs on AC, where a
+        // floor is recorded and simply never applies.
+        #expect(sim.run(["1h", "--min-battery=0", "--owner", "a"]).code == 0)
+        #expect(sim.run(["1h", "--min-battery=100", "--owner", "b"]).code == 0)
+        #expect(sim.claimField("b", "min_battery") == "100")
+    }
+
     @Test func anUnknownWordIsRefusedWithAFixNotAParserDump() {
         let sim = Sim(); defer { sim.tearDown() }
         for word in ["notify-post", "wibble", "statuss"] {

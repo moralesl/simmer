@@ -53,6 +53,39 @@ enum Present {
         ])
     }
 
+    /// The whole `status --json` object, as a value rather than a string, so
+    /// `doctor --json` can nest it instead of keeping a second copy of the
+    /// field list. Two hand-kept copies of a contracted shape is how one of
+    /// them acquires a field the other does not have.
+    static func statusJSON(ctx: Context) -> JSONValue {
+        let aggregate = ctx.aggregate()
+        let battery = ctx.power.batteryPercent()
+        let claims = aggregate.live.map {
+            claimJSON($0.claim, effectiveUntil: $0.effectiveUntil, now: ctx.now)
+        }
+        return .object([
+            ("state", .string(aggregate.state.rawValue)),
+            ("until", .int(aggregate.until)),
+            ("left", .int(aggregate.left)),
+            ("left_short", .string(aggregate.leftShort)),
+            ("reason", .string(aggregate.reason)),
+            ("min_battery", .int(aggregate.minBattery)),
+            ("battery", battery.map { JSONValue.int($0) } ?? .null),
+            // 0/1 rather than booleans, alone in this object: these two mirror
+            // `--machine` field for field, and that surface has no types
+            // (CONTRACTS.md § Machine-readable output).
+            ("on_battery", .int(ctx.power.onBattery() ? 1 : 0)),
+            ("sleep_disabled", .int(ctx.power.sleepDisabled() ? 1 : 0)),
+            ("since", .int(aggregate.since)),
+            ("owner", .string(aggregate.owner)),
+            ("claim_count", .int(aggregate.count)),
+            ("cap", .int(aggregate.cap)),
+            ("capped", .bool(aggregate.capped)),
+            ("claims", .array(claims)),
+            ("version", .string(ctx.version)),
+        ])
+    }
+
     /// The aggregate tail every mutating command's --json carries, so one call
     /// answers "what changed AND what will the machine do now" — no second
     /// round-trip (CONTRACTS.md § v1 surface additions).

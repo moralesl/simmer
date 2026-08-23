@@ -16,6 +16,17 @@ struct CommonOptions: ParsableArguments {
 
     @Flag(name: .customLong("json"), help: "One JSON object instead of prose.")
     var json = false
+
+    /// For the two commands that have no machine answer. Accepting `--json`
+    /// and then ignoring it is the worst of the three options: the caller
+    /// cannot tell it from a flag that worked, which is how `--help` came to
+    /// promise a surface that four commands did not have.
+    func refuseJSON(_ command: String, insteadUse alternative: String) {
+        guard json else { return }
+        Runtime.deliver(.failure(
+            "\(command) has no JSON form — its output is for a person. Use \(alternative).",
+            json: false))
+    }
 }
 
 struct SimmerRoot: ParsableCommand {
@@ -41,9 +52,14 @@ struct ClaimCLI: ParsableCommand {
     @Option(name: .customLong("until"), help: "An absolute time, HH:MM, instead of a length.")
     var until: String?
 
+    // Taken as text and validated below, exactly as `budget --need` is. Left
+    // as an Int, ArgumentParser diagnoses a bad value in its own voice, prints
+    // a usage block naming the internal `simmer claim` spelling nobody typed,
+    // and — the part that matters — writes nothing to stdout, so a `--json`
+    // caller gets an empty stream instead of the contracted refusal object.
     @Option(name: .customLong("min-battery"),
-            help: "Release below this battery percentage (on battery only).")
-    var minBattery: Int = Claim.defaultMinBattery
+            help: "Release below this battery percentage, 0–100 (on battery only).")
+    var minBattery: String?
 
     @Flag(name: .customLong("require-ac"),
           help: "End the claim the moment the charger is unplugged.")
@@ -61,12 +77,24 @@ struct ClaimCLI: ParsableCommand {
     func run() throws {
         let ctx = Runtime.context(ownerFlag: common.owner)
         let forever = duration == "forever"
+        var floor = Claim.defaultMinBattery
+        if let minBattery {
+            // A floor outside 0–100 is not a battery level, so it is refused
+            // for what it is rather than surviving to be compared against one
+            // ("battery 80% <= floor 200%" described the wrong problem).
+            guard let value = Int(minBattery), (0...100).contains(value) else {
+                Runtime.deliver(.failure(
+                    "--min-battery wants a whole percentage, 0–100: \(minBattery)",
+                    json: common.json))
+            }
+            floor = value
+        }
         let input = ClaimInput(
             durationText: forever ? nil : duration,
             untilText: until,
             forever: forever,
             reason: common.reason ?? "",
-            minBattery: minBattery,
+            minBattery: floor,
             requireAC: requireAC,
             displayOn: displayOn,
             force: force,
@@ -212,7 +240,7 @@ struct LogCLI: ParsableCommand {
 
     func run() throws {
         let ctx = Runtime.context(ownerFlag: common.owner)
-        Runtime.deliver(Commands.logTail(count, ctx: ctx))
+        Runtime.deliver(Commands.logTail(count, json: common.json, ctx: ctx))
     }
 }
 
@@ -232,6 +260,10 @@ struct RenderCLI: ParsableCommand {
     @OptionGroup var common: CommonOptions
 
     func run() throws {
+        // render's surfaces ARE its machine output — swiftbar, raycast and
+        // alfred each have their own contract. A fourth one nobody asked for
+        // would be the drift the append-only rule exists to stop.
+        common.refuseJSON("render", insteadUse: "simmer status --json")
         let ctx = Runtime.context(ownerFlag: common.owner)
         Runtime.deliver(Commands.render(surface: surface,
                                         query: query.joined(separator: " "), ctx: ctx))
@@ -248,6 +280,9 @@ struct NotifyTestCLI: ParsableCommand {
     @OptionGroup var common: CommonOptions
 
     func run() throws {
+        // A diagnostic whose whole output is an explanation of what to click.
+        // `doctor --json` is the machine-readable health answer.
+        common.refuseJSON("notify-test", insteadUse: "simmer doctor --json")
         let ctx = Runtime.context(ownerFlag: common.owner)
         // The app is the only poster (its executable holds the grant), so the
         // honest test is: enqueue, then report what the app last said about
