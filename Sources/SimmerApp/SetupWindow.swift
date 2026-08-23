@@ -4,23 +4,21 @@ import SimmerCore
 import UserNotifications
 
 /// `simmer doctor` made visible: three rows, three buttons, live status. The
-/// natural home for the privileged step — the riskiest part of onboarding
-/// becomes obvious instead of paragraphs in a terminal (DESIGN-NOTES).
+/// riskiest part of onboarding becomes legible here instead of being
+/// paragraphs in a terminal (CONTRACTS.md § v1 surface additions).
+///
+/// The privileged step is shown, not performed: simmer never escalates its own
+/// privileges (`SudoRule` says why).
 final class SetupWindow: NSObject {
     static let shared = SetupWindow()
-    static let sudoersPath = "/etc/sudoers.d/simmer"
+    static var sudoersPath: String { SudoRule.path }
 
-    /// The exact two-line rule, shown in full before it is asked for.
-    static var sudoersRule: String {
-        let user = NSUserName()
-        return """
-        # simmer — flip the sleep switch without a password; nothing else.
-        \(user) ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0
-        """
-    }
+    /// The exact two-line rule, shown in full — one source, shared with
+    /// `simmer doctor` and the installer.
+    static var sudoersRule: String { SudoRule.text(user: NSUserName()) }
 
     private var window: NSWindow?
-    private let sudoRow = SetupRow(title: "Sleep switch", buttonTitle: "Set up…")
+    private let sudoRow = SetupRow(title: "Sleep switch", buttonTitle: "Copy command…")
     private let notifyRow = SetupRow(title: "Notifications", buttonTitle: "Ask again")
     private let loginRow = SetupRow(title: "Start at login", buttonTitle: "Enable")
     private var notifyStatus: UNAuthorizationStatus = .notDetermined
@@ -81,8 +79,8 @@ final class SetupWindow: NSObject {
 
         let hint = NSTextField(wrappingLabelWithString:
             "The sleep switch is a two-line sudo rule scoped to exactly "
-            + "“pmset -a disablesleep” and nothing else — shown in full before "
-            + "you are asked for your password.")
+            + "“pmset -a disablesleep” and nothing else. simmer shows you the "
+            + "command and you run it — it never gives itself root.")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .tertiaryLabelColor
         hint.preferredMaxLayoutWidth = 460
@@ -118,9 +116,9 @@ final class SetupWindow: NSObject {
                     self.sudoRow.set(.ok, "Password-free rule in place", button: nil)
                 } else if foreign {
                     self.sudoRow.set(.warn, "Granted by something else — simmer installs its own rule",
-                                     button: "Set up…")
+                                     button: "Copy command…")
                 } else {
-                    self.sudoRow.set(.warn, "Needs one administrator password", button: "Set up…")
+                    self.sudoRow.set(.warn, "Needs one command, run by you", button: "Copy command…")
                 }
             }
         }
@@ -158,28 +156,32 @@ final class SetupWindow: NSObject {
 
     // MARK: actions
 
+    /// Hands the human the command instead of running it. simmer composes it,
+    /// shows the rule in full, and copies it — the person reads it and runs it
+    /// in their own shell, where they can see exactly what asked for root.
     @objc private func setUpSudo() {
         let alert = NSAlert()
-        alert.messageText = "Install simmer's sudo rule?"
-        alert.informativeText = "This exact rule, and nothing else, goes to "
-            + "\(Self.sudoersPath):\n\n\(Self.sudoersRule)"
-        alert.addButton(withTitle: "Install (asks for your password)")
+        alert.messageText = "One command, run by you"
+        alert.informativeText = """
+            simmer needs to flip one switch as root — \
+            `pmset -a disablesleep` — and nothing else. This exact rule goes \
+            to \(Self.sudoersPath):
+
+            \(Self.sudoersRule)
+
+            simmer does not give itself root. Copy the command, paste it in \
+            Terminal, and read it before you run it: it validates the rule \
+            with visudo before installing it.
+            """
+        alert.addButton(withTitle: "Copy the command")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
-        DispatchQueue.global().async {
-            // Written unprivileged, validated with visudo BEFORE it lands —
-            // a malformed file in /etc/sudoers.d can break sudo entirely.
-            let tmp = "/private/tmp/simmer-sudoers-\(getpid())"
-            try? (Self.sudoersRule + "\n").write(toFile: tmp, atomically: true, encoding: .utf8)
-            let privileged = "/usr/sbin/visudo -c -f \(tmp) >/dev/null && "
-                + "/usr/bin/install -m 0440 -o root -g wheel \(tmp) \(Self.sudoersPath) && "
-                + "/bin/rm -f \(tmp)"
-            _ = Shell.run("/usr/bin/osascript",
-                          ["-e", "do shell script \"\(privileged)\" with administrator privileges"])
-            try? FileManager.default.removeItem(atPath: tmp)
-            DispatchQueue.main.async { self.refresh() }
-        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(SudoRule.installCommand(user: NSUserName()),
+                                       forType: .string)
+        sudoRow.set(.warn, "Command copied — paste it in Terminal, then reopen this window",
+                    button: "Copy again")
     }
 
     @objc private func notifyAction() {

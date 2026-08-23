@@ -89,8 +89,8 @@ install: app
 	[ "$(NOTES)" = "0" ] || { \
 	    echo ""; \
 	    echo "Two steps remain, both yours (they need a human):"; \
-	    echo "  1. The sudo rule — bootstrap.sh asks natively, or by hand:"; \
-	    echo "       simmer doctor   # tells you if it is already in place"; \
+	    echo "  1. The sudo rule — bootstrap.sh installs it, or run it yourself:"; \
+	    echo "       simmer doctor   # says whether it is in place, and prints the command"; \
 	    echo "  2. open -a Simmer, then click Allow on the notification banner."; }
 
 uninstall:

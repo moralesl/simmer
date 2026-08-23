@@ -14,6 +14,10 @@ struct DoctorCLI: ParsableCommand {
     func run() throws {
         let env = Runtime.environment()
         let ctx = Runtime.context(ownerFlag: common.owner)
+        // Where bootstrap.sh puts the checkout. doctor is the installed binary
+        // talking about the running system, so it cannot assume a repo — but
+        // it can name the one path the installer always uses.
+        let installerHint = "~/.local/share/simmer"
         var failures = 0
         func check(_ label: String, _ ok: Bool) {
             print("\(ok ? "✅" : "❌") \(label)")
@@ -49,7 +53,7 @@ struct DoctorCLI: ParsableCommand {
             case (true, false):
                 check("passwordless pmset rule (/etc/sudoers.d/simmer exists but sudo refuses — run 'sudo visudo -c')", false)
             case (false, false):
-                check("passwordless pmset rule (missing — the installer prints the exact two lines)", false)
+                check("passwordless pmset rule (missing — the command to install it is below)", false)
             }
         }
 
@@ -90,10 +94,26 @@ struct DoctorCLI: ParsableCommand {
         print("")
 
         if failures > 0 {
-            print("Anything red above is fixed by re-running the installer — except the")
-            print("sudo rule, which needs root and is therefore yours to run. The installer")
-            print("prints the exact two-line rule before asking.")
+            print("Anything red above is fixed by re-running the installer:")
+            print("  make -C \(installerHint) install")
             print("")
+            // The sudo rule is the one thing simmer will not do for you: it
+            // needs root, and simmer never escalates its own privileges. So
+            // print the command in full rather than describing it — a rule
+            // someone can read before running is the whole point (SudoRule).
+            if env.env["SIMMER_FAKE_PMSET"] == nil,
+               !FileManager.default.fileExists(atPath: SudoRule.path) {
+                print("The sudo rule needs root, so it is yours to run. This exact rule:")
+                print("")
+                for line in SudoRule.text(user: NSUserName()).split(separator: "\n") {
+                    print("    \(line)")
+                }
+                print("")
+                print("installs with (validates before it lands, so a typo cannot break sudo):")
+                print("")
+                print("    \(SudoRule.installCommand(user: NSUserName()))")
+                print("")
+            }
         }
 
         // The exact state matters more than a generic warning: pending and
