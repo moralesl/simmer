@@ -9,8 +9,8 @@ The reasoning behind them is in `CONTRACTS.md`; what the platform permits is in 
 It never leaves the switch on with nothing scheduled to turn it off.
 
 **Why not `caffeinate`?** It does not survive the lid.
-On Apple silicon the machine sleeps the moment you close it no matter which assertions are held.
-`caffeinate` still runs alongside each claim as a second, independent clock, because it expires on its own.
+On Apple silicon the machine sleeps the moment you close it no matter which assertions are held, so no assertion of any kind can be the mechanism — only `pmset -a disablesleep` holds a closed lid, and only root can set it.
+v1 does hold an idle-sleep assertion of its own, in-process, but that is belt-and-braces and never the thing doing the work.
 
 **Why does it need my password?** Only root can flip that switch, and the guard has to be able to flip it back while nobody is at the keyboard.
 So a two-line `/etc/sudoers.d` rule, scoped to exactly `pmset -a disablesleep 0` and `pmset -a disablesleep 1` and nothing else.
@@ -31,7 +31,7 @@ Use `simmer down --all` to end everything; only a human may.
 **Why can an agent not use `down --all`?** Because ending work someone else started is not an agent's call.
 A human can release any claim; an agent only its own.
 It is enforced against honest actors, not as a security boundary — nothing stops a process passing `--owner terminal`, and on a single-user Mac nothing could.
-`FOR-AGENTS.md` states it as an obligation.
+The agent protocol will state it as an obligation (being rebuilt for v1; the v0.1 wording is at `archive/v0.1-spike/FOR-AGENTS.md`).
 
 **What is the cap for?** "Nothing past 23:00, whoever asks."
 It clips every claim, the ones already held and the ones taken later.

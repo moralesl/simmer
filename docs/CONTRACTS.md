@@ -182,7 +182,8 @@ Human primacy is enforced against honest actors, not as a security boundary:
 nothing stops a process passing `--owner terminal`, and on a single-user Mac
 nothing could. What it buys is that an agent following the protocol cannot take a
 human's time away by accident, which is the failure that actually happens.
-`docs/FOR-AGENTS.md` states the obligation not to claim human authority.
+The agent protocol states the obligation not to claim human authority. It is being
+rebuilt for v1; the v0.1 wording is at `archive/v0.1-spike/FOR-AGENTS.md`.
 
 ### Deltas from `format=1`, each deliberate
 

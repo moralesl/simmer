@@ -26,7 +26,6 @@ docs/PLATFORM-FACTS.md  what macOS actually permits. Every line bought with a
                      failed attempt — do not re-derive them.
 docs/DESIGN-NOTES.md the interaction-design proposals, marked take/consider/leave.
 docs/FAQ.md          short answers, for using it and for building it.
-docs/FOR-AGENTS.md   the protocol an agent follows when using simmer.
 
 archive/v0.1-spike/  the bash spike: complete, runnable, with its own suite. Kept
                      for reference — read it, then write the Swift version from
@@ -97,7 +96,8 @@ make -C archive/v0.1-spike install # if you want a working simmer meanwhile
 ```
 
 Wondering about Amphetamine, LidRun or plain `caffeinate`?
-[docs/COMPARISON.md](docs/COMPARISON.md) is an honest comparison — including when NOT to use simmer.
+[archive/v0.1-spike/COMPARISON.md](archive/v0.1-spike/COMPARISON.md) is an honest comparison — including when NOT to use simmer.
+It is in the archive because it will be rewritten against v1, not because it stopped being true.
 
 ## License
 
