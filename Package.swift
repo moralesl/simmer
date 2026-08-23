@@ -18,10 +18,18 @@ let package = Package(
     ],
     targets: [
         .target(name: "SimmerCore"),
+        // The one UNUserNotificationCenter implementation — shared so the CLI
+        // and the app cannot drift apart on how (and whether) to post.
+        .target(
+            name: "SimmerNotifyKit",
+            dependencies: ["SimmerCore"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .executableTarget(
             name: "simmer",
             dependencies: [
                 "SimmerCore",
+                "SimmerNotifyKit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/SimmerCLI",
@@ -29,7 +37,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "simmer-app",
-            dependencies: ["SimmerCore"],
+            dependencies: ["SimmerCore", "SimmerNotifyKit"],
             path: "Sources/SimmerApp",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

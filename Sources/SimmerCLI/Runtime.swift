@@ -6,7 +6,7 @@ import SimmerCore
 /// everything it can do, SimmerCore does, so the app and the CLI cannot
 /// disagree.
 enum Runtime {
-    static let version = "1.0.0-dev"
+    static let version = SimmerVersion.string
     static let guardLabel = "io.github.moralesl.simmer.guard"
 
     static func environment() -> SimmerEnvironment {

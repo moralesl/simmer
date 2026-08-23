@@ -1,19 +1,23 @@
 import Foundation
 import SimmerCore
+import SimmerNotifyKit
 import UserNotifications
 
 /// The app IS the notification identity — an installed, LaunchServices-
 /// registered, ad-hoc-signed bundle owns its banners (PLATFORM-FACTS.md).
 /// Banners carry buttons because the app owns the bundle: Extend from a
 /// banner is the exact moment someone wants it.
+///
+/// This is also the ONLY place in the whole tool that may call
+/// requestAuthorization: the app is LaunchServices-launched, so the request
+/// arrives as a real banner. The posting glue is SimmerNotifyKit, shared
+/// with the CLI's notify-post.
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = Notifier()
     static let aggregateCategory = "simmer.aggregate"
 
-    private var available = Bundle.main.bundleIdentifier != nil
-
     func setUp() {
-        guard available else { return }
+        guard BundleNotifier.available else { return }
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         let extend = UNNotificationAction(identifier: "simmer.extend30",
@@ -32,23 +36,15 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func post(_ notifications: [NotificationRequest]) {
-        guard available, !notifications.isEmpty else { return }
-        guard AppState.shared.environment.notifyTransport != "none" else { return }
-        let center = UNUserNotificationCenter.current()
+        guard !notifications.isEmpty,
+              AppState.shared.environment.notifyTransport != "none" else { return }
         for request in notifications {
-            let content = UNMutableNotificationContent()
-            content.title = request.title
-            if !request.subtitle.isEmpty { content.subtitle = request.subtitle }
-            if !request.body.isEmpty { content.body = request.body }
-            if request.sound { content.sound = .default }
-            content.categoryIdentifier = Self.aggregateCategory
-            center.add(UNNotificationRequest(identifier: UUID().uuidString,
-                                             content: content, trigger: nil))
+            _ = BundleNotifier.post(request, category: Self.aggregateCategory)
         }
     }
 
     func authorizationStatus(_ completion: @escaping (UNAuthorizationStatus) -> Void) {
-        guard available else { return completion(.denied) }
+        guard BundleNotifier.available else { return completion(.denied) }
         UNUserNotificationCenter.current().getNotificationSettings {
             completion($0.authorizationStatus)
         }

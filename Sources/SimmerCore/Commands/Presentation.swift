@@ -5,9 +5,7 @@ import Foundation
 /// and --machine, which live in their commands.
 enum Present {
     static func ownerGlyph(_ owner: String) -> String {
-        if owner == "run" || owner.hasPrefix("run:") { return "⚙" }
-        if SimmerEnvironment.isHumanOwnerName(owner) { return "👤" }
-        return "🤖"
+        Owners.glyph(owner)
     }
 
     static func batteryLine(_ power: PowerSystem) -> String {

@@ -11,6 +11,8 @@ PREFIX       ?= $(HOME)/Applications
 # .dev was denied on 2026-08-23 and is spent — see the inventory in LEARNINGS.
 BUNDLE_ID    ?= io.github.moralesl.simmer.dev2
 GUARD_LABEL   = io.github.moralesl.simmer.guard
+# Single-sourced from SimmerCore — the CLI, the app and this plist must agree.
+VERSION      := $(shell sed -n 's/.*string = "\(.*\)".*/\1/p' Sources/SimmerCore/Version.swift)
 APP           = $(PREFIX)/Simmer.app
 BUILD         = .build/release
 STAGED_APP    = .build/Simmer.app
@@ -49,8 +51,8 @@ endif
 app: build
 	rm -rf $(STAGED_APP)
 	mkdir -p $(STAGED_APP)/Contents/MacOS $(STAGED_APP)/Contents/Resources
-	sed -e 's/@BUNDLE_ID@/$(BUNDLE_ID)/g' app/Info.plist.template \
-	    > $(STAGED_APP)/Contents/Info.plist
+	sed -e 's/@BUNDLE_ID@/$(BUNDLE_ID)/g' -e 's/@VERSION@/$(VERSION)/g' \
+	    app/Info.plist.template > $(STAGED_APP)/Contents/Info.plist
 	# The app executable is NOT named "Simmer": APFS is case-insensitive,
 	# so "Simmer" and the CLI "simmer" would silently be the same file.
 	cp $(BUILD)/simmer-app $(STAGED_APP)/Contents/MacOS/simmer-app

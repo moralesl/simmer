@@ -7,7 +7,7 @@ import SimmerCore
 /// idle-sleep assertion.
 final class AppState {
     static let shared = AppState()
-    static let version = "1.0.0-dev"
+    static let version = SimmerVersion.string
 
     let environment: SimmerEnvironment
     /// True when any SIMMER_FAKE_* power variable is set — then the app must

@@ -176,9 +176,10 @@ public enum Commands {
             outcome.stdout.append("   \(after.count) claims live · the Mac stays awake until \(machineUntil) · 'simmer status' lists them")
         }
 
-        // Notify only when the machine's promise actually changed. A claim
-        // inside a longer one already awake changed nothing a human needs told.
-        if after.state != before.state || after.until != before.until {
+        // Notify only when the machine's promise changed MATERIALLY. A claim
+        // inside a longer one changed nothing a human needs told — and neither
+        // did a second click that moved the deadline by seconds.
+        if promiseChangedMaterially(from: before, to: after) {
             if after.until == 0 {
                 outcome.notifications.append(NotificationRequest(
                     title: "☕ Simmering, no deadline",
@@ -277,7 +278,7 @@ public enum Commands {
             outcome.stdout.append("   the machine stays awake until \(Formats.hhmm(after.until)) — another claim reaches further")
         }
 
-        if after.state != before.state || after.until != before.until {
+        if promiseChangedMaterially(from: before, to: after) {
             // The banner describes the AGGREGATE, which can be open-ended even
             // though the claim just extended is not. Epoch 0 must never be
             // formatted as a time — that reads "01:00".

@@ -1,6 +1,6 @@
 import Foundation
 import SimmerCore
-import UserNotifications
+import SimmerNotifyKit
 
 /// v1 posts notifications AS SIMMER'S OWN BUNDLE, or not at all.
 ///
@@ -15,7 +15,8 @@ import UserNotifications
 ///
 /// Posting happens by exec'ing the bundle's own copy of this binary
 /// (`notify-post`) — the spike-verified way to carry the bundle's identity.
-/// Waited on, never detached.
+/// Waited on, never detached. The UN glue itself lives in SimmerNotifyKit,
+/// shared with the app, and never requests authorization from here.
 enum Notify {
     static func post(_ notification: NotificationRequest, env: SimmerEnvironment) {
         guard env.notifyTransport != "none" else { return }
@@ -31,51 +32,19 @@ enum Notify {
         env.notifierAppPath + "/Contents/MacOS/simmer"
     }
 
-    // MARK: posting AS the bundle — the notify-post subcommand's engine.
+    // The notify-post subcommand's engine — this process IS inside the bundle
+    // when these run, or BundleNotifier refuses.
 
     static func authorizationStatus() -> String {
-        guard Bundle.main.bundleIdentifier != nil else { return "unbundled" }
-        let semaphore = DispatchSemaphore(value: 0)
-        var status = "unknown"
-        UNUserNotificationCenter.current().getNotificationSettings { settings in
-            switch settings.authorizationStatus {
-            case .authorized, .provisional: status = "authorized"
-            case .denied: status = "denied"
-            case .notDetermined: status = "notDetermined"
-            default: status = "unknown"
-            }
-            semaphore.signal()
-        }
-        _ = semaphore.wait(timeout: .now() + 5)
-        return status
+        BundleNotifier.authorizationStatus()
     }
 
-    /// Deliberately NEVER calls requestAuthorization: the permission request
-    /// belongs to the app alone, launched via LaunchServices. A request from
-    /// a bare-CLI context risks macOS caching a DENIAL for the bundle id —
-    /// which is permanent (PLATFORM-FACTS.md, LEARNINGS.md). This only reads
-    /// the verdict and posts under it.
     static func postAsBundle(title: String, subtitle: String, body: String, sound: Bool) -> Int32 {
-        guard Bundle.main.bundleIdentifier != nil else {
+        guard BundleNotifier.available else {
             FileHandle.standardError.write(Data("simmer: notify-post needs to run from inside Simmer.app\n".utf8))
             return 1
         }
-        guard authorizationStatus() == "authorized" else { return 1 }
-
-        let content = UNMutableNotificationContent()
-        content.title = title
-        if !subtitle.isEmpty { content.subtitle = subtitle }
-        if !body.isEmpty { content.body = body }
-        if sound { content.sound = .default }
-        let request = UNNotificationRequest(identifier: UUID().uuidString,
-                                            content: content, trigger: nil)
-        let semaphore = DispatchSemaphore(value: 0)
-        var failed = false
-        UNUserNotificationCenter.current().add(request) { error in
-            failed = error != nil
-            semaphore.signal()
-        }
-        _ = semaphore.wait(timeout: .now() + 10)
-        return failed ? 1 : 0
+        return BundleNotifier.post(NotificationRequest(title: title, subtitle: subtitle,
+                                                       body: body, sound: sound))
     }
 }

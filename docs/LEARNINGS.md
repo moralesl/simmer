@@ -176,6 +176,15 @@ The obvious bundle layout — app executable `Contents/MacOS/Simmer`, CLI `Conte
 Nothing errors; the bundle even signs.
 Found on 2026-08-23 because the launch check watched process lifetime rather than trusting the build. v1's app executable is therefore `simmer-app` (`CFBundleExecutable` does not have to match the app's name), and the CLI keeps the `Contents/MacOS/simmer` path the docs promise.
 
+### Reinstalling an ad-hoc bundle appears to reset its notification grant
+
+Observed 2026-08-23, twice: `.dev2` was authorized and delivering banners; one `make install` later (rebuild + `codesign --sign -` + `lsregister -u`/`-f`
++ same path, same bundle id) the status read `notDetermined` again.
+  Two suspects, not yet separated: the `lsregister -u` of the outgoing bundle, or the ad-hoc re-sign — `--sign -` mints a new code identity every build, and macOS may key the grant to it.
+  The experiment that separates them: authorize, reinstall *without* `-u` (unchanged binary), check; then rebuild-and-resign, check.
+  If the re-sign is the cause, every update costs colleagues an Allow click, and the fix is signing with a stable self-signed certificate instead of `-` — PLATFORM-FACTS already verified the two behave identically for the *first* grant.
+  Downgrade, not breakage: the app re-asks on next launch.
+
 ### A CLT-only toolchain hides swift-testing from `swift test`
 
 `Testing.framework` ships with the Command Line Tools, but outside every default search path — `swift test` fails with *no such module 'Testing'*, and after `-F` is added it still dies at runtime missing `lib_TestingInterop.dylib`.

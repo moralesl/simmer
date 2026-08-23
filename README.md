@@ -27,6 +27,14 @@ simmer down                 # hand your claim back
 simmer --help               # the rest, including the exit-code API
 ```
 
+## What it looks like
+
+Ambient truth at zero clicks — the countdown, and the `·2` says two actors hold claims right now:
+
+<img src="assets/readme-menubar.png" width="580" alt="the simmer menu bar item: a pot, 14m·2">
+
+Banners arrive as **Simmer**, with the pot icon — the app bundle is the notification identity, no Apple developer account involved.
+
 ## What this repository is
 
 **v1: one Swift package, three products** — `SimmerCore` (the logic, no AppKit, no printing), `simmer` (the CLI), and `Simmer.app` (menu bar + event-driven guard + notification identity, one bundle).
