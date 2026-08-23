@@ -145,6 +145,17 @@ battery_line() {
   if on_battery; then echo "battery ${pct}%"; else echo "on AC, battery ${pct}%"; fi
 }
 
+# Thermal pressure. Nominal reads as "No thermal warning level has been
+# recorded"; under pressure macOS reports "Thermal Warning Level = N". A hot
+# machine with the lid closed is the one state this tool can create and the
+# user cannot notice, so the guard treats any warning level like a low battery:
+# release, notify, let it cool. (LidRun, the commercial tool in this niche,
+# does the same -- this is parity, not invention.)
+thermal_pressure() {
+  if [ -n "${SIMMER_FAKE_THERMAL:-}" ]; then [ "$SIMMER_FAKE_THERMAL" -gt 0 ]; return; fi
+  $PMSET -g therm 2>/dev/null | grep -qiE 'thermal warning level *[=:] *[1-9]'
+}
+
 # Flipping the switch needs root. The guard runs unattended and must therefore
 # *never* ask for a password -- `sudo -n` or nothing. Interactively a prompt is
 # fine; without the sudo rule from sudoers.d/simmer it would appear on every lease.
@@ -836,6 +847,13 @@ cmd_guard() {
     exit 0
   fi
 
+  # Heat: release and say so. Deliberately not a warning -- with the lid closed
+  # nobody sees a warning, and the machine cannot vent on a duvet in a bag.
+  if thermal_pressure; then
+    release "thermal pressure -- letting it cool" "Basso"
+    exit 0
+  fi
+
   # Did something else flip the switch? Inside a lease it gets restored,
   # otherwise the lid stops holding.
   if ! sleep_disabled; then
@@ -953,7 +971,8 @@ HOW LONG
   simmer forever             no end time; it reminds you every 30 minutes
 
 IT STOPS BY ITSELF WHEN
-  the time runs out  ·  the battery drops below 20%  ·  you run simmer down
+  the time runs out  ·  the battery drops below 20%  ·  the chip reports
+  thermal pressure  ·  you run simmer down
 
   You get a notification five minutes before the end, and another when it stops.
   Even if you close the terminal, log out, or the tool crashes, a background

@@ -81,9 +81,35 @@ cmd_install() {
   sed "s|__USER__|$(id -un)|g" "$SIMMER_HOME/sudoers.d/simmer" > "$SIMMER_HOME/.build/simmer.sudoers"
 
   echo
-  echo "One step needs root, so it is yours to run:"
-  echo "  sudo install -m 440 -o root -g wheel \\"
-  echo "    \"$SIMMER_HOME/.build/simmer.sudoers\" /etc/sudoers.d/simmer"
+  if sudo -nl /usr/bin/pmset -a disablesleep 0 >/dev/null 2>&1; then
+    say "sudoers rule already in place"
+  elif [ -t 0 ]; then
+    # Offered, never sneaked: the command is printed in full before the y/N so
+    # what runs under sudo is exactly what was read. Declining leaves simmer
+    # working interactively; only unattended release needs the rule.
+    echo "One step needs your password. It installs this two-line sudo rule so the"
+    echo "watchdog can hand the sleep switch back while nobody is at the keyboard:"
+    echo
+    sed 's/^/    /' "$SIMMER_HOME/.build/simmer.sudoers" | grep -v '^    #'
+    echo
+    printf "  Install it now with sudo? [y/N] "
+    read -r answer
+    case "$answer" in
+      [yY]*)
+        sudo install -m 440 -o root -g wheel "$SIMMER_HOME/.build/simmer.sudoers" /etc/sudoers.d/simmer &&
+          say "sudoers rule installed" ||
+          echo "  failed -- run it yourself later:
+    sudo install -m 440 -o root -g wheel \"$SIMMER_HOME/.build/simmer.sudoers\" /etc/sudoers.d/simmer" ;;
+      *)
+        echo "  Skipped. Run it later with:"
+        echo "    sudo install -m 440 -o root -g wheel \\"
+        echo "      \"$SIMMER_HOME/.build/simmer.sudoers\" /etc/sudoers.d/simmer" ;;
+    esac
+  else
+    echo "One step needs root, so it is yours to run:"
+    echo "  sudo install -m 440 -o root -g wheel \\"
+    echo "    \"$SIMMER_HOME/.build/simmer.sudoers\" /etc/sudoers.d/simmer"
+  fi
   echo
   echo "Optional, one-time:"
   [ -d /Applications/SwiftBar.app ] &&

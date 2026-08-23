@@ -29,6 +29,7 @@ export SIMMER_FAKE_PMSET="$TMP/disablesleep"; echo 0 > "$SIMMER_FAKE_PMSET"
 # No real banners while testing: the suite fires notify() dozens of times, and
 # before this line every run sprayed the desktop with them.
 export SIMMER_NOTIFY=none
+export SIMMER_FAKE_THERMAL=0   # a genuinely warm Mac must not fail the suite
 # Point the bundle transport somewhere empty so its selection logic is testable.
 export SIMMER_NOTIFIER_APP="$TMP/NoSuch.app"
 export SIMMER_FAKE_BATTERY="80:0"          # 80%, on AC
@@ -81,7 +82,18 @@ t "warns inside the window"     "grep -q '^warned=1' '$LEASE'"
 t "warns exactly once"          "[ \"\$(grep -c '^warned=1' '$LEASE')\" = 1 ]"
 
 echo 1 > "$SIMMER_FAKE_PMSET"
-lease 0 $((NOW-7200)) forever 10 0 $((NOW-3600)); "$SIMMER" guard >/dev/null 2>&1
+lease $((NOW+3600)) "$NOW" hot 10 1 "$NOW"
+SIMMER_FAKE_THERMAL=2 "$SIMMER" guard >/dev/null 2>&1
+t "thermal pressure releases"   "[ ! -f '$LEASE' ] && [ \"\$(switch)\" = 0 ] && tail -2 '$STATE/simmer.log' | grep -q thermal"
+
+echo 1 > "$SIMMER_FAKE_PMSET"
+lease $((NOW+3600)) "$NOW" cool 10 1 "$NOW"
+SIMMER_FAKE_THERMAL=0 "$SIMMER" guard >/dev/null 2>&1
+t "but nominal heat does not"   "[ -f '$LEASE' ]"
+rm -f "$LEASE"
+
+echo 1 > "$SIMMER_FAKE_PMSET"
+lease 0 $((NOW-7200)) forever 10 0 $((NOW-3600)); SIMMER_FAKE_THERMAL=0 "$SIMMER" guard >/dev/null 2>&1
 t "open-ended lease reminds"    "[ \"\$(grep '^reminded=' '$LEASE' | cut -d= -f2)\" -gt $((NOW-60)) ]"
 t "porcelain reports forever"   "$SIMMER --machine | grep -q 'state=forever'"
 

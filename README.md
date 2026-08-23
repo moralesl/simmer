@@ -43,8 +43,10 @@ this tool exists.
 ## How it works
 
 simmer never exposes the switch. It *borrows* it, with a deadline, and a
-background watchdog hands it back. **Four things end a lease, and only one of
-them is you remembering:**
+background watchdog hands it back. **Five things end a lease, and only one of
+them is you remembering:** the deadline, the battery floor, thermal pressure
+(a hot machine with the lid closed is the one state you cannot notice),
+`simmer down`, and the guard finding the switch on with no lease behind it.
 
 ```
 simmer 2h ──┬─► sudo pmset -a disablesleep 1        (the lid stays awake)
