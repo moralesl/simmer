@@ -8,14 +8,34 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private var refreshTimer: Timer?
+    private var watcher: LedgerWatcher?
+
+    /// Even with the watcher armed, redraw at least this often: a cap appearing
+    /// for the first time is not watched (LedgerWatcher says why), and a missed
+    /// file event must not be able to freeze the menu bar indefinitely. It
+    /// matches the LaunchAgent's cadence, so this is the same worst case the
+    /// guard already has.
+    private static let backstopSeconds = 30
 
     func setUp() {
         menu.delegate = self
         statusItem.menu = menu
         refreshTitle()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            self?.refreshTitle()
+
+        // The ledger changing is an event, not something to poll for: `simmer
+        // 2h` in a terminal now reaches the menu bar in milliseconds, and
+        // anything the CLI queued is posted at the same moment instead of
+        // waiting for the spool timer.
+        let watcher = LedgerWatcher(ledger: AppState.shared.context().ledger) {
+            DispatchQueue.main.async {
+                Notifier.shared.drainSpool()
+                AppState.shared.updateAssertions()
+                NotificationCenter.default.post(name: .simmerStateChanged, object: nil)
+            }
         }
+        watcher.start()
+        self.watcher = watcher
+
         NotificationCenter.default.addObserver(forName: .simmerStateChanged, object: nil,
                                                queue: .main) { [weak self] _ in
             self?.refreshTitle()
@@ -24,7 +44,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     func refreshTitle() {
         guard let button = statusItem.button else { return }
-        let model = StatusTitle.render(AppState.shared.aggregate())
+        let aggregate = AppState.shared.aggregate()
+        scheduleNextRefresh(aggregate)
+        let model = StatusTitle.render(aggregate)
         let title = NSMutableAttributedString(string: model.glyph)
         if !model.detail.isEmpty {
             // Monospaced digits so a live countdown does not jitter the menu bar.
@@ -36,6 +58,19 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             title.append(NSAttributedString(string: " " + model.detail, attributes: attributes))
         }
         button.attributedTitle = title
+    }
+
+    /// Sleep until the title would actually say something different, rather
+    /// than on a round number. A minute-resolution countdown on a 10-second
+    /// timer is wrong twice over: it repaints six times a minute while nothing
+    /// changes, and the one repaint that matters still lands late.
+    private func scheduleNextRefresh(_ aggregate: Aggregate) {
+        refreshTimer?.invalidate()
+        let due = min(StatusTitle.secondsUntilChange(aggregate), Self.backstopSeconds)
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(max(due, 1)),
+                                            repeats: false) { [weak self] _ in
+            self?.refreshTitle()
+        }
     }
 
     // Built lazily so the menu is current at click time.

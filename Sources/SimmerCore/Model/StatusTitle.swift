@@ -9,7 +9,7 @@ public enum Owners {
     }
 }
 
-/// The menu bar title: who, not only how long (DESIGN-NOTES). Pure model so
+/// The menu bar title: who, not only how long. Pure model so
 /// it is testable; the app only draws it.
 ///
 ///   🍲          idle
@@ -27,6 +27,35 @@ public struct StatusTitle: Equatable, Sendable {
 
     public var text: String { detail.isEmpty ? glyph : "\(glyph) \(detail)" }
 
+    /// No redraw is due from the passage of time alone.
+    public static let noScheduledChange = Int.max
+
+    /// Seconds until this title would show something different, assuming the
+    /// ledger does not change — which is what a menu bar should sleep for
+    /// instead of polling on a round number.
+    ///
+    /// The title is minute-resolution, so a fixed interval is wrong in both
+    /// directions at once: it redraws several times per minute while nothing
+    /// changes, and still shows a stale minute for most of the interval that
+    /// straddles the boundary. `∞`, idle and orphan never change on their own;
+    /// the watcher covers the ledger changing under them.
+    public static func secondsUntilChange(_ aggregate: Aggregate) -> Int {
+        guard aggregate.state == .active else { return noScheduledChange }
+        let left = aggregate.left
+        // Past its deadline: the display flips as soon as anyone looks.
+        guard left > 0 else { return 1 }
+        // `leftShort` shows floor(left/60), so it changes one second after the
+        // current minute is used up.
+        var next = (left % 60) + 1
+        // Crossing into the last five minutes repaints the countdown orange,
+        // which is a change even mid-minute.
+        if left > urgentSeconds { next = min(next, left - urgentSeconds) }
+        return max(next, 1)
+    }
+
+    /// Under five minutes: the app paints the countdown orange.
+    public static let urgentSeconds = 300
+
     public static func render(_ aggregate: Aggregate) -> StatusTitle {
         switch aggregate.state {
         case .idle:
@@ -36,7 +65,7 @@ public struct StatusTitle: Equatable, Sendable {
         case .forever, .active:
             var detail = aggregate.state == .forever ? "∞" : aggregate.leftShort
             if aggregate.count > 1 { detail += "·\(aggregate.count)" }
-            let urgent = aggregate.state == .active && aggregate.left <= 300
+            let urgent = aggregate.state == .active && aggregate.left <= urgentSeconds
             return StatusTitle(glyph: "🍲", detail: detail, urgent: urgent)
         }
     }
