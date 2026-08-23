@@ -19,21 +19,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The differential needs the pinned `v1.0.0` reference, which lives in a
+          # The differential needs the pinned `v0.0-lease` reference, which lives in a
           # tag. A shallow clone has neither.
           fetch-depth: 0
 
       - name: Shell syntax
         run: |
-          for f in archive/v1-bash/bin/simmer \
-                   archive/v1-bash/install.sh archive/v1-bash/bootstrap.sh \
-                   archive/v1-bash/test/*.sh \
-                   archive/v1-bash/integrations/*/*.sh; do
+          for f in archive/v0.1-spike/bin/simmer \
+                   archive/v0.1-spike/install.sh archive/v0.1-spike/bootstrap.sh \
+                   archive/v0.1-spike/test/*.sh \
+                   archive/v0.1-spike/integrations/*/*.sh; do
             bash -n "$f" || exit 1
           done
 
       - name: Property lists parse
-        run: plutil -lint archive/v1-bash/launchd/*.plist archive/v1-bash/integrations/alfred/Simmer/info.plist
+        run: plutil -lint archive/v0.1-spike/launchd/*.plist archive/v0.1-spike/integrations/alfred/Simmer/info.plist
 
       # bin/simmer targets /bin/bash, which is 3.2 on macOS. Runners also ship a
       # modern bash, so this asserts the constraint rather than trusting it:
@@ -42,19 +42,19 @@ jobs:
       - name: Runs under bash 3.2
         run: |
           /bin/bash --version | head -1
-          /bin/bash archive/v1-bash/bin/simmer --version
+          /bin/bash archive/v0.1-spike/bin/simmer --version
 
       # The notifier is Swift compiled at install time on user machines; CI
       # proves the source actually compiles before anyone installs it.
       - name: Notifier compiles
-        run: swiftc -O -o /tmp/simmer-notify archive/v1-bash/notifier/main.swift
+        run: swiftc -O -o /tmp/simmer-notify archive/v0.1-spike/notifier/main.swift
 
       - name: Reference suite
-        run: make -C archive/v1-bash test
+        run: make -C archive/v0.1-spike test
 
       # Does this still answer what the previous implementation answered? The
       # only check that catches a message, an exit code, a field name or a state
       # value drifting -- the class of change where every unit test still passes.
       # Skips itself, loudly, when the reference tag is not in the clone.
       - name: Reference differential
-        run: make -C archive/v1-bash diff
+        run: make -C archive/v0.1-spike diff

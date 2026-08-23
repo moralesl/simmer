@@ -411,7 +411,7 @@ set_disablesleep() { # <0|1>
 #   SIMMER_NOTIFY=bundle     simmer's own app: OUR name, OUR icon. Built from
 #                            notifier/main.swift by install.sh -- an installed,
 #                            ad-hoc-signed bundle owns its identity after one
-#                            Allow click. Recipe and traps: docs/V2-BRIEF.md.
+#                            Allow click. Recipe and traps: ../../docs/PLATFORM-FACTS.md.
 #   SIMMER_NOTIFY=shortcut   the Shortcuts app -- first-party and signed, so its
 #                            notifications display. Needs a shortcut named
 #                            "simmer-notify" that shows its input. Icon: Shortcuts.

@@ -7,7 +7,7 @@
 // An installed, LaunchServices-registered, ad-hoc-signed bundle is not: macOS
 // shows a one-time permission banner -- with this bundle's own icon -- and after
 // one click on Allow, posts display normally. No certificate, no Apple account.
-// The full recipe and its traps: docs/V2-BRIEF.md in the simmer repo.
+// The full recipe and its traps: docs/PLATFORM-FACTS.md in the simmer repo.
 //
 // Usage:
 //   simmer-notify <title> [subtitle] [body]     post one notification

@@ -6,29 +6,32 @@
 
 **Keep your Mac awake for a bounded time — lid closed — then let it sleep again.**
 
-[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey?logo=apple)](#) [![status](https://img.shields.io/badge/v2-being%20built-orange)](docs/V2-BRIEF.md)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey?logo=apple)](#) [![status](https://img.shields.io/badge/v1-being%20built-orange)](docs/BRIEF.md)
 
 </div>
 
 ## What this repository is right now
 
-**v2 is being built as a fresh Swift application.** There is no installable release in the working tree at the moment.
+**v1 is being built as a fresh Swift application.** There is no installable release in the working tree at the moment.
 The tree is set up so that work can start from what was learned rather than from what was shipped:
 
 ```
 docs/CONTRACTS.md    the law, in prose. What stays true across implementations,
-                     and the decisions behind it. v2 brings its own tests; this
+                     and the decisions behind it. v1 brings its own tests; this
                      is what they have to prove.
 docs/LEARNINGS.md    every trap already paid for, every decision already taken,
                      and the ones still open. Read this first.
-docs/V2-BRIEF.md     the decided shape, and the verified platform facts — most of
-                     them bought with failed attempts. Do not re-derive them.
+docs/BRIEF.md        what v1 is: the shape, what is in scope, what is deferred.
+docs/PLATFORM-FACTS.md  what macOS actually permits. Every line bought with a
+                     failed attempt — do not re-derive them.
+docs/DESIGN-NOTES.md the interaction-design proposals, marked take/consider/leave.
+docs/FAQ.md          short answers, for using it and for building it.
 docs/FOR-AGENTS.md   the protocol an agent follows when using simmer.
 
-archive/v1-bash/     the previous implementation, complete and runnable, with its
-                     own suite. A spike, kept for reference: read it, then write
-                     the Swift version from the contract. Nothing in v2 imports,
-                     copies or sources anything from it.
+archive/v0.1-spike/  the bash spike: complete, runnable, with its own suite. Kept
+                     for reference — read it, then write the Swift version from
+                     the contract. Nothing in v1 imports, copies or sources from
+                     it.
 ```
 
 ## Why it exists
@@ -71,26 +74,26 @@ The full contract, including the reasoning behind each of those choices, is [doc
 
 ## Running the old one in the meantime
 
-`archive/v1-bash/` is a complete, tested implementation of the contract above.
+`archive/v0.1-spike/` is a complete, tested implementation of the contract above.
 It is frozen, but it works:
 
 ```bash
-cd archive/v1-bash && make install
+cd archive/v0.1-spike && make install
 ```
 
-See [archive/v1-bash/README.md](archive/v1-bash/README.md) for what that installs and how to remove it again.
+See [archive/v0.1-spike/README.md](archive/v0.1-spike/README.md) for what that installs and how to remove it again.
 
 ## Development
 
 There is nothing at the top level to build yet — that is the point of this
-commit. v2 starts from `docs/`, not from a diff.
+commit. v1 starts from `docs/`, not from a diff.
 
 The archived implementation still stands entirely on its own:
 
 ```bash
-make -C archive/v1-bash test    # 175 assertions, hermetic
-make -C archive/v1-bash diff    # against the v1.0.0 tag
-make -C archive/v1-bash install # if you want a working simmer meanwhile
+make -C archive/v0.1-spike test    # 175 assertions, hermetic
+make -C archive/v0.1-spike diff    # against the v0.0-lease tag
+make -C archive/v0.1-spike install # if you want a working simmer meanwhile
 ```
 
 Wondering about Amphetamine, LidRun or plain `caffeinate`?

@@ -5,7 +5,7 @@
 
   The bundle id must NEVER be reused after a permission denial: macOS caches the
   verdict per id, forever, and no rebuild clears it. If this id is ever burned,
-  pick a new one and add the old one to the burned list in docs/V2-BRIEF.md.
+  pick a new one and add the old one to the burned list in docs/LEARNINGS.md.
 
   No LSUIElement: the one-time permission banner is only verified to appear for
   a regular app launch. The Dock icon flashes once at install; every later post

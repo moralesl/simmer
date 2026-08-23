@@ -130,7 +130,7 @@ simmer's banners carry **simmer's own name and icon**.
 At install, `make install` compiles a ~60-line Swift notifier from `notifier/main.swift`, wraps it in an app bundle with the pot icon, signs it ad-hoc and registers it — no certificate, no Apple account. macOS shows a one-time permission banner (with the pot icon); click **Allow** once and that is the entire setup.
 
 This works where every CLI notification tool fails because macOS attributes a banner to the *bundle* that posts it and silently drops unknown identities — a bare binary is such an identity, an installed registered bundle is not.
-The recipe and its traps are in [docs/V2-BRIEF.md](docs/V2-BRIEF.md); the transport is switchable and testable:
+The recipe and its traps are in [../../docs/PLATFORM-FACTS.md](../../docs/PLATFORM-FACTS.md); the transport is switchable and testable:
 
 ```bash
 simmer notify-test                 # one labelled banner per transport

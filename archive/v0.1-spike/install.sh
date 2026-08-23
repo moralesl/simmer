@@ -53,7 +53,7 @@ check() { if eval "$2" >/dev/null 2>&1; then echo "✅ $1"; ok=$((ok+1)); else e
 # The notifier bundle: banners with simmer's own name and icon, no certificate,
 # no Apple account. Built from source on this machine, ad-hoc signed, registered,
 # and launched once so macOS shows its one-time permission banner (which carries
-# the pot icon). Recipe and traps: docs/V2-BRIEF.md.
+# the pot icon). Recipe and traps: ../../docs/PLATFORM-FACTS.md.
 #
 # Missing swiftc is fine and said out loud: notifications then post as Script
 # Editor via osascript. Homebrew users always have the CLT, so in practice this
@@ -95,7 +95,7 @@ reload_agent() {
 # The privileged step, asked for the way macOS asks: one native authorisation
 # dialog rather than a sudo prompt on a tty that may not exist. Verified to run
 # as root from an unsigned, unnotarised context -- no certificate, no Apple
-# account (docs/V2-BRIEF.md, spike B).
+# account (../../docs/PLATFORM-FACTS.md, spike B).
 #
 # The file has been through `visudo -c` before this runs, and the shell string is
 # a fixed command over two fixed paths with no user input anywhere in it.

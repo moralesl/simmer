@@ -3,13 +3,15 @@
 # identical fake environments and diff the answers.
 #
 #   ./test/differential.sh <binary-a> <binary-b>
-#   ./test/differential.sh                        # the reference vs the working tree
+#   ./test/differential.sh                        # the reference vs this spike
 #   ./test/differential.sh --strict <a> <b>       # compare two format=2 implementations
 #
-# The reference is the `v1` git tag (override with SIMMER_DIFF_REF). It has to be
-# PINNED, not "the previous commit": the declared deltas below only differ from
-# v1, so a moving reference would turn every one of them into a failure the day
-# after it landed.
+# The reference is the `v0.0-lease` tag -- the single-lease design, before the
+# claims ledger (override with SIMMER_DIFF_REF). It has to be PINNED, not "the
+# previous commit": the declared deltas below only differ from THAT design, so a
+# moving reference would turn every one of them into a failure the day after it
+# landed. At that ref the implementation lives at bin/simmer, which is why the
+# path below is not archive-relative -- that is history, not the current layout.
 #
 # Why this exists. simmer is being reimplemented, and the safety mechanism that
 # replaces incremental caution is "the new one answers what the old one answered".
@@ -54,15 +56,14 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 if [ "${1:-}" = --strict ]; then STRICT=1; shift; else STRICT=0; fi
 A="${1:-}"; B="${2:-$HERE/bin/simmer}"
 if [ -z "$A" ]; then
-  REF="${SIMMER_DIFF_REF:-v1.0.0}"
+  REF="${SIMMER_DIFF_REF:-v0.0-lease}"
   if ! git -C "$HERE" show "$REF:bin/simmer" > "$WORK/ref" 2>/dev/null; then
     # Not an error worth failing a build over: a shallow clone legitimately has
     # no tags. Say what is missing and how to get it, and stop cleanly.
     echo "no reference to compare against: '$REF:bin/simmer' does not resolve."
-    echo "In CI: fetch tags (fetch-depth: 0). Locally: git tag v1.0.0 <the v1 commit>."
+    echo "In CI: fetch tags (fetch-depth: 0). Locally: git tag v0.0-lease <the pre-claims commit>."
     echo "Or pass two binaries explicitly, or set SIMMER_DIFF_REF."
-    echo "(the reference is read from git at $REF, where the path was bin/simmer --"
-    echo " that is history, not the current layout.)"
+    echo "(read from git at $REF, where the path was bin/simmer.)"
     exit 0
   fi
   chmod +x "$WORK/ref"; A="$WORK/ref"

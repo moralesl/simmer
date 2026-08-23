@@ -1,26 +1,26 @@
 # Contracts
 
-What stays true across implementations. v1 (bash, `format=1`) and v2 (bash today,
-Swift next) all honour this page; the test suite is the executable form of it, and
+What stays true across implementations. The v0.1 spike (bash) and v1 (Swift)
+both honour this page; the test suite is the executable form of it, and
 any implementation that passes it under the seam variables below is a valid
 simmer.
 
-**This page is the law, in prose.** v2 is being written from scratch and brings
-its own tests; it does not inherit the previous implementation's harness.
+**This page is the law, in prose.** v1 is being written from scratch and brings
+its own tests; it does not inherit the spike's harness.
 
-Two instruments exist in `archive/v1-bash/`, and they are reference material
-rather than v2's gate — read them for what a thorough test of this contract looks
-like, then write v2's own:
+Two instruments exist in `archive/v0.1-spike/`, and they are reference material
+rather than v1's gate — read them for what a thorough test of this contract looks
+like, then write v1's own:
 
-- `make -C archive/v1-bash test` — 175 hermetic assertions over the surface
-  below. Honours `SIMMER_BIN`, so it *can* be pointed at a v2 binary, but v2 owes
+- `make -C archive/v0.1-spike test` — 175 hermetic assertions over the surface
+  below. Honours `SIMMER_BIN`, so it *can* be pointed at a v1 binary, but v1 owes
   no allegiance to it.
-- `make -C archive/v1-bash diff` — a differential harness: identical CLI
+- `make -C archive/v0.1-spike diff` — a differential harness: identical CLI
   scenarios against two binaries, normalised and diffed, with contract-bearing
   lines compared exactly and prose allowed to differ. The idea is worth stealing
   even if the script is not.
 
-Whatever v2 writes instead must still be able to answer: does an implementation
+Whatever v1 writes instead must still be able to answer: does an implementation
 satisfy every row below, including the exit codes and the machine output, without
 root and without changing the machine under the tester? That is what the seam
 section exists for.
@@ -93,7 +93,7 @@ flat so a menu bar can read it without `jq`.
   + rename, never edited in place.
 - `cap` — the human ceiling, same discipline.
 - `simmer.log`.
-- in the Swift v2, additionally an append-only `events.jsonl` (one JSON object
+- in v1, additionally an append-only `events.jsonl` (one JSON object
   per transition: `v`, `ts`, `event`, `reason`, `owner`, …).
 
 A `format=1` lease is read **once**, converted into a claim, and deleted. An
@@ -179,7 +179,7 @@ human's time away by accident, which is the failure that actually happens.
 
 ### Deltas from `format=1`, each deliberate
 
-| v1 | now | Why |
+| v0.1 spike | v1 | Why |
 |---|---|---|
 | a second owner is refused | gets its own claim | D1 |
 | `--force` replaces a lease | inert, and says so | nothing left to force |
@@ -203,5 +203,5 @@ human's time away by accident, which is the failure that actually happens.
 
 - `--lock` (lock the screen on take). Listed here so no implementation invents
   behaviour for it; it enters the surface above only together with its tests.
-- `events.jsonl`, `simmer watch`, `simmer why` — planned for the Swift v2, see
-  `docs/V2-BRIEF.md`. Nothing may depend on them yet.
+- `events.jsonl`, `simmer watch`, `simmer why` — planned, see `BRIEF.md`.
+  Nothing may depend on them yet.

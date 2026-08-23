@@ -1,7 +1,7 @@
 # Learnings
 
 Everything this project has already paid for.
-The point of the page is that nobody pays twice — a fresh session should read this and `V2-BRIEF.md` and then know as much as the session that finished before it.
+The point of the page is that nobody pays twice — a fresh session should read this and `BRIEF.md` and then know as much as the session that finished before it.
 
 Three kinds of thing live here: platform traps, decisions already taken, and decisions still open.
 The last section is the one to read first.
@@ -15,10 +15,9 @@ They are blocked on a person deciding.
 
 | # | Question | Why it needs you |
 |---|---|---|
-| 1 | **Bundle id during development.** `io.github.moralesl.simmer` is *currently authorized* for notifications on Luis's Mac. macOS caches a permission verdict per bundle id **forever**, and a denial can never be undone for that id. A half-built v2 app could burn the one working identity. Recommendation, not yet blessed: build against `io.github.moralesl.simmer.dev` and promote only when the app is known-good. | Burning it is irreversible. |
-| 2 | **Does `~/Applications/Simmer.app` survive?** It is *not* v1 code — it is the notification identity v2 inherits, and it holds an `authorized` grant. It was deliberately kept when v1 was uninstalled. Deleting and recreating the same id normally keeps the grant (denials are what stick), but the downside is asymmetric. | Same irreversibility. |
-| 3 | **Distribution audience.** Answered once as "mixed, some non-technical", which is why `bootstrap.sh` exists. Worth re-confirming, because it decides whether a Homebrew tap or the one-paste line is the real channel — and therefore how much packaging work v2 owes. | Only you know who they are. |
-| 4 | **Raycast / Alfred / SwiftBar in v2.** Decided: **not** at the start; added afterwards. `simmer render <surface>` stays core and stays tested; only the shims are deferred. Left here because "afterwards" has no date yet. | Scheduling. |
+| 1 | **Bundle id during development.** `io.github.moralesl.simmer` is *currently authorized* for notifications on Luis's Mac. macOS caches a permission verdict per bundle id **forever**, and a denial can never be undone for that id. A half-built v1 app could burn it. **Decided:** build against `io.github.moralesl.simmer.dev` and promote to the clean id only when the app is known-good. Also already burned and never reusable: `ai.causaprima.simmer.notifier`. | Kept here because it is irreversible and easy to forget. |
+| 2 | **Distribution audience.** Answered once as "mixed, some non-technical", which is why `bootstrap.sh` exists. Worth re-confirming, because it decides whether a Homebrew tap or the one-paste line is the real channel — and therefore how much packaging work v1 owes. | Only you know who they are. |
+| 3 | **Raycast / Alfred / SwiftBar.** Decided: **not** in v1; added afterwards. `simmer render <surface>` stays core and stays tested; only the shims are deferred. Left here because "afterwards" has no date yet. | Scheduling. |
 
 ---
 
@@ -30,16 +29,18 @@ They are blocked on a person deciding.
 | A claim's **id is its owner** — one live claim per owner | `CONTRACTS.md` § D1 |
 | Claims retire on **their own** battery floor; thermal ends all of them | `CONTRACTS.md` § D1 |
 | A **passed cap keeps refusing** until a human moves it | `CONTRACTS.md` § D1 |
-| No paid Apple signature, ever. Ad-hoc is enough | `V2-BRIEF.md` |
-| **v2 starts from zero.** The bash implementation and its 175-assertion suite are a *spike*, archived, and inherited by nothing. v2 writes its own tests against `CONTRACTS.md` | this file, § 4 |
+| No paid Apple signature, ever. Ad-hoc is enough | `PLATFORM-FACTS.md` |
+| **v1 starts from zero.** The bash implementation and its 175-assertion suite are the *v0.1 spike*, archived, and inherited by nothing. v1 writes its own tests against `CONTRACTS.md` | this file, § 4 |
+| **`simmer down` releases only your own claims — unless you are the human**, who may release any. Blessed 2026-08-23 | `CONTRACTS.md` § D1 |
+| Versioning: the bash spike is **v0.1** (tagged; `v0.0-lease` is the pre-claims design). The Swift application is **v1** | this table |
 | One Swift package, three products; the guard runs **both** ways — IOKit events in the app *and* a LaunchAgent tick as backstop, over one idempotent `tick()` | this file, § 5 |
-| Never distribute a `.dmg` or a browser-downloaded zip | `V2-BRIEF.md` § Distribution |
+| Never distribute a `.dmg` or a browser-downloaded zip | `PLATFORM-FACTS.md` |
 
 ---
 
 ## 3. Platform traps, each one paid for
 
-`V2-BRIEF.md` holds the verified facts about keeping the Mac awake and about notification identity.
+`PLATFORM-FACTS.md` holds the verified facts about keeping the Mac awake and about notification identity.
 These are the ones found *since*, and they are the kind that cost an hour each because nothing errors — the wrong thing simply happens.
 
 ### `command -v git` is not a check for git on macOS
@@ -74,7 +75,7 @@ On macOS the word boundaries are `[[:<:]]` and `[[:>:]]`.
 ### `launchctl bootout` returns before the job is gone
 
 Poll `launchctl print` until it fails, or the following `bootstrap` fails with `5: Input/output error`.
-(Already in `V2-BRIEF.md`; repeated because it bit again while uninstalling.)
+(Already in `PLATFORM-FACTS.md`; repeated because it bit again while uninstalling.)
 
 ### SwiftBar keeps per-plugin state as a mirrored path tree
 
@@ -108,7 +109,7 @@ A suite tests what you thought of.
 
 ### Two suites, two questions — the shape worth rebuilding
 
-Both live in `archive/v1-bash/test/` now and gate nothing. The *shape* is what to
+Both live in `archive/v0.1-spike/test/` now and gate nothing. The *shape* is what to
 carry across:
 
 - **Is this implementation internally right?** One hermetic suite over the whole
@@ -131,10 +132,9 @@ finding.
 
 ### The reference must be pinned
 
-`make diff` compares against the **`v1.0.0` tag**, never `HEAD~1`.
-The recorded deltas only differ from v1; a moving reference turns each of them into a failure the day after it lands.
-(Branch `v1` also exists.
-A tag and a branch with the same name make `git show v1:path` ambiguous — hence `v1.0.0` for the tag.)
+The archived `make diff` compares against the **`v0.0-lease` tag** — the pre-claims design — never `HEAD~1`.
+The recorded deltas only differ from *that* design; a moving reference turns each of them into a failure the day after it lands.
+A tag and a branch sharing a name makes `git show v1:path` ambiguous, which is why the tags are `v0.1` and `v0.0-lease` and there is no branch of either name.
 
 ### The spike is reference, not a foundation
 
@@ -143,14 +143,14 @@ assertions behind it. It is still archived rather than carried forward, and the
 call was Luis's: it was a spike, and a rewrite that starts by inheriting the
 previous thing's harness is not a rewrite.
 
-What that costs, stated plainly so nobody rediscovers it as a surprise: v2 begins
+What that costs, stated plainly so nobody rediscovers it as a surprise: v1 begins
 with **no executable specification**. `CONTRACTS.md` is prose, and prose does not
 fail a build. The differential idea — identical CLI scenarios against two
 binaries, contract-bearing lines compared exactly and prose free to differ — was
 the brief's named safety mechanism for the port, and it does not apply to a
 from-scratch build with nothing to differ against.
 
-So the first real deliverable of v2 is not a feature. It is the test seam
+So the first real deliverable of v1 is not a feature. It is the test seam
 (`SIMMER_FAKE_NOW`, `SIMMER_FAKE_PMSET`, `SIMMER_FAKE_BATTERY`,
 `SIMMER_FAKE_THERMAL`, `XDG_STATE_HOME`) plus tests written fresh against the
 contract, because without those the guard's branches — deadline crossings,
@@ -167,7 +167,7 @@ Surface them at the moment of decision.
 
 ---
 
-## 5. The shape v2 is being built to
+## 5. The shape v1 is being built to
 
 Decided, with the reasoning, so it does not get re-argued:
 
@@ -200,4 +200,4 @@ Event-driven alone was rejected: a login item is a process a user can quit, and 
 `simmer render <surface>` stays in the core and stays tested; only the files that call it wait.
 
 **Not yet contracted, and nothing may depend on them:** `--lock`, `events.jsonl`, `simmer watch`, `simmer why`.
-See `V2-BRIEF.md`.
+See `BRIEF.md`.

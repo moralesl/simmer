@@ -10,7 +10,7 @@ Nothing else.
 The thing being guarded can flatten a battery, so the code guarding it should fit in your head.
 [ARCHITECTURE.md](ARCHITECTURE.md) has the diagram and the reasoning; [CONTRACTS.md](CONTRACTS.md) is the law.
 
-A Swift rewrite is in progress — see [docs/V2-BRIEF.md](docs/V2-BRIEF.md).
+A Swift rewrite is in progress — see [../../docs/BRIEF.md](../../docs/BRIEF.md).
 The bash implementation is the reference until the suite passes against the Swift one.
 
 ## Constraints that are not negotiable
