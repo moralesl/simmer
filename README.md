@@ -6,10 +6,7 @@
 
 **Keep your Mac awake for a bounded time — lid closed — then let it sleep again.**
 
-[![test](https://github.com/moralesl/simmer/actions/workflows/test.yml/badge.svg)](https://github.com/moralesl/simmer/actions/workflows/test.yml)
-[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![platform](https://img.shields.io/badge/platform-macOS%2011%2B-lightgrey?logo=apple)](#install)
-[![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](#install)
+[![test](https://github.com/moralesl/simmer/actions/workflows/test.yml/badge.svg)](https://github.com/moralesl/simmer/actions/workflows/test.yml) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![platform](https://img.shields.io/badge/platform-macOS%2011%2B-lightgrey?logo=apple)](#install) [![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](#install)
 
 </div>
 
@@ -27,26 +24,24 @@ $ simmer down
 
 ## Why this exists
 
-`caffeinate` does not survive the lid. On Apple silicon the machine sleeps the
-moment you close it, no matter which assertions are held. The only thing that
-keeps it running is:
+`caffeinate` does not survive the lid.
+On Apple silicon the machine sleeps the moment you close it, no matter which assertions are held.
+The only thing that keeps it running is:
 
 ```bash
 sudo pmset -a disablesleep 1
 ```
 
-And that is a switch with no way back. It has no expiry, nothing on screen
-indicates it, and **it survives reboots**. Set it before a flight, forget it,
-and you find a flat battery in your bag. That is not a hypothetical — it is why
-this tool exists.
+And that is a switch with no way back.
+It has no expiry, nothing on screen indicates it, and **it survives reboots**.
+Set it before a flight, forget it, and you find a flat battery in your bag.
+That is not a hypothetical — it is why this tool exists.
 
 ## How it works
 
-simmer never exposes the switch. It *borrows* it, with a deadline, and a
-background watchdog hands it back. **Five things end a lease, and only one of
-them is you remembering:** the deadline, the battery floor, thermal pressure
-(a hot machine with the lid closed is the one state you cannot notice),
-`simmer down`, and the guard finding the switch on with no lease behind it.
+simmer never exposes the switch.
+It *borrows* it, with a deadline, and a background watchdog hands it back.
+**Five things end a lease, and only one of them is you remembering:** the deadline, the battery floor, thermal pressure (a hot machine with the lid closed is the one state you cannot notice), `simmer down`, and the guard finding the switch on with no lease behind it.
 
 ```
 simmer 2h ──┬─► sudo pmset -a disablesleep 1        (the lid stays awake)
@@ -63,10 +58,8 @@ simmer 2h ──┬─► sudo pmset -a disablesleep 1        (the lid stays awa
             release: pmset disablesleep 0 · notify · log
 ```
 
-That last branch is the important one: if the guard ever finds `disablesleep`
-enabled with no lease behind it — because you typed `pmset` by hand, or a
-release was interrupted — it turns it back off. **Forgetting becomes
-structurally impossible rather than merely unlikely.**
+That last branch is the important one: if the guard ever finds `disablesleep` enabled with no lease behind it — because you typed `pmset` by hand, or a release was interrupted — it turns it back off.
+**Forgetting becomes structurally impossible rather than merely unlikely.**
 
 ## Install
 
@@ -76,34 +69,27 @@ cd simmer
 make install
 ```
 
-Clone it anywhere — the installer resolves its own location, so nothing is tied
-to a particular path.
+Clone it anywhere — the installer resolves its own location, so nothing is tied to a particular path.
 
 That links `simmer` into `~/.local/bin` and starts the guard as a LaunchAgent.
 
 ### Notifications
 
-simmer's banners carry **simmer's own name and icon**. At install, `make install`
-compiles a ~60-line Swift notifier from `notifier/main.swift`, wraps it in an
-app bundle with the pot icon, signs it ad-hoc and registers it — no certificate,
-no Apple account. macOS shows a one-time permission banner (with the pot icon);
-click **Allow** once and that is the entire setup.
+simmer's banners carry **simmer's own name and icon**.
+At install, `make install` compiles a ~60-line Swift notifier from `notifier/main.swift`, wraps it in an app bundle with the pot icon, signs it ad-hoc and registers it — no certificate, no Apple account. macOS shows a one-time permission banner (with the pot icon); click **Allow** once and that is the entire setup.
 
-This works where every CLI notification tool fails because macOS attributes a
-banner to the *bundle* that posts it and silently drops unknown identities — a
-bare binary is such an identity, an installed registered bundle is not. The
-recipe and its traps are in [docs/V2-BRIEF.md](docs/V2-BRIEF.md); the transport
-is switchable and testable:
+This works where every CLI notification tool fails because macOS attributes a banner to the *bundle* that posts it and silently drops unknown identities — a bare binary is such an identity, an installed registered bundle is not.
+The recipe and its traps are in [docs/V2-BRIEF.md](docs/V2-BRIEF.md); the transport is switchable and testable:
 
 ```bash
 simmer notify-test                 # one labelled banner per transport
 export SIMMER_NOTIFY=bundle        # or shortcut · swiftbar · osascript · say · none
 ```
 
-No Swift compiler on the machine? The installer says so and banners fall back to
-`osascript` (posting as *Script Editor*). Fix later with `xcode-select --install`
-and another `make install`. The menu bar works regardless and can never be
-suppressed.
+No Swift compiler on the machine?
+The installer says so and banners fall back to `osascript` (posting as *Script Editor*).
+Fix later with `xcode-select --install` and another `make install`.
+The menu bar works regardless and can never be suppressed.
 
 ## Usage
 
@@ -124,10 +110,9 @@ Durations are forgiving: `90`, `90m`, `1h`, `1h30m`, `45min`, `2h15`, `30s`.
 
 ## Menu bar — SwiftBar
 
-The menu bar is the one indicator nothing can suppress. It shows `☕ 42m`,
-turns orange under five minutes, shows `☕ ∞` for an open-ended lease, and goes
-red if it ever finds the switch on with no lease. The dropdown extends or
-releases without a terminal.
+The menu bar is the one indicator nothing can suppress.
+It shows `☕ 42m`, turns orange under five minutes, shows `☕ ∞` for an open-ended lease, and goes red if it ever finds the switch on with no lease.
+The dropdown extends or releases without a terminal.
 
 ```bash
 brew install --cask swiftbar
@@ -137,23 +122,21 @@ ln -sf ~/workspace/tools/simmer/integrations/swiftbar/simmer.10s.sh \
 
 ## Launcher — Raycast
 
-Free tier is enough. Point Raycast at the folder once:
+Free tier is enough.
+Point Raycast at the folder once:
 
 > Settings → Extensions → Script Commands → Add Directories →
 > `~/workspace/tools/simmer/integrations/raycast`
 
-Then `⌥␣ simmer` shows the live state **inline in the root search**, without
-selecting anything, plus commands to start, extend and release. Typing
-`simmer 90m` or `simmer 23:00` starts exactly that.
+Then `⌥␣ simmer` shows the live state **inline in the root search**, without selecting anything, plus commands to start, extend and release.
+Typing `simmer 90m` or `simmer 23:00` starts exactly that.
 
-Alfred users: `make workflow` builds `integrations/alfred/Simmer.alfredworkflow`
-— double-click to import. It needs the paid Powerpack, which is why Raycast is
-the documented path.
+Alfred users: `make workflow` builds `integrations/alfred/Simmer.alfredworkflow` — double-click to import.
+It needs the paid Powerpack, which is why Raycast is the documented path.
 
 ## For scripts and agents
 
-`simmer budget` answers the question a long-running job actually has — *is there
-room to start this?* — in the exit code:
+`simmer budget` answers the question a long-running job actually has — *is there room to start this?* — in the exit code:
 
 ```bash
 simmer budget --need 20m || echo "not enough time left, wind down"
@@ -165,20 +148,17 @@ simmer budget --need 20m || echo "not enough time left, wind down"
 | `1` | not enough time left |
 | `3` | no lease at all — sleep is allowed and the lid can interrupt |
 
-`3` is deliberately not `1`: a small budget and an *absent guarantee* are
-different things, and code that conflates them keeps working while the machine
-sleeps underneath it.
+`3` is deliberately not `1`: a small budget and an *absent guarantee* are different things, and code that conflates them keeps working while the machine sleeps underneath it.
 
-Pass `--owner <name>` when taking a lease. simmer refuses to replace a lease
-held by a different owner unless you add `--force`, so an automated job cannot
-silently stamp over the twenty minutes a human set on purpose.
+Pass `--owner <name>` when taking a lease. simmer refuses to replace a lease held by a different owner unless you add `--force`, so an automated job cannot silently stamp over the twenty minutes a human set on purpose.
 
-`simmer status --machine` prints the full state as `key=value` lines for
-anything that wants to render it.
+`simmer status --machine` prints the full state as `key=value` lines for anything that wants to render it.
 
-**Agents:** [docs/FOR-AGENTS.md](docs/FOR-AGENTS.md) is the short protocol — take a
-lease, check the budget before each expensive step, wind down when the clock
-runs low, hand it back. Written to be read by a model, not skimmed by one.
+**Agents:** [docs/FOR-AGENTS.md](docs/FOR-AGENTS.md) is the short protocol — take a lease, check the budget before each expensive step, wind down when the clock runs low, hand it back.
+Written to be read by a model, not skimmed by one.
+
+Wondering about Amphetamine, LidRun or plain `caffeinate`?
+[docs/COMPARISON.md](docs/COMPARISON.md) is an honest comparison — including when NOT to use simmer.
 
 ## Development
 
@@ -186,12 +166,11 @@ runs low, hand it back. Written to be read by a model, not skimmed by one.
 make test    # 43 assertions, no sudo, no real power state touched
 ```
 
-The suite substitutes the four power operations via `SIMMER_FAKE_PMSET` and
-`SIMMER_FAKE_BATTERY`, so it can exercise the battery branch while the laptop is
-charging and never changes your machine. See [ARCHITECTURE.md](ARCHITECTURE.md).
+The suite substitutes the four power operations via `SIMMER_FAKE_PMSET` and `SIMMER_FAKE_BATTERY`, so it can exercise the battery branch while the laptop is charging and never changes your machine.
+See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-`bin/simmer` targets `/bin/bash`, which is 3.2 on macOS — no `${var,,}`, no
-associative arrays. A LaunchAgent should not depend on a Homebrew shell.
+`bin/simmer` targets `/bin/bash`, which is 3.2 on macOS — no `${var,,}`, no associative arrays.
+A LaunchAgent should not depend on a Homebrew shell.
 
 ## Uninstall
 
