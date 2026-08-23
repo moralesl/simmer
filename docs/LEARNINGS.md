@@ -83,6 +83,17 @@ Under `~/Library/Application Support/SwiftBar/Plugins/`, SwiftBar creates a dire
 Removing a plugin symlink leaves that tree behind, so a renamed plugin accumulates ghosts — `awake.10s.sh` was still there long after the tool was called `simmer`.
 They are empty directories, so `rmdir` bottom-up is the right tool: it refuses if anything is actually in them, where `rm -rf` would not.
 
+### Other tools hold power assertions too, and none of them tell you
+
+While checking the machine was clean, `caffeinate -i -t 300` processes kept
+reappearing.
+They are **Claude Code's own** — the binary spawns one per session to stop idle sleep interrupting a long turn.
+Zero hits for `caffeinate` in any steering file, settings file or hook; the parent of every one is a `claude` process.
+
+Worth knowing for two reasons. It is a false positive when auditing simmer's own
+leaks, so match on simmer's `-ims`/`-dims` signature rather than on the process name.
+And it is the sharpest argument for the integration in `DESIGN-NOTES.md`: the tool being used to build simmer is itself holding an invisible, unaccountable, lid-incapable assertion.
+
 ### A seam that covers *most* of the side effects is not a seam
 
 The spike's suite advertised itself as hermetic: "no sudo, no real power state

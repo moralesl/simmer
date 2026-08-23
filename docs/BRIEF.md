@@ -92,7 +92,7 @@ Developers get a Homebrew tap instead — having brew *guarantees* the Command L
 | `events.jsonl`, `simmer watch`, `simmer why` | Good ideas, and cheap once the ledger exists. Not contracted, so nothing may depend on them yet. |
 | `--lock` (lock the screen on take) | Listed so no implementation invents behaviour for it. It enters the surface together with its tests. |
 | A Homebrew tap | After the one-paste path works. |
-| The Claude Code hook | The flagship integration — a `SessionStart` hook injecting one line of context and a `UserPromptSubmit` hook that fires only when `budget` exits 1 or 3. Turns the agent protocol from prose an agent must remember into a gate the harness enforces. Wants a stable CLI first. |
+| The Claude Code hook | The flagship integration, and it has a concrete motivating case: Claude Code already spawns its own invisible `caffeinate` per session (`DESIGN-NOTES.md`). The strong version is that the harness's wakefulness becomes a claim like everybody else's. Plus the `SessionStart` / `UserPromptSubmit` hooks that turn the agent protocol from prose an agent must remember into a gate the harness enforces. Wants a stable CLI first. |
 
 ## Start with the seam, not a feature
 

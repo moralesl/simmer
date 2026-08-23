@@ -187,6 +187,29 @@ That is the agent-tool bridge in one feature.
 It should say how much — *Release everything (3)* — and live behind ⌥, consistent with the power layer.
 Cheap, and it makes the irreversible thing deliberate.
 
+### ↑ The motivating case for the Claude Code integration: the harness is already doing this badly
+
+Measured on this machine, 2026-08-23: **Claude Code spawns its own `caffeinate -i
+-t 300` per session**, refreshed while the session lives.
+Not a hook, not a steering file — the binary carries the string and every one of those processes has a `claude` process as its parent.
+
+It is doing exactly what simmer exists to do, and doing it the way simmer says not to:
+
+- **Invisible.** Nothing on screen says the machine is being held awake, or by what, or for how long.
+- **Wrong mechanism.** `-i` prevents idle sleep and cannot hold a closed lid, so
+  the long agent turn it is protecting still dies when the laptop is shut.
+- **Unaccounted.** It is not a claim, so `simmer status` cannot show it, `budget`
+  cannot count it, and the cap cannot clip it. Three sessions running means three
+  invisible assertions nobody can enumerate.
+
+So the Claude Code integration is not only "inject budget context into the
+prompt".
+The stronger version is: **the harness's own wakefulness should be a claim like everybody else's** — `simmer run` around the session, or a claim taken at `SessionStart` and released at `SessionEnd`, owned as `agent:claude-<session>`.
+Then the menu bar shows it, the cap governs it, and a human can end it.
+
+That is also the best possible demonstration of why counted claims were the right
+model: the machine really does have several actors wanting the lid shut at once, and one of them is the tool being used to build simmer.
+
 ### ~ Claim by watching something
 
 `simmer run -- <cmd>` is the claim that cannot be forgotten, and it is terminal-only.
