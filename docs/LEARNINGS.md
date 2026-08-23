@@ -15,7 +15,7 @@ They are blocked on a person deciding.
 
 | # | Question | Why it needs you |
 |---|---|---|
-| 1 | **Bundle id during development.** `io.github.moralesl.simmer` is *currently authorized* for notifications on Luis's Mac. macOS caches a permission verdict per bundle id **forever**, and a denial can never be undone for that id. A half-built v1 app could burn it. **Decided:** build against `io.github.moralesl.simmer.dev` and promote to the clean id only when the app is known-good. Also already burned and never reusable: `ai.causaprima.simmer.notifier`. | Kept here because it is irreversible and easy to forget. |
+| 1 | **Bundle id during development.** `io.github.moralesl.simmer` is *currently authorized* for notifications on Luis's Mac. macOS caches a permission verdict per bundle id **forever**, and a denial can never be undone for that id. A half-built v1 app could burn it. **Decided:** build against `io.github.moralesl.simmer.dev` and promote to the clean id only when the app is known-good. See the bundle-id inventory in § 3. | Kept here because it is irreversible and easy to forget. |
 | 2 | **Distribution audience.** Answered once as "mixed, some non-technical", which is why `bootstrap.sh` exists. Worth re-confirming, because it decides whether a Homebrew tap or the one-paste line is the real channel — and therefore how much packaging work v1 owes. | Only you know who they are. |
 | 3 | **Raycast / Alfred / SwiftBar.** Decided: **not** in v1; added afterwards. `simmer render <surface>` stays core and stays tested; only the shims are deferred. Left here because "afterwards" has no date yet. | Scheduling. |
 
@@ -117,6 +117,31 @@ Two independent causes, both instructive:
    was responsible for.
 
 For v1: no detached child processes at all. See `DESIGN-NOTES.md`.
+
+### Bundle-id inventory — verified against LaunchServices, 2026-08-23
+
+macOS caches a notification permission verdict **per bundle id, forever**, and a
+denial can never be undone for that id.
+So the ids this project has already touched are a resource that can only be spent, never recovered.
+
+| Bundle id | State | Use it? |
+|---|---|---|
+| `io.github.moralesl.simmer` | **0 references in LaunchServices.** Clean. The bundle that held it was removed and unregistered | **The production id.** Register it only once the app is known-good |
+| `io.github.moralesl.simmer.dev` | never used | Development. Burn this one freely |
+| `io.github.moralesl.simmer.barspike` | was registered by a `SimmerBar.app` left in a previous session's scratchpad, carrying a notification activity type. Unregistered and the bundle deleted on 2026-08-23 | Do not reuse. Its history is unknown |
+| `ai.causaprima.simmer.notifier` | **burned.** Denied on a first run from `/tmp`, and that verdict is permanent | Never |
+
+Two things this cost, and both are worth avoiding again.
+A spike that builds an `.app` **registers it with LaunchServices**, and that registration outlives the scratchpad it was built in — a stale entry pointed at a deleted path for weeks.
+And it is invisible to every ordinary check: it is not on `PATH`, not in `~/Applications`, not a launchd job, and `mdfind` does not index `/private/tmp`.
+Only `lsregister -dump` shows it.
+
+    lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/\
+    LaunchServices.framework/Support/lsregister
+    "$lsregister" -dump | grep -c '<bundle id>'      # is it still known?
+    "$lsregister" -u /path/to/Some.app               # forget it
+
+**Build spikes under a `.spike` id, and unregister them when done.**
 
 ### An installer that checks for a *capability* silently adopts a stranger's grant
 
