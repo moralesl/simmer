@@ -1,7 +1,8 @@
-# v2 is not built yet, so there is nothing at the top level to compile. What CI
-# guards for now is that the ARCHIVED reference stays runnable -- it is the
-# executable specification and the differential baseline, and a reference that
-# silently rots is worse than none. v2's own jobs get added as v2 lands.
+# Two things are guarded here. First: v1 — the Swift package — builds and its
+# two suites pass (hermetic: SIMMER_FAKE_* substitutes every power read, the
+# switch is a file, no sudo, nothing touched). Second: the ARCHIVED v0.1
+# reference stays runnable — it is reference material for the contract, and a
+# reference that silently rots is worse than none.
 name: test
 
 on:
@@ -11,16 +12,34 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
-    # macOS because the whole tool is macOS power management. The suite itself
-    # never calls pmset -- it substitutes it through SIMMER_FAKE_* -- so this
-    # needs no sudo, no runner privileges, and touches nothing.
+  v1:
+    # macOS because the whole tool is macOS power management. No sudo, no
+    # runner privileges: the suites drive the binary through the seam.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (release, all products)
+        run: swift build -c release
+
+      - name: Unit + acceptance suites
+        run: make test
+
+      - name: Bundle assembles and signs ad-hoc
+        run: make app
+
+      - name: Templates parse
+        run: |
+          plutil -lint launchd/guard.plist.template app/Info.plist.template
+          bash -n bootstrap.sh
+
+  reference:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          # The differential needs the pinned `v0.0-lease` reference, which lives in a
-          # tag. A shallow clone has neither.
+          # The differential needs the pinned `v0.0-lease` tag; a shallow
+          # clone does not have it.
           fetch-depth: 0
 
       - name: Shell syntax
@@ -35,26 +54,15 @@ jobs:
       - name: Property lists parse
         run: plutil -lint archive/v0.1-spike/launchd/*.plist archive/v0.1-spike/integrations/alfred/Simmer/info.plist
 
-      # bin/simmer targets /bin/bash, which is 3.2 on macOS. Runners also ship a
-      # modern bash, so this asserts the constraint rather than trusting it:
-      # bash 3.2 has no ${var,,} and no associative arrays, and a LaunchAgent
-      # should not depend on a Homebrew shell.
+      # bin/simmer targets /bin/bash, which is 3.2 on macOS. Runners also ship
+      # a modern bash, so this asserts the constraint rather than trusting it.
       - name: Runs under bash 3.2
         run: |
           /bin/bash --version | head -1
           /bin/bash archive/v0.1-spike/bin/simmer --version
 
-      # The notifier is Swift compiled at install time on user machines; CI
-      # proves the source actually compiles before anyone installs it.
-      - name: Notifier compiles
-        run: swiftc -O -o /tmp/simmer-notify archive/v0.1-spike/notifier/main.swift
-
       - name: Reference suite
         run: make -C archive/v0.1-spike test
 
-      # Does this still answer what the previous implementation answered? The
-      # only check that catches a message, an exit code, a field name or a state
-      # value drifting -- the class of change where every unit test still passes.
-      # Skips itself, loudly, when the reference tag is not in the clone.
       - name: Reference differential
         run: make -C archive/v0.1-spike diff

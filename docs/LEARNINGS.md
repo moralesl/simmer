@@ -15,7 +15,7 @@ They are blocked on a person deciding.
 
 | # | Question | Why it needs you |
 |---|---|---|
-| 1 | **Bundle id during development.** `io.github.moralesl.simmer` is *currently authorized* for notifications on Luis's Mac. macOS caches a permission verdict per bundle id **forever**, and a denial can never be undone for that id. A half-built v1 app could burn it. **Decided:** build against `io.github.moralesl.simmer.dev` and promote to the clean id only when the app is known-good. See the bundle-id inventory in § 3. | Kept here because it is irreversible and easy to forget. |
+| 1 | **Bundle id during development.** `io.github.moralesl.simmer` is *currently authorized* for notifications on Luis's Mac. macOS caches a permission verdict per bundle id **forever**, and a denial can never be undone for that id. A half-built v1 app could burn it. **Decided and implemented:** the Makefile defaults to `io.github.moralesl.simmer.dev`; promotion is `make install BUNDLE_ID=io.github.moralesl.simmer`, a release-checklist step, never a default. See the bundle-id inventory in § 3. | Kept here because it is irreversible and easy to forget. |
 | 2 | **Distribution audience.** Answered once as "mixed, some non-technical", which is why `bootstrap.sh` exists. Worth re-confirming, because it decides whether a Homebrew tap or the one-paste line is the real channel — and therefore how much packaging work v1 owes. | Only you know who they are. |
 | 3 | **Raycast / Alfred / SwiftBar.** Decided: **not** in v1; added afterwards. `simmer render <surface>` stays core and stays tested; only the shims are deferred. Left here because "afterwards" has no date yet. | Scheduling. |
 
@@ -85,43 +85,36 @@ They are empty directories, so `rmdir` bottom-up is the right tool: it refuses i
 
 ### Other tools hold power assertions too, and none of them tell you
 
-While checking the machine was clean, `caffeinate -i -t 300` processes kept
-reappearing.
+While checking the machine was clean, `caffeinate -i -t 300` processes kept reappearing.
 They are **Claude Code's own** — the binary spawns one per session to stop idle sleep interrupting a long turn.
 Zero hits for `caffeinate` in any steering file, settings file or hook; the parent of every one is a `claude` process.
 
-Worth knowing for two reasons. It is a false positive when auditing simmer's own
-leaks, so match on simmer's `-ims`/`-dims` signature rather than on the process name.
+Worth knowing for two reasons.
+It is a false positive when auditing simmer's own leaks, so match on simmer's `-ims`/`-dims` signature rather than on the process name.
 And it is the sharpest argument for the integration in `DESIGN-NOTES.md`: the tool being used to build simmer is itself holding an invisible, unaccountable, lid-incapable assertion.
 
 ### A seam that covers *most* of the side effects is not a seam
 
-The spike's suite advertised itself as hermetic: "no sudo, no real power state
-touched, nothing left behind".
+The spike's suite advertised itself as hermetic: "no sudo, no real power state touched, nothing left behind".
 It had ten `SIMMER_FAKE_*` variables covering the sleep switch, the battery, thermal pressure, the lock delay and the clock — and **zero** covering `caffeinate`, which every single claim spawned as a detached child process holding a real power assertion.
 
-Found by checking for orphans before declaring the machine clean: **222
-`caffeinate` processes**, 219 of them orphaned to `ppid 1`, 13 with no `-t` and therefore never expiring.
+Found by checking for orphans before declaring the machine clean: **222 `caffeinate` processes**, 219 of them orphaned to `ppid 1`, 13 with no `-t` and therefore never expiring.
 `pmset -g assertions` confirmed they were actively holding `PreventUserIdleSystemSleep` and `PreventDiskIdle`.
 The machine had been prevented from idle-sleeping by leaked test fixtures.
 
 Two independent causes, both instructive:
 
-1. **The seam had a hole.** Anything with a side effect outside the process has to
-   go through the seam, not just the things that are hard to test. `caffeinate`
-   was easy to call and therefore never questioned.
-2. **The test helper bypassed the only cleanup path.** `clear_all() { rm -f
-   "$CLAIMS"/*; }` deleted claim files directly, and `retire_claim()` — the only
-   code that kills the recorded child pid — never ran. A fixture that manipulates
-   state behind the implementation's back will leak whatever the implementation
-   was responsible for.
+1. **The seam had a hole.** Anything with a side effect outside the process has to go through the seam, not just the things that are hard to test.
+   `caffeinate` was easy to call and therefore never questioned.
+2. **The test helper bypassed the only cleanup path.** `clear_all() { rm -f "$CLAIMS"/*; }` deleted claim files directly, and `retire_claim()` — the only code that kills the recorded child pid — never ran.
+   A fixture that manipulates state behind the implementation's back will leak whatever the implementation was responsible for.
 
-For v1: no detached child processes at all. See `DESIGN-NOTES.md`.
+For v1: no detached child processes at all.
+See `DESIGN-NOTES.md`.
 
 ### Bundle-id inventory — verified against LaunchServices, 2026-08-23
 
-macOS caches a notification permission verdict **per bundle id, forever**, and a
-denial can never be undone for that id.
+macOS caches a notification permission verdict **per bundle id, forever**, and a denial can never be undone for that id.
 So the ids this project has already touched are a resource that can only be spent, never recovered.
 
 | Bundle id | State | Use it? |
@@ -158,12 +151,10 @@ So simmer reported "already in place" on every install, never wrote `/etc/sudoer
 
 Three consequences, and the third is the one that bites:
 
-1. `make uninstall` printed *"Left alone on purpose: /etc/sudoers.d/simmer"* — a
-   file that had never existed. The uninstall instructions were wrong.
-2. The real grant survived every uninstall, under a name nobody would think to
-   look for.
-3. Auditing the machine reported the rule as present and simmer-owned, because
-   the only evidence anyone looked at was `sudo -nl`.
+1. `make uninstall` printed *"Left alone on purpose: /etc/sudoers.d/simmer"* — a file that had never existed.
+   The uninstall instructions were wrong.
+2. The real grant survived every uninstall, under a name nobody would think to look for.
+3. Auditing the machine reported the rule as present and simmer-owned, because the only evidence anyone looked at was `sudo -nl`.
 
 **For v1: check for its own file AND the capability, and report the difference.**
 
@@ -175,9 +166,21 @@ Three consequences, and the third is the one that bites:
 
 And uninstall may only claim to leave behind what it actually wrote.
 
-This was the third artifact from the pre-rename `awake` era found in one session,
-after `awake.log` in the state directory and `awake.10s.sh` in SwiftBar's plugin tree.
+This was the third artifact from the pre-rename `awake` era found in one session, after `awake.log` in the state directory and `awake.10s.sh` in SwiftBar's plugin tree.
 A tool that gets renamed leaves grants and state under the old name, and nothing goes looking for them.
+
+### APFS is case-insensitive: `Simmer` and `simmer` in one directory are the same file
+
+The obvious bundle layout — app executable `Contents/MacOS/Simmer`, CLI `Contents/MacOS/simmer` — self-destructs on a default APFS volume: the second `cp` silently overwrites the first, and the "app" then runs the CLI's `main`, prints a status line and exits.
+Nothing errors; the bundle even signs.
+Found on 2026-08-23 because the launch check watched process lifetime rather than trusting the build. v1's app executable is therefore `simmer-app` (`CFBundleExecutable` does not have to match the app's name), and the CLI keeps the `Contents/MacOS/simmer` path the docs promise.
+
+### A CLT-only toolchain hides swift-testing from `swift test`
+
+`Testing.framework` ships with the Command Line Tools, but outside every default search path — `swift test` fails with *no such module 'Testing'*, and after `-F` is added it still dies at runtime missing `lib_TestingInterop.dylib`.
+Both live under `/Library/Developer/CommandLineTools/Library/Developer/` (`Frameworks/` and `usr/lib/`).
+`make test` adds the four flags when that directory exists; under full Xcode they are absent and unneeded.
+Never `xcodebuild` — the fix stays inside SwiftPM.
 
 ### A malformed file in `/etc/sudoers.d` can break `sudo` entirely
 
@@ -205,26 +208,18 @@ A suite tests what you thought of.
 
 ### Two suites, two questions — the shape worth rebuilding
 
-Both live in `archive/v0.1-spike/test/` now and gate nothing. The *shape* is what to
-carry across:
+Both live in `archive/v0.1-spike/test/` now and gate nothing.
+The *shape* is what to carry across:
 
-- **Is this implementation internally right?** One hermetic suite over the whole
-  CLI surface, honouring `SIMMER_BIN` so it is not welded to one binary. 175
-  assertions, no sudo, no real power state touched, nothing left behind.
-- **Does it still answer what the previous one answered?** Identical CLI scenarios
-  driven against two binaries, output normalised for everything that legitimately
-  varies (epochs, wall-clock times, durations, pids, versions), then diffed.
+- **Is this implementation internally right?** One hermetic suite over the whole CLI surface, honouring `SIMMER_BIN` so it is not welded to one binary.
+  175 assertions, no sudo, no real power state touched, nothing left behind.
+- **Does it still answer what the previous one answered?** Identical CLI scenarios driven against two binaries, output normalised for everything that legitimately varies (epochs, wall-clock times, durations, pids, versions), then diffed.
 
-The second is the only instrument that catches a message, an exit code, a field
-name or a state value drifting, because that is precisely the class of change
-where every individual unit test still passes. It found `budget` silently dropping
-the "of 2 h 0 min" half of its answer.
+The second is the only instrument that catches a message, an exit code, a field name or a state value drifting, because that is precisely the class of change where every individual unit test still passes.
+It found `budget` silently dropping the "of 2 h 0 min" half of its answer.
 
-Its comparison levels encode contract guarantee 5 directly: **contract-bearing
-lines must match exactly, prose may be reworded.** Without that split it is
-unrunnable during a rewrite, when every sentence gets retyped. Scenarios that are
-*supposed* to differ are declared as such, so a delta quietly reverting is also a
-finding.
+Its comparison levels encode contract guarantee 5 directly: **contract-bearing lines must match exactly, prose may be reworded.** Without that split it is unrunnable during a rewrite, when every sentence gets retyped.
+Scenarios that are *supposed* to differ are declared as such, so a delta quietly reverting is also a finding.
 
 ### The reference must be pinned
 
@@ -234,26 +229,16 @@ A tag and a branch sharing a name makes `git show v1:path` ambiguous, which is w
 
 ### The spike is reference, not a foundation
 
-The bash implementation satisfies the whole contract and has 175 hermetic
-assertions behind it. It is still archived rather than carried forward, and the
-call was Luis's: it was a spike, and a rewrite that starts by inheriting the
-previous thing's harness is not a rewrite.
+The bash implementation satisfies the whole contract and has 175 hermetic assertions behind it.
+It is still archived rather than carried forward, and the call was Luis's: it was a spike, and a rewrite that starts by inheriting the previous thing's harness is not a rewrite.
 
-What that costs, stated plainly so nobody rediscovers it as a surprise: v1 begins
-with **no executable specification**. `CONTRACTS.md` is prose, and prose does not
-fail a build. The differential idea — identical CLI scenarios against two
-binaries, contract-bearing lines compared exactly and prose free to differ — was
-the brief's named safety mechanism for the port, and it does not apply to a
-from-scratch build with nothing to differ against.
+What that costs, stated plainly so nobody rediscovers it as a surprise: v1 begins with **no executable specification**.
+`CONTRACTS.md` is prose, and prose does not fail a build.
+The differential idea — identical CLI scenarios against two binaries, contract-bearing lines compared exactly and prose free to differ — was the brief's named safety mechanism for the port, and it does not apply to a from-scratch build with nothing to differ against.
 
-So the first real deliverable of v1 is not a feature. It is the test seam
-(`SIMMER_FAKE_NOW`, `SIMMER_FAKE_PMSET`, `SIMMER_FAKE_BATTERY`,
-`SIMMER_FAKE_THERMAL`, `XDG_STATE_HOME`) plus tests written fresh against the
-contract, because without those the guard's branches — deadline crossings,
-warn-once, the battery floor, thermal — are reachable only by waiting for real
-time to pass on a real battery. That is the one thing worth mining the archive
-for: not its code, but the fact that it could test all of that without root and
-without touching the machine.
+So the first real deliverable of v1 is not a feature.
+It is the test seam (`SIMMER_FAKE_NOW`, `SIMMER_FAKE_PMSET`, `SIMMER_FAKE_BATTERY`, `SIMMER_FAKE_THERMAL`, `XDG_STATE_HOME`) plus tests written fresh against the contract, because without those the guard's branches — deadline crossings, warn-once, the battery floor, thermal — are reachable only by waiting for real time to pass on a real battery.
+That is the one thing worth mining the archive for: not its code, but the fact that it could test all of that without root and without touching the machine.
 
 ### Raise the judgment calls when you make them, not in the summary
 

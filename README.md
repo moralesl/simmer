@@ -6,31 +6,48 @@
 
 **Keep your Mac awake for a bounded time — lid closed — then let it sleep again.**
 
-[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey?logo=apple)](#) [![status](https://img.shields.io/badge/v1-being%20built-orange)](docs/BRIEF.md)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey?logo=apple)](#) [![status](https://img.shields.io/badge/v1-swift-brightgreen)](docs/BRIEF.md)
 
 </div>
 
-## What this repository is right now
+## Install
 
-**v1 is being built as a fresh Swift application.** There is no installable release in the working tree at the moment.
-The tree is set up so that work can start from what was learned rather than from what was shipped:
+One paste, one native password dialog, one click on Allow:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/moralesl/simmer/main/bootstrap.sh | bash
+```
+
+That checks the Command Line Tools are genuinely present, clones, compiles locally (which is why there is no Gatekeeper warning and no Apple account — see the FAQ), installs `Simmer.app` with its menu bar and background guard, shows the exact two-line sudo rule before asking for your password once, and launches the app so the notification permission banner arrives carrying simmer's own icon.
+
+```bash
+simmer 2h -r "big build"    # stay awake two hours, lid may close
+simmer                      # how much longer, and who else is asking
+simmer down                 # hand your claim back
+simmer --help               # the rest, including the exit-code API
+```
+
+## What this repository is
+
+**v1: one Swift package, three products** — `SimmerCore` (the logic, no AppKit, no printing), `simmer` (the CLI), and `Simmer.app` (menu bar + event-driven guard + notification identity, one bundle).
+The guard runs both ways over one idempotent `tick()`: IOKit events in the app for instant response, and a LaunchAgent every 30 seconds as the backstop nobody can quit.
 
 ```
-docs/CONTRACTS.md    the law, in prose. What stays true across implementations,
-                     and the decisions behind it. v1 brings its own tests; this
-                     is what they have to prove.
-docs/LEARNINGS.md    every trap already paid for, every decision already taken,
-                     and the ones still open. Read this first.
-docs/BRIEF.md        what v1 is: the shape, what is in scope, what is deferred.
-docs/PLATFORM-FACTS.md  what macOS actually permits. Every line bought with a
-                     failed attempt — do not re-derive them.
-docs/DESIGN-NOTES.md the interaction-design proposals, marked take/consider/leave.
-docs/FAQ.md          short answers, for using it and for building it.
+Sources/SimmerCore/  claims · ledger · cap · aggregate · settle · tick ·
+                     budget · render · the power seam · the clock seam
+Sources/SimmerCLI/   argv in, exit code out. Thin on purpose.
+Sources/SimmerApp/   NSStatusItem · IOKit callbacks · UNUserNotificationCenter
+Tests/               unit suite + an acceptance suite that drives the BUILT
+                     binary under the seam variables (honours SIMMER_BIN)
 
-archive/v0.1-spike/  the bash spike: complete, runnable, with its own suite. Kept
-                     for reference — read it, then write the Swift version from
-                     the contract. Nothing in v1 imports, copies or sources from
-                     it.
+docs/CONTRACTS.md    the law, in prose: surface, exit codes, machine output,
+                     and the reasoning behind every choice.
+docs/LEARNINGS.md    every trap already paid for. Read this first.
+docs/BRIEF.md        what v1 is; docs/PLATFORM-FACTS.md — what macOS permits.
+docs/DESIGN-NOTES.md interaction design, marked take/consider/leave.
+
+archive/v0.1-spike/  the bash spike that proved the model. Reference only;
+                     v1 imports nothing from it.
 ```
 
 ## Why it exists
@@ -71,29 +88,18 @@ Claims request from below; the cap rules from above.
 
 The full contract, including the reasoning behind each of those choices, is [docs/CONTRACTS.md](docs/CONTRACTS.md).
 
-## Running the old one in the meantime
-
-`archive/v0.1-spike/` is a complete, tested implementation of the contract above.
-It is frozen, but it works:
-
-```bash
-cd archive/v0.1-spike && make install
-```
-
-See [archive/v0.1-spike/README.md](archive/v0.1-spike/README.md) for what that installs and how to remove it again.
-
 ## Development
 
-There is nothing at the top level to build yet — that is the point of this
-commit. v1 starts from `docs/`, not from a diff.
-
-The archived implementation still stands entirely on its own:
-
 ```bash
-make -C archive/v0.1-spike test    # 175 assertions, hermetic
-make -C archive/v0.1-spike diff    # against the v0.0-lease tag
-make -C archive/v0.1-spike install # if you want a working simmer meanwhile
+make test        # both suites: unit + acceptance over the built binary.
+                 # Hermetic — no sudo, no real power state, the clock is fake.
+make app         # assemble and ad-hoc sign Simmer.app (CLT only, no Xcode)
+make install     # ~/Applications/Simmer.app + ~/.local/bin/simmer + the guard
+make uninstall   # removes exactly what install wrote
 ```
+
+The acceptance suite honours `SIMMER_BIN`, so it can gate any implementation of [docs/CONTRACTS.md](docs/CONTRACTS.md) — that is what makes it the executable form of the contract.
+During development the app builds under the bundle id `io.github.moralesl.simmer.dev`; the clean production id is spent only at release, because macOS caches a notification permission verdict per bundle id forever ([docs/LEARNINGS.md](docs/LEARNINGS.md) § 1).
 
 Wondering about Amphetamine, LidRun or plain `caffeinate`?
 [archive/v0.1-spike/COMPARISON.md](archive/v0.1-spike/COMPARISON.md) is an honest comparison — including when NOT to use simmer.

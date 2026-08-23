@@ -7,6 +7,17 @@ Each is marked:
 - **~ consider** — real value, real cost; decide when you get there
 - **↓ leave** — considered and deliberately not doing
 
+> **2026-08-23: every ↑ take item was blessed and is implemented in v1.**
+> The CLI items are recorded as contract in `CONTRACTS.md` § v1 surface
+> additions. The ~ consider items remain open.
+>
+> One decision the notes did not cover, taken while building the menu: the
+> menu's "extend" acts by **taking/replacing the menu bar's own claim**
+> (`claim 15m --owner menubar`), never by touching another actor's — D1 makes
+> another's claim unaddressable, and a fresh menubar claim guarantees "N more
+> minutes" through the aggregate. Same mechanism behind the banner's
+> Extend 30 min button. Worth revisiting if it surprises anyone in use.
+
 Nothing here overrides `CONTRACTS.md`.
 Where a proposal changes the contract it says so, and it needs a decision recorded there first.
 
@@ -84,28 +95,24 @@ Keep `forever` (it is in the contract) but demote it: offer it in the menu bar o
 
 ### ↑ No detached child processes. Hold the assertion in-process
 
-The spike gave every claim a "second, independent clock": `nohup caffeinate -ims
--t <seconds> &`.
+The spike gave every claim a "second, independent clock": `nohup caffeinate -ims -t <seconds> &`.
 The reasoning was that if the guard died, that timer would still expire.
 
-What it actually produced was **222 orphaned processes**, 13 of them with no
-timeout at all, holding real power assertions on a machine that was supposed to be clean.
+What it actually produced was **222 orphaned processes**, 13 of them with no timeout at all, holding real power assertions on a machine that was supposed to be clean.
 Every one was `ppid 1`, because `nohup` is exactly how you make a process nobody owns.
 
-For v1, do not spawn anything. Hold the assertion in-process with
-`IOPMAssertionCreateWithName`, and let it die with the process — which is the *correct* lifetime, not a limitation.
+For v1, do not spawn anything.
+Hold the assertion in-process with `IOPMAssertionCreateWithName`, and let it die with the process — which is the *correct* lifetime, not a limitation.
 Three things fall out:
 
-- An orphan becomes structurally impossible rather than merely unlikely. There is
-  no child to leak.
-- The "what if the guard dies" case is already covered better, by the LaunchAgent
-  backstop tick that `BRIEF.md` commits to. A timer inside a process that has
-  died is not a backstop; a separate scheduled process is.
-- It goes behind the seam like everything else, so a test never touches real
-  power state.
+- An orphan becomes structurally impossible rather than merely unlikely.
+  There is no child to leak.
+- The "what if the guard dies" case is already covered better, by the LaunchAgent backstop tick that `BRIEF.md` commits to.
+  A timer inside a process that has died is not a backstop; a separate scheduled process is.
+- It goes behind the seam like everything else, so a test never touches real power state.
 
-Worth being precise about what is lost: nothing that mattered. An IOKit assertion
-cannot hold a closed lid — `PLATFORM-FACTS.md` closed that question negatively — so `caffeinate` was never the thing keeping the machine awake with the lid shut.
+Worth being precise about what is lost: nothing that mattered.
+An IOKit assertion cannot hold a closed lid — `PLATFORM-FACTS.md` closed that question negatively — so `caffeinate` was never the thing keeping the machine awake with the lid shut.
 `pmset -a disablesleep` is.
 The child process was belt-and-braces for *idle* sleep only, and it cost 222 orphans.
 
@@ -189,26 +196,21 @@ Cheap, and it makes the irreversible thing deliberate.
 
 ### ↑ The motivating case for the Claude Code integration: the harness is already doing this badly
 
-Measured on this machine, 2026-08-23: **Claude Code spawns its own `caffeinate -i
--t 300` per session**, refreshed while the session lives.
+Measured on this machine, 2026-08-23: **Claude Code spawns its own `caffeinate -i -t 300` per session**, refreshed while the session lives.
 Not a hook, not a steering file — the binary carries the string and every one of those processes has a `claude` process as its parent.
 
 It is doing exactly what simmer exists to do, and doing it the way simmer says not to:
 
 - **Invisible.** Nothing on screen says the machine is being held awake, or by what, or for how long.
-- **Wrong mechanism.** `-i` prevents idle sleep and cannot hold a closed lid, so
-  the long agent turn it is protecting still dies when the laptop is shut.
-- **Unaccounted.** It is not a claim, so `simmer status` cannot show it, `budget`
-  cannot count it, and the cap cannot clip it. Three sessions running means three
-  invisible assertions nobody can enumerate.
+- **Wrong mechanism.** `-i` prevents idle sleep and cannot hold a closed lid, so the long agent turn it is protecting still dies when the laptop is shut.
+- **Unaccounted.** It is not a claim, so `simmer status` cannot show it, `budget` cannot count it, and the cap cannot clip it.
+  Three sessions running means three invisible assertions nobody can enumerate.
 
-So the Claude Code integration is not only "inject budget context into the
-prompt".
+So the Claude Code integration is not only "inject budget context into the prompt".
 The stronger version is: **the harness's own wakefulness should be a claim like everybody else's** — `simmer run` around the session, or a claim taken at `SessionStart` and released at `SessionEnd`, owned as `agent:claude-<session>`.
 Then the menu bar shows it, the cap governs it, and a human can end it.
 
-That is also the best possible demonstration of why counted claims were the right
-model: the machine really does have several actors wanting the lid shut at once, and one of them is the tool being used to build simmer.
+That is also the best possible demonstration of why counted claims were the right model: the machine really does have several actors wanting the lid shut at once, and one of them is the tool being used to build simmer.
 
 ### ~ Claim by watching something
 
