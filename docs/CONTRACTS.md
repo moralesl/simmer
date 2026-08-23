@@ -5,17 +5,25 @@ Swift next) all honour this page; the test suite is the executable form of it, a
 any implementation that passes it under the seam variables below is a valid
 simmer.
 
-Two instruments enforce this page:
+**This page is the law, in prose.** v2 is being written from scratch and brings
+its own tests; it does not inherit the previous implementation's harness.
 
-- `make test` — the unit suite. Point `SIMMER_BIN` at any binary and it must go
-  green. This is the acceptance test for a reimplementation.
-- `make diff` — the differential. Drives two binaries through identical CLI
-  scenarios and diffs the answers, so a message, an exit code, a field name or a
-  state value cannot drift during a port while every individual test still
-  passes. The reference is the **`v1.0.0` tag** (branch `v1` carries any v1
-  maintenance) — pinned, not "the previous commit", because the recorded deltas
-  below only differ from v1 and a moving reference would turn each of them into a
-  failure the day after it landed.
+Two instruments exist in `archive/v1-bash/`, and they are reference material
+rather than v2's gate — read them for what a thorough test of this contract looks
+like, then write v2's own:
+
+- `make -C archive/v1-bash test` — 175 hermetic assertions over the surface
+  below. Honours `SIMMER_BIN`, so it *can* be pointed at a v2 binary, but v2 owes
+  no allegiance to it.
+- `make -C archive/v1-bash diff` — a differential harness: identical CLI
+  scenarios against two binaries, normalised and diffed, with contract-bearing
+  lines compared exactly and prose allowed to differ. The idea is worth stealing
+  even if the script is not.
+
+Whatever v2 writes instead must still be able to answer: does an implementation
+satisfy every row below, including the exit codes and the machine output, without
+root and without changing the machine under the tester? That is what the seam
+section exists for.
 
 ## CLI surface
 

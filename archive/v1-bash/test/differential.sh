@@ -61,6 +61,8 @@ if [ -z "$A" ]; then
     echo "no reference to compare against: '$REF:bin/simmer' does not resolve."
     echo "In CI: fetch tags (fetch-depth: 0). Locally: git tag v1.0.0 <the v1 commit>."
     echo "Or pass two binaries explicitly, or set SIMMER_DIFF_REF."
+    echo "(the reference is read from git at $REF, where the path was bin/simmer --"
+    echo " that is history, not the current layout.)"
     exit 0
   fi
   chmod +x "$WORK/ref"; A="$WORK/ref"

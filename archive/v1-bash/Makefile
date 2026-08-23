@@ -10,8 +10,8 @@ PREFIX ?= $(HOME)/.local/bin
 help:
 	@echo "make install    link simmer into $(PREFIX), start the guard, build the notifier"
 	@echo "make check      health report; expected to be fully green"
-	@echo "make test       run the test suite (claims nothing, needs no sudo)"
-	@echo "make diff       differential against v1 as committed -- must end 0 unexpected"
+	@echo "make test       run the suite (claims nothing, needs no sudo)"
+	@echo "make diff       differential: this implementation vs the v1.0.0 tag"
 	@echo "make icon       regenerate assets/icon.icns from assets/icon.svg"
 	@echo "make workflow   build the Alfred .alfredworkflow archive"
 	@echo "make uninstall  remove the guard, the symlink and the notifier"

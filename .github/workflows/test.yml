@@ -1,3 +1,7 @@
+# v2 is not built yet, so there is nothing at the top level to compile. What CI
+# guards for now is that the ARCHIVED reference stays runnable -- it is the
+# executable specification and the differential baseline, and a reference that
+# silently rots is worse than none. v2's own jobs get added as v2 lands.
 name: test
 
 on:
@@ -21,14 +25,15 @@ jobs:
 
       - name: Shell syntax
         run: |
-          for f in bin/simmer install.sh bootstrap.sh test/simmer-test.sh test/differential.sh \
-                   integrations/swiftbar/*.sh integrations/raycast/*.sh \
-                   integrations/alfred/*.sh; do
+          for f in archive/v1-bash/bin/simmer \
+                   archive/v1-bash/install.sh archive/v1-bash/bootstrap.sh \
+                   archive/v1-bash/test/*.sh \
+                   archive/v1-bash/integrations/*/*.sh; do
             bash -n "$f" || exit 1
           done
 
       - name: Property lists parse
-        run: plutil -lint launchd/*.plist integrations/alfred/Simmer/info.plist
+        run: plutil -lint archive/v1-bash/launchd/*.plist archive/v1-bash/integrations/alfred/Simmer/info.plist
 
       # bin/simmer targets /bin/bash, which is 3.2 on macOS. Runners also ship a
       # modern bash, so this asserts the constraint rather than trusting it:
@@ -37,19 +42,19 @@ jobs:
       - name: Runs under bash 3.2
         run: |
           /bin/bash --version | head -1
-          /bin/bash bin/simmer --version
+          /bin/bash archive/v1-bash/bin/simmer --version
 
       # The notifier is Swift compiled at install time on user machines; CI
       # proves the source actually compiles before anyone installs it.
       - name: Notifier compiles
-        run: swiftc -O -o /tmp/simmer-notify notifier/main.swift
+        run: swiftc -O -o /tmp/simmer-notify archive/v1-bash/notifier/main.swift
 
-      - name: Test suite
-        run: make test
+      - name: Reference suite
+        run: make -C archive/v1-bash test
 
       # Does this still answer what the previous implementation answered? The
       # only check that catches a message, an exit code, a field name or a state
       # value drifting -- the class of change where every unit test still passes.
       # Skips itself, loudly, when the reference tag is not in the clone.
-      - name: Differential against v1
-        run: make diff
+      - name: Reference differential
+        run: make -C archive/v1-bash diff

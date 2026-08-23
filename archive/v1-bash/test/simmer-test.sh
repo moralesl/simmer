@@ -19,6 +19,7 @@
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ARCHIVE="$HERE"
 SIMMER="${SIMMER_BIN:-$HERE/bin/simmer}"
 [ -x "$SIMMER" ] || { echo "no simmer at $SIMMER" >&2; exit 2; }
 # Pin it for the integrations too. They resolve simmer through SIMMER_BIN, then
@@ -377,23 +378,24 @@ t "run respects the cap"         "$SIMMER cap 1m --owner terminal >/dev/null; $S
 t "a passed cap refuses a run"   "! SIMMER_FAKE_NOW=\$(( \$(date +%s) + 300 )) $SIMMER run -- true 2>/dev/null"
 clear_all; echo 0 > "$SIMMER_FAKE_PMSET"
 
+SURFACES="$HERE/integrations"
 echo "surfaces render in every state"
 claim render 0 $((NOW-600)) render 10 0 "$NOW"
-t "swiftbar, open-ended"        "$HERE/integrations/swiftbar/simmer.10s.sh | head -1 | grep -q '^∞ |'"
-t "raycast inline, open-ended"  "$HERE/integrations/raycast/simmer-status.sh | grep -q 'no deadline'"
-t "alfred filter emits JSON"    "$HERE/integrations/alfred/simmer-filter.sh '' | python3 -m json.tool"
+t "swiftbar, open-ended"        "$SURFACES/swiftbar/simmer.10s.sh | head -1 | grep -q '^∞ |'"
+t "raycast inline, open-ended"  "$SURFACES/raycast/simmer-status.sh | grep -q 'no deadline'"
+t "alfred filter emits JSON"    "$SURFACES/alfred/simmer-filter.sh '' | python3 -m json.tool"
 claim second $((NOW+600)) "$NOW" second 10 0 "$NOW"
-t "swiftbar lists the claims"   "$HERE/integrations/swiftbar/simmer.10s.sh | grep -q '2 claims'"
-t "raycast counts them"         "$HERE/integrations/raycast/simmer-status.sh | grep -q '2 claims'"
-t "swiftbar offers release all" "$HERE/integrations/swiftbar/simmer.10s.sh | grep -q 'Release everything'"
+t "swiftbar lists the claims"   "$SURFACES/swiftbar/simmer.10s.sh | grep -q '2 claims'"
+t "raycast counts them"         "$SURFACES/raycast/simmer-status.sh | grep -q '2 claims'"
+t "swiftbar offers release all" "$SURFACES/swiftbar/simmer.10s.sh | grep -q 'Release everything'"
 "$SIMMER" cap 4h --owner terminal >/dev/null
-t "swiftbar shows the cap"      "$HERE/integrations/swiftbar/simmer.10s.sh | grep -q 'Nothing past'"
-t "alfred shows the cap"        "$HERE/integrations/alfred/simmer-filter.sh '' | jq -e '[.items[]|select(.title|test(\"Nothing past\"))]|length==1'"
-t "alfred json still parses"    "$HERE/integrations/alfred/simmer-filter.sh '+15m' | python3 -m json.tool"
+t "swiftbar shows the cap"      "$SURFACES/swiftbar/simmer.10s.sh | grep -q 'Nothing past'"
+t "alfred shows the cap"        "$SURFACES/alfred/simmer-filter.sh '' | jq -e '[.items[]|select(.title|test(\"Nothing past\"))]|length==1'"
+t "alfred json still parses"    "$SURFACES/alfred/simmer-filter.sh '+15m' | python3 -m json.tool"
 clear_all; echo 0 > "$SIMMER_FAKE_PMSET"
-t "swiftbar offers a cap when idle" "$HERE/integrations/swiftbar/simmer.10s.sh | grep -q 'Nothing past…'"
-t "swiftbar, idle"              "$HERE/integrations/swiftbar/simmer.10s.sh | head -1 | grep -q 'sfimage=moon.zzz'"
-t "menu bar title has one icon"  "! $HERE/integrations/swiftbar/simmer.10s.sh | head -1 | grep -qE '☕|⏾'"
+t "swiftbar offers a cap when idle" "$SURFACES/swiftbar/simmer.10s.sh | grep -q 'Nothing past…'"
+t "swiftbar, idle"              "$SURFACES/swiftbar/simmer.10s.sh | head -1 | grep -q 'sfimage=moon.zzz'"
+t "menu bar title has one icon"  "! $SURFACES/swiftbar/simmer.10s.sh | head -1 | grep -qE '☕|⏾'"
 t "status readable when idle"   "$SIMMER | grep -q 'sleep allowed'"
 t "help documents down --all"   "$SIMMER --help | grep -q 'simmer down' && $SIMMER --help | grep -q -- 'down --all'"
 t "help documents the cap"      "$SIMMER --help | grep -q 'simmer cap'"
@@ -424,11 +426,11 @@ runs_clean() { # <script> [args...]
   ! printf '%s' "$err" | grep -qE 'unbound variable|command not found|No such file|syntax error'
 }
 echo "every integration actually executes"
-for f in "$HERE"/integrations/raycast/*.sh; do
+for f in "$SURFACES"/raycast/*.sh; do
   t "runs $(basename "$f")"      "bash -n '$f' && runs_clean '$f'"
 done
-t "runs the swiftbar plugin"     "runs_clean '$HERE/integrations/swiftbar/simmer.10s.sh'"
-t "runs the alfred filter"       "runs_clean '$HERE/integrations/alfred/simmer-filter.sh' ''"
+t "runs the swiftbar plugin"     "runs_clean '$SURFACES/swiftbar/simmer.10s.sh'"
+t "runs the alfred filter"       "runs_clean '$SURFACES/alfred/simmer-filter.sh' ''"
 
 # Every command reachable from a launcher gets `-r <reason> --owner <name>`
 # appended by the Alfred action, whether it has any use for a reason or not.
@@ -436,7 +438,7 @@ echo "launcher-shaped invocations"
 t "cap via the alfred action"    "$SIMMER cap 2h -r Alfred --owner alfred >/dev/null"
 t "cap off via the alfred action" "$SIMMER cap off -r Alfred --owner alfred >/dev/null"
 t "down --all via the alfred action" "$SIMMER 1h -r x --owner agent >/dev/null; $SIMMER down --all -r Alfred --owner alfred >/dev/null"
-t "raycast down works as a human" "$SIMMER 1h -r x --owner agent >/dev/null; $HERE/integrations/raycast/simmer-down.sh >/dev/null && [ \"\$(switch)\" = 0 ]"
+t "raycast down works as a human" "$SIMMER 1h -r x --owner agent >/dev/null; $SURFACES/raycast/simmer-down.sh >/dev/null && [ \"\$(switch)\" = 0 ]"
 
 echo
 echo "$pass passed, $fail failed"
