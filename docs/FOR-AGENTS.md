@@ -113,9 +113,28 @@ If you need substantially more time, ask instead.
 
 ## Reading the state
 
+Prefer `--json`: one object, correctly escaped, numbers as numbers.
+Two lines of `jq` cover most needs:
+
 ```bash
-simmer status --machine
+simmer status --json | jq -r .state    # active · forever · idle · orphan
+simmer status --json | jq .left        # seconds remaining
 ```
+
+The object carries the same fields as `--machine` below, plus `owner` and `version`:
+
+```json
+{"state":"active","until":1787254800,"left":1500,"left_short":"25m",
+ "reason":"big build","min_battery":20,"battery":92,"on_battery":1,
+ "sleep_disabled":1,"since":1787253300,"owner":"agent","version":"1.0.0"}
+```
+
+`simmer budget --json` answers the decision question in the same shape — `{"fits":true,"seconds_left":4200,"state":"active","need_seconds":1200}`.
+`fits` is `null` when no `--need` was given; `seconds_left` is `null` only when the state is `idle` or `orphan`.
+It is output only: the exit codes above apply unchanged, so `simmer budget --json --need 20m || wind_down` still works.
+
+No `jq` in your environment?
+`simmer status --machine` prints the same state as key=value lines:
 
 ```
 state=active        active · forever · idle · orphan
@@ -127,9 +146,10 @@ min_battery=20
 battery=92
 on_battery=1
 sleep_disabled=1
+owner=agent
 ```
 
-Use `budget` to *decide* and `--machine` to *render*.
+Use `budget` to *decide* and `--json` (or `--machine`) to *render*.
 Do not parse the human sentences from `simmer` or `simmer budget` — they are written for people and may be reworded.
 
 ## Things not to do

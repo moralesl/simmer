@@ -37,6 +37,7 @@
 #   simmer budget                            how much room is left (for agents)
 #   simmer budget --need 20m                 exit 0 if it fits, 1 if not, 3 if no lease
 #   simmer budget --seconds                  bare seconds left (-1 = no deadline)
+#   simmer status --json / budget --json     the same answers as one JSON object
 set -euo pipefail
 
 # Where the repo is, resolved through the symlink install.sh puts on PATH, so
@@ -655,19 +656,38 @@ cmd_run() {
 ############################################################################
 ### Status
 
+# JSON needs exactly two escapes for correctness -- backslash and double quote --
+# plus the control characters a reason could plausibly carry. Pure parameter
+# expansion: /bin/bash on macOS is 3.2, and jq must not become a prerequisite
+# for *producing* the state (the lease file stays key=value for the same reason).
+json_escape() { # <string> -> the string, safe between double quotes
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
 cmd_status() {
-  local porcelain=0
-  case "${1:-}" in --machine|--porcelain) porcelain=1 ;; esac
+  local porcelain=0 json=0
+  case "${1:-}" in
+    --machine|--porcelain) porcelain=1 ;;
+    --json)                json=1 ;;
+  esac
 
   local now; now="$(date +%s)"
   if ! read_lease; then
     if sleep_disabled; then
       # Either set by hand, or the guard is not running. Both deserve saying.
+      [ "$json" = 1 ] && { printf '{"state":"orphan","battery":%s,"version":"%s"}\n' "$(battery_percent)" "$SIMMER_VERSION"; return 0; }
       [ "$porcelain" = 1 ] && { echo "state=orphan"; echo "battery=$(battery_percent)"; return 0; }
       echo "⚠️  disablesleep is on but there is no lease -- nobody will hand it back."
       echo "   'simmer down' reverts it, 'simmer 60m' turns it into a proper lease."
       return 0
     fi
+    [ "$json" = 1 ] && { printf '{"state":"idle","battery":%s,"version":"%s"}\n' "$(battery_percent)" "$SIMMER_VERSION"; return 0; }
     [ "$porcelain" = 1 ] && { echo "state=idle"; echo "battery=$(battery_percent)"; return 0; }
     echo "⏾ sleep allowed · $(battery_line)"
     return 0
@@ -675,6 +695,21 @@ cmd_status() {
 
   local left=0
   [ "$lease_until" != 0 ] && left=$((lease_until - now))
+
+  if [ "$json" = 1 ]; then
+    # Same fields as --machine, plus owner and version. Numbers stay numbers;
+    # everything that can carry arbitrary text goes through json_escape.
+    printf '{"state":"%s","until":%s,"left":%s,"left_short":"%s","reason":"%s","min_battery":%s,"battery":%s,"on_battery":%s,"sleep_disabled":%s,"since":%s,"owner":"%s","version":"%s"}\n' \
+      "$([ "$lease_until" = 0 ] && echo forever || echo active)" \
+      "$lease_until" "$left" \
+      "$(json_escape "$([ "$lease_until" = 0 ] && echo "∞" || short_duration "$left")")" \
+      "$(json_escape "$lease_reason")" \
+      "$lease_min_battery" "$(battery_percent)" \
+      "$(on_battery && echo 1 || echo 0)" \
+      "$(sleep_disabled && echo 1 || echo 0)" \
+      "$lease_started" "$(json_escape "$lease_owner")" "$SIMMER_VERSION"
+    return 0
+  fi
 
   if [ "$porcelain" = 1 ]; then
     echo "state=$([ "$lease_until" = 0 ] && echo forever || echo active)"
@@ -687,6 +722,7 @@ cmd_status() {
     echo "on_battery=$(on_battery && echo 1 || echo 0)"
     echo "sleep_disabled=$(sleep_disabled && echo 1 || echo 0)"
     echo "since=$lease_started"
+    echo "owner=$lease_owner"
     return 0
   fi
 
@@ -718,7 +754,7 @@ cmd_status() {
 # the machine sleeps under it.
 
 cmd_budget() {
-  local need_seconds=0 bare=0
+  local need_seconds=0 bare=0 json=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --need)    need_seconds="$(parse_duration "${2:-}")" || die "did not understand the duration: ${2:-}"; shift 2 ;;
@@ -726,13 +762,27 @@ cmd_budget() {
       # English sentence. -1 means no deadline. Only meaningful when the exit
       # code is 0 -- check that first.
       --seconds) bare=1; shift ;;
-      *)         die "usage: simmer budget [--need 20m] [--seconds]" ;;
+      # The whole answer as one object. Output only: the exit codes stay the
+      # contract, so `budget --json --need 20m || wind_down` keeps working.
+      --json)    json=1; shift ;;
+      *)         die "usage: simmer budget [--need 20m] [--seconds] [--json]" ;;
     esac
   done
 
+  budget_json() { # <fits> <seconds_left> <state>
+    printf '{"fits":%s,"seconds_left":%s,"state":"%s","need_seconds":%s}\n' \
+      "$1" "$2" "$3" "$need_seconds"
+  }
+
   local now; now="$(date +%s)"
   if ! read_lease; then
-    if [ "$bare" = 0 ]; then
+    if [ "$json" = 1 ]; then
+      # No lease, no clock: with --need nothing fits; without one there is no
+      # question to answer. seconds_left is null -- an absent clock is not the
+      # same thing as zero seconds on one.
+      budget_json "$([ "$need_seconds" -gt 0 ] && echo false || echo null)" \
+                  null "$(sleep_disabled && echo orphan || echo idle)"
+    elif [ "$bare" = 0 ]; then
       if sleep_disabled; then
         echo "sleep disabled with no lease -- nobody will hand it back"
       else
@@ -743,16 +793,23 @@ cmd_budget() {
   fi
 
   if [ "$lease_until" = 0 ]; then
-    if [ "$bare" = 1 ]; then echo "-1"
+    if [ "$json" = 1 ]; then
+      budget_json "$([ "$need_seconds" -gt 0 ] && echo true || echo null)" -1 forever
+    elif [ "$bare" = 1 ]; then echo "-1"
     else echo "no deadline -- running for $(human_duration $((now - lease_started)))${lease_reason:+ · $lease_reason}"; fi
     return 0
   fi
 
   local left=$((lease_until - now))
   local total=$((lease_until - lease_started))
-  if [ "$bare" = 1 ]; then echo "$left"
+  local fits=null
+  if [ "$need_seconds" -gt 0 ]; then
+    if [ "$left" -lt "$need_seconds" ]; then fits=false; else fits=true; fi
+  fi
+  if [ "$json" = 1 ]; then budget_json "$fits" "$left" active
+  elif [ "$bare" = 1 ]; then echo "$left"
   else echo "$(human_duration "$left") left of $(human_duration "$total") · until $(date -r "$lease_until" '+%H:%M')${lease_reason:+ · $lease_reason}"; fi
-  [ "$need_seconds" -gt 0 ] && [ "$left" -lt "$need_seconds" ] && return 1
+  [ "$fits" = false ] && return 1
   return 0
 }
 
@@ -1030,6 +1087,7 @@ cmd_doctor() {
   echo
   echo "State:"
   cmd_status | sed 's/^/  /'
+  echo "  (machine-readable: simmer status --json · simmer budget --json)"
   echo
 
   if [ "$fail" -gt 0 ]; then
@@ -1124,7 +1182,8 @@ FOR SCRIPTS AND AGENTS
                                exit 1  less than that remains
                                exit 3  nothing is holding the Mac awake
   simmer budget --seconds    just the seconds remaining (-1 = no deadline)
-  simmer status --machine    the whole state as key=value lines, for parsing
+  simmer status --json       the whole state as one JSON object (budget --json too)
+  simmer status --machine    the same as key=value lines, when jq is not around
 
   See docs/FOR-AGENTS.md for how an agent should use these together.
 
@@ -1142,6 +1201,7 @@ case "${1:-status}" in
   status)              shift || true; cmd_status "$@" ;;
   --machine)           cmd_status --machine ;;
   --porcelain)         cmd_status --machine ;;   # kept, undocumented
+  --json)              cmd_status --json ;;
   down|off|stop|release) release "released by hand" ;;
   guard)               cmd_guard ;;
   doctor)              cmd_doctor ;;

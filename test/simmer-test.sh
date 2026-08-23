@@ -121,6 +121,37 @@ rm -f "$LEASE"; echo 0 > "$SIMMER_FAKE_PMSET"
 t "exit 3 with no lease at all" "$SIMMER budget >/dev/null; [ \$? = 3 ]"
 t "--seconds stays silent then" "[ -z \"\$($SIMMER budget --seconds 2>/dev/null)\" ]"
 
+echo "json output, the same answers for jq"
+lease $((NOW+1500)) "$NOW" json 20 1 "$NOW" agent; echo 1 > "$SIMMER_FAKE_PMSET"
+t "status --json parses (python3)"  "$SIMMER status --json | python3 -m json.tool"
+t "status --json parses (jq)"       "$SIMMER status --json | jq -e ."
+t "numbers are numbers"             "$SIMMER status --json | jq -e '(.left|type)==\"number\" and (.battery|type)==\"number\"'"
+t "owner and version are in it"     "$SIMMER status --json | jq -e '.owner==\"agent\" and .version'"
+t "--machine now carries owner"     "$SIMMER --machine | grep -q '^owner=agent'"
+
+# The escaping that matters: a reason holding a double quote and a backslash,
+# taken through the real cmd_take, must come back byte-identical from the JSON.
+tricky='he said "hi" via C:\temp\ done'
+"$SIMMER" 60s -r "$tricky" --owner test --force >/dev/null 2>&1
+got="$("$SIMMER" status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["reason"])')"
+t "reason survives quote+backslash" "[ \"\$got\" = \"\$tricky\" ]"
+"$SIMMER" down >/dev/null 2>&1
+
+lease $((NOW+1500)) "$NOW" json 20 1 "$NOW" agent; echo 1 > "$SIMMER_FAKE_PMSET"
+t "budget --json: active and fits"  "$SIMMER budget --json --need 10m | jq -e '.state==\"active\" and .fits==true and .need_seconds==600'"
+t "budget --json: does not fit"     "$SIMMER budget --json --need 5h | jq -e '.fits==false'"
+t "and still exits 1"               "$SIMMER budget --json --need 5h >/dev/null; [ \$? = 1 ]"
+t "no --need means fits null"       "$SIMMER budget --json | jq -e '.fits==null and (.seconds_left|type)==\"number\"'"
+lease 0 "$NOW" forever 20 0 "$NOW" agent
+t "budget --json: forever"          "$SIMMER budget --json | jq -e '.state==\"forever\" and .seconds_left==-1'"
+rm -f "$LEASE"; echo 0 > "$SIMMER_FAKE_PMSET"
+t "budget --json: idle"             "$SIMMER budget --json | jq -e '.state==\"idle\" and .seconds_left==null'"
+t "and still exits 3"               "$SIMMER budget --json >/dev/null; [ \$? = 3 ]"
+echo 1 > "$SIMMER_FAKE_PMSET"
+t "budget --json: orphan"           "$SIMMER budget --json | jq -e '.state==\"orphan\"'"
+echo 0 > "$SIMMER_FAKE_PMSET"
+t "help mentions --json"            "$SIMMER --help | grep -q -- '--json'"
+
 echo "ownership"
 lease $((NOW+1200)) "$NOW" human 10 1 "$NOW" menubar; echo 1 > "$SIMMER_FAKE_PMSET"
 t "refuses a different owner"   "! $SIMMER 1h --owner agent 2>/dev/null"
