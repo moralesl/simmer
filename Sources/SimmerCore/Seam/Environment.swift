@@ -54,7 +54,7 @@ public struct SimmerEnvironment: Sendable {
     }
 
     /// Human primacy, mechanically: enforced against honest actors, not as a
-    /// security boundary (CONTRACTS.md § D1).
+    /// security boundary (CONTRACTS.md § the claims ledger).
     public func callerIsHuman(owner: String) -> Bool {
         if env["SIMMER_HUMAN"] == "1" { return true }
         return Self.isHumanOwnerName(owner)
@@ -75,14 +75,14 @@ public struct SimmerEnvironment: Sendable {
 
     // MARK: notifications
 
-    /// SIMMER_NOTIFY: auto | bundle | osascript | say | none.
+    /// SIMMER_NOTIFY: `none` silences; anything else is the one transport
+    /// there is. v1 has exactly one — the CLI enqueues into the spool under
+    /// `stateDir` and Simmer.app posts, because the grant belongs to the app's
+    /// executable (LEARNINGS.md). The multi-transport world the spike had
+    /// (osascript, say, a borrowed bundle) is gone: simmer posts under its own
+    /// identity or not at all, so there is nothing left to choose between and
+    /// no SIMMER_NOTIFIER_APP override to honour (CONTRACTS.md § test seam).
     public var notifyTransport: String { env["SIMMER_NOTIFY"] ?? "auto" }
-
-    public var notifierAppPath: String {
-        env["SIMMER_NOTIFIER_APP"]
-            ?? FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Applications/Simmer.app").path
-    }
 
     // MARK: the power seam
 
