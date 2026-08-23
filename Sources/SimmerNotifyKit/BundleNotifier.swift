@@ -5,7 +5,7 @@ import UserNotifications
 /// The one UNUserNotificationCenter implementation. Only the APP links this:
 /// macOS binds the notification grant to the executable that requested it, so
 /// a second executable in the same bundle reads its own never-granted state —
-/// the misread that produced a wrong LEARNINGS diagnosis. The CLI therefore
+/// the misread this design exists to prevent. The CLI therefore
 /// never touches UN at all; it enqueues into the ledger's spool and the app
 /// posts from here.
 ///

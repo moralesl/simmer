@@ -15,11 +15,9 @@ Then read, in this order:
 
 1. [`docs/CONTRACTS.md`](docs/CONTRACTS.md) — the law: surface, exit codes, machine output, and the reasoning behind each choice.
    Settled decisions are not relitigated; if you think one is wrong, say so in an issue before building on the alternative.
-2. [`docs/LEARNINGS.md`](docs/LEARNINGS.md) — every trap already paid for.
-   If your plan trips one, the plan is wrong.
-3. [`docs/PLATFORM-FACTS.md`](docs/PLATFORM-FACTS.md) — what macOS actually permits, each line bought with a failed attempt.
-   Change nothing there without re-running the experiment and recording the new result.
-4. [`AGENTS.md`](AGENTS.md) — the iron rules, in one page.
+2. [`docs/PLATFORM-FACTS.md`](docs/PLATFORM-FACTS.md) — what macOS actually does, each line bought with a failed attempt, plus the traps that no test can carry.
+   If your plan trips one, the plan is wrong, and nothing there changes without re-running the experiment and recording the new result.
+3. [`AGENTS.md`](AGENTS.md) — the iron rules, in one page.
 
 ## The rules that will get a change sent back
 

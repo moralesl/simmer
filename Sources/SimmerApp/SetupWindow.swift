@@ -144,7 +144,7 @@ final class SetupWindow: NSObject {
     }
 
     /// Own file AND capability, difference reported — never adopt a
-    /// stranger's grant silently (LEARNINGS.md).
+    /// stranger's grant silently (PLATFORM-FACTS.md).
     private func sudoState(_ completion: @escaping (_ ok: Bool, _ foreign: Bool) -> Void) {
         DispatchQueue.global().async {
             let ownFile = FileManager.default.fileExists(atPath: Self.sudoersPath)

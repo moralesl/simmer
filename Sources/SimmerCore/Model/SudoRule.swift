@@ -33,7 +33,7 @@ public enum SudoRule {
     /// one behind: the file is written unprivileged, `visudo -c` validates it
     /// BEFORE it is installed, and only then does it land as root-owned 0440.
     /// A malformed file in /etc/sudoers.d can break `sudo` entirely
-    /// (LEARNINGS.md), so validation-before-landing is not optional.
+    /// (PLATFORM-FACTS.md), so validation-before-landing is not optional.
     public static func installCommand(user: String) -> String {
         let rule = text(user: user)
         return "tmp=$(mktemp) && printf '%s\\n' '\(rule)' > \"$tmp\" && "

@@ -52,8 +52,8 @@ AGENTS.md            working ON this repo: read order, commands, iron rules.
 docs/FOR-AGENTS.md   USING simmer from an agent: budget, owners, obligations.
 docs/CONTRACTS.md    the law, in prose: surface, exit codes, machine output,
                      and the reasoning behind every choice.
-docs/LEARNINGS.md    every trap already paid for. Read this first.
-docs/PLATFORM-FACTS.md  what macOS actually permits, verified.
+docs/PLATFORM-FACTS.md  what macOS actually does, verified — and the traps a
+                     test cannot carry. Read this first.
 docs/ROADMAP.md      decided but not built. docs/FAQ.md — short answers.
 ```
 
@@ -106,7 +106,7 @@ make uninstall   # removes exactly what install wrote
 ```
 
 The acceptance suite honours `SIMMER_BIN`, so it can gate any implementation of [docs/CONTRACTS.md](docs/CONTRACTS.md) — that is what makes it the executable form of the contract.
-During development the app builds under a `.devN` bundle id; the clean production id is spent only at release, because macOS caches a notification permission verdict per bundle id forever ([docs/LEARNINGS.md](docs/LEARNINGS.md) § 1).
+During development the app builds under a `.devN` bundle id; the clean production id is spent only at release, because macOS caches a notification permission verdict per bundle id forever ([docs/PLATFORM-FACTS.md](docs/PLATFORM-FACTS.md) § 1).
 
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md).
 Reporting something sensitive: [SECURITY.md](SECURITY.md).

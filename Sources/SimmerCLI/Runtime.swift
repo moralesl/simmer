@@ -50,7 +50,7 @@ enum Runtime {
         }
         // The app is the only poster — macOS binds the notification grant to
         // the executable that asked, and this executable never asks
-        // (LEARNINGS.md). Banners go through the spool; the app drains it
+        // (PLATFORM-FACTS.md). Banners go through the spool; the app drains it
         // within seconds. App not running = no banners, honestly: the menu
         // bar is gone then too.
         guard !outcome.notifications.isEmpty else { return }

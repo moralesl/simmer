@@ -7,8 +7,8 @@
 PREFIX       ?= $(HOME)/Applications
 # Development id. Promote to io.github.moralesl.simmer only when the app is
 # known-good: macOS caches a notification permission verdict per bundle id
-# FOREVER, and a denial can never be undone (LEARNINGS.md § 1).
-# .dev was denied on 2026-08-23 and is spent — see the inventory in LEARNINGS.
+# FOREVER, and a denial can never be undone (PLATFORM-FACTS.md).
+# Ids already spent on the maintainer's Mac: .dev (denied on first install).
 BUNDLE_ID    ?= io.github.moralesl.simmer.dev2
 GUARD_LABEL   = io.github.moralesl.simmer.guard
 # Single-sourced from SimmerCore — the CLI, the app and this plist must agree.
@@ -65,7 +65,7 @@ install: app
 	mkdir -p $(PREFIX) $(BIN_DIR)
 	# Unregister whatever bundle id the outgoing app carried BEFORE deleting
 	# it — a registration that outlives its bundle is exactly the stale-entry
-	# ghost LEARNINGS documents.
+	# ghost PLATFORM-FACTS documents.
 	[ -d $(APP) ] && $(LSREGISTER) -u $(APP) || true
 	rm -rf $(APP)
 	cp -R $(STAGED_APP) $(APP)

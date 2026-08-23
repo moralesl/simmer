@@ -57,8 +57,22 @@ Every attempt below was actually run:
 
 Traps, each personally paid for:
 
-- **A denial is cached per bundle id, forever.** The first attempt ran from `/tmp`, was refused, and every later test against that id inherited the refusal — which produced two false "structurally impossible" conclusions.
-  Develop under a throwaway `.devN` id and promote the production id only once the app is known-good (`LEARNINGS.md`).
+- **A denial is cached per bundle id, forever**, and can only be undone by hand in System Settings — not by reinstalling, not by deleting the bundle.
+  A first run from `/tmp` that gets refused poisons that id for good, which once produced two false "structurally impossible" conclusions.
+  So bundle ids are a resource that can only be spent: develop under a throwaway `.devN` id and promote the production id only once the app is known-good.
+- **The grant belongs to the EXECUTABLE, not the bundle.** With two executables in one bundle, each reads (and would request) its *own* authorization state.
+  A CLI binary in `Contents/MacOS/` reporting `notDetermined` while the app's banners work perfectly, on the same bundle id, is not a reset grant — it is the CLI's own, never granted.
+  Hence: the app is the only poster, the CLI enqueues into `$STATE/notify-spool.jsonl`, and `doctor` reads the app's heartbeat rather than asking the notification centre a question about the wrong binary.
+  Asserted by `StructureTests.theCLICannotReachTheNotificationCentre`.
+- **A bundle built anywhere gets registered with LaunchServices**, and the registration outlives the directory it was built in — invisible to every ordinary check, because it is not on `PATH`, not in `~/Applications`, not a launchd job, and `mdfind` does not index `/private/tmp`.
+  Only `lsregister` shows it, so build spikes under a `.spike` id and unregister them when done:
+
+```
+lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/\
+LaunchServices.framework/Support/lsregister
+"$lsregister" -dump | grep -c '<bundle id>'      # is it still known?
+"$lsregister" -u /path/to/Some.app               # forget it
+```
 - `UNErrorDomain Code=1` while the permission banner is pending means "not YET authorized".
   Checking the API state races against the human clicking Allow.
 - The permission request only fires when launched via LaunchServices, not when the binary is executed directly.
@@ -86,3 +100,30 @@ The menu bar remains the channel that cannot be suppressed and is identical acro
 The privileged step is irreducible.
 There is no unprivileged path to holding a closed lid, which was closed negatively on 2026-08-22 and independently confirmed by a commercial product shipping the same architecture.
 So `pmset -a disablesleep` behind a `/etc/sudoers.d` rule is a **validated design**, not a workaround, and the only thing left to improve is how gracefully it is asked for.
+
+## Facts for anyone touching the installer or the build
+
+Each cost an hour, and none of them errors — the wrong thing simply happens.
+
+- **`command -v git` is not a check for git.** On a Mac with no developer tools `/usr/bin/git` exists: a shim that pops Apple's installer dialog and exits non-zero.
+  So `command -v` succeeds on exactly the machines where git does not work, which is a new colleague's most likely starting state.
+  Same for `swiftc`.
+  Run the thing and look at its exit code.
+- **A script piped from `curl` has no path on disk.** `dirname "${BASH_SOURCE[0]}"` yields the *current working directory*, silently, so anything read relative to the script comes from somewhere unrelated.
+  `bootstrap.sh` clones and works from the clone for this reason.
+- **A malformed file in `/etc/sudoers.d` can break `sudo` entirely** — not just the rule — which on a laptop with one admin account is a genuinely bad afternoon.
+  `visudo -c -f <file>` needs no root to check a file you own, so validate before installing, always.
+- **An installer that checks for a *capability* adopts a stranger's grant.** `sudo -nl /usr/bin/pmset …` answers "is this allowed", not "did I write it": where another file already grants it, the installer reports success forever, never writes its own rule, and then lies during uninstall about a file that never existed.
+  Check for the own file **and** the capability, and report the difference.
+- **`launchctl bootout` returns before the job is gone.** Poll `launchctl print` until it fails, or the following `bootstrap` dies with `5: Input/output error`.
+- **A CLT-only toolchain hides swift-testing.** `Testing.framework` ships with the Command Line Tools but outside every default search path, so `swift test` reports *no such module 'Testing'* and, once `-F` is added, dies at runtime missing `lib_TestingInterop.dylib`.
+  Both live under `/Library/Developer/CommandLineTools/Library/Developer/`; `make test` adds the flags when that directory exists.
+  Never reach for `xcodebuild` — the fix stays inside SwiftPM.
+- **APFS is case-insensitive**, so `Contents/MacOS/Simmer` and `Contents/MacOS/simmer` are the same file: the second copy silently overwrites the first and the "app" runs the CLI's `main`, prints a status line and exits.
+  The bundle even signs.
+  Asserted by `StructureTests.theBundlesTwoExecutablesHaveCaseDistinctNames`.
+- **Other tools hold power assertions and none of them announce it.** Claude Code spawns a `caffeinate -i` per session, which is a false positive when auditing simmer's own leaks — match on simmer's signature, not on the process name.
+  It is also the sharpest argument for the editor integration on `ROADMAP.md`: the tool used to build simmer was itself holding an invisible, lid-incapable assertion.
+
+Everything else this project learned the hard way is now enforced rather than remembered — the seam's completeness, the sudoers rule's scope and validation order, that simmer never escalates its own privileges, that a truncated installer runs nothing, that every documented verb resolves, that yes/no fields are booleans, and that two processes over one ledger need a signal instead of a faster poll.
+Those live in `Tests/`, next to the thing they constrain.

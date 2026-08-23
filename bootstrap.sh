@@ -6,7 +6,7 @@
 #
 # A script piped from curl has no path on disk (BASH_SOURCE is unset and
 # `dirname ""` is "."), so this script never reads files relative to itself:
-# it clones the repository and works from the clone. LEARNINGS.md, paid for.
+# it clones the repository and works from the clone. PLATFORM-FACTS.md, paid for.
 #
 # Everything lives inside main(), called on the last line. A `curl | bash` that
 # is truncated mid-flight — a dropped connection, a proxy cutting the response —
@@ -88,7 +88,7 @@ build_and_install() {
 # flip it BACK while nobody is at the keyboard. Scope: exactly that, nothing
 # else. The check is for simmer's OWN file AND the capability — an installer
 # that checks only the capability silently adopts a stranger's grant, reports
-# rules it never wrote, and lies during uninstall (LEARNINGS.md).
+# rules it never wrote, and lies during uninstall (PLATFORM-FACTS.md).
 #
 # The rule text below must stay identical to SudoRule.swift, which is the
 # single source the app and `simmer doctor` render from. CI asserts they agree.
@@ -121,7 +121,7 @@ FOREIGN
   echo "  sudo will ask for your password (in this terminal), once."
 
   # Written UNPRIVILEGED, then validated with visudo BEFORE it lands: a
-  # malformed file in /etc/sudoers.d can break sudo entirely (LEARNINGS.md).
+  # malformed file in /etc/sudoers.d can break sudo entirely (PLATFORM-FACTS.md).
   # mktemp paths carry no spaces, so the quoting stays sane.
   local tmp
   tmp="$(mktemp /private/tmp/simmer-sudoers.XXXXXX)"

@@ -4,7 +4,7 @@ import SimmerNotifyKit
 import UserNotifications
 
 /// The app IS the notification identity, and the app is the ONLY poster —
-/// its executable holds the grant (LEARNINGS.md). Its own outcomes post
+/// its executable holds the grant (PLATFORM-FACTS.md). Its own outcomes post
 /// directly; everything the CLI and the guard want said arrives through the
 /// ledger's spool and is posted here, buttons included.
 ///

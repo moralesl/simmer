@@ -7,10 +7,8 @@ For *using* simmer from an agent on some machine, read `docs/FOR-AGENTS.md` inst
 
 1. `docs/CONTRACTS.md` — the law: surface, exit codes, machine output, and the reasoning behind every choice.
    Settled decisions are not relitigated.
-2. `docs/LEARNINGS.md` — every trap already paid for.
-   If your plan trips one, the plan is wrong.
-3. `docs/PLATFORM-FACTS.md` — what macOS actually permits, each line bought with a failed attempt.
-   Change nothing there without re-running the experiment and recording the new result.
+2. `docs/PLATFORM-FACTS.md` — what macOS actually does, each line bought with a failed attempt, plus the traps that no test can carry.
+   If your plan trips one, the plan is wrong, and nothing there changes without re-running the experiment and recording the new result.
 
 ## Commands
 
@@ -32,7 +30,7 @@ Cite the contract, not them.
 - **Every mutation ends in `settle()`** — the one function that puts the switch where the ledger says.
   No second path to `disablesleep`, ever.
 - **No detached child processes.** The spike leaked 222 orphaned caffeinates; v1 spawns nothing it does not wait for.
-- **Only the app touches UserNotifications.** The CLI enqueues into the spool (`$STATE/notify-spool.jsonl`); the grant belongs to the app's executable (`docs/LEARNINGS.md`).
+- **Only the app touches UserNotifications.** The CLI enqueues into the spool (`$STATE/notify-spool.jsonl`); the grant belongs to the app's executable (`docs/PLATFORM-FACTS.md`).
   The CLI target must not link SimmerNotifyKit.
 - **Bundle ids are spent, never recovered.** Development builds use the `.devN` id from the Makefile; `io.github.moralesl.simmer` is promoted only at release.
   Never let a test bundle ask for notification permission under a production id.

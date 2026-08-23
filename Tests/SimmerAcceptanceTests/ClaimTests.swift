@@ -4,7 +4,7 @@ import Testing
 /// Written fresh against CONTRACTS.md. Every scenario drives the built binary
 /// through its public surface; state files are only ever *read* back — a
 /// fixture that mutates state behind the implementation is how the spike's
-/// suite leaked (LEARNINGS.md).
+/// suite leaked (PLATFORM-FACTS.md).
 @Suite struct DurationTests {
     @Test(arguments: ["90", "90m", "1h", "1h30m", "45min", "2h15", "30s", "2H", "1d", "1d12h"])
     func acceptsDuration(_ text: String) {

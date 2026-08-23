@@ -35,7 +35,7 @@ import Testing
     @Test func theInstallCommandValidatesBeforeItLands() {
         let command = SudoRule.installCommand(user: "someone")
         // visudo -c must come before install, or a typo can break sudo
-        // entirely (LEARNINGS.md).
+        // entirely (PLATFORM-FACTS.md).
         let validate = command.range(of: "visudo -c")
         let install = command.range(of: "install -m 0440 -o root -g wheel")
         #expect(validate != nil)

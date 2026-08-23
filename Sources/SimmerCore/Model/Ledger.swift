@@ -130,7 +130,7 @@ public struct Ledger: Sendable {
     // MARK: the notification spool — the CLI's channel TO the app
     //
     // macOS binds notification authorization to the executable that asked,
-    // so only the app can post (LEARNINGS.md). CLI and guard append their
+    // so only the app can post (PLATFORM-FACTS.md). CLI and guard append their
     // banners here; the app drains and posts within seconds. App not
     // running = no banners, which is honest: the menu bar is gone too.
 
@@ -183,7 +183,7 @@ public struct Ledger: Sendable {
     //
     // The CLI must never ask UNUserNotificationCenter anything: it would be
     // told about ITS OWN executable's (never-granted) state, which is the
-    // misread that produced a wrong LEARNINGS entry before this file existed.
+    // misread this split exists to prevent (PLATFORM-FACTS.md).
 
     /// A heartbeat, so a failed write is not worth reporting: the next one is
     /// three seconds away, and doctor treats a missing or stale file as "the

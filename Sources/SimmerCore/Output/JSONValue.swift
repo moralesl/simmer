@@ -2,7 +2,7 @@ import Foundation
 
 /// A tiny ordered JSON emitter. Hand-rolled on purpose: object key order is
 /// stable (Codable's is not), which keeps `--json` output diffable across
-/// runs — the property the differential idea in LEARNINGS.md leans on.
+/// runs — the property the differential idea in PLATFORM-FACTS.md leans on.
 public indirect enum JSONValue: Sendable, Equatable {
     case string(String)
     case int(Int)

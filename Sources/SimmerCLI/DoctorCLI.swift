@@ -34,7 +34,7 @@ struct DoctorCLI: ParsableCommand {
         // The sudoers check looks for simmer's OWN file AND the capability,
         // and reports the difference. Checking only the capability is how the
         // spike silently adopted a grant left by the tool's previous name and
-        // told people to remove a file that never existed (LEARNINGS.md).
+        // told people to remove a file that never existed (PLATFORM-FACTS.md).
         if env.env["SIMMER_FAKE_PMSET"] != nil {
             print("ℹ️  SIMMER_FAKE_PMSET is set — the sudo rule is not being checked")
         } else {
@@ -59,7 +59,7 @@ struct DoctorCLI: ParsableCommand {
 
         // The app's heartbeat, never UNUserNotificationCenter from here: this
         // executable would be told about its own never-granted state
-        // (LEARNINGS.md — that misread cost a wrong diagnosis once already).
+        // (PLATFORM-FACTS.md — that misread cost a wrong diagnosis once already).
         let appStatus = ctx.ledger.readAppStatus()
         let appRunning = appStatus.map {
             Shell.run("/bin/ps", ["-p", String($0.pid)]).status == 0

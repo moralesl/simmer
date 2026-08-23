@@ -73,7 +73,7 @@ public struct Outcome {
 /// A notification the app should post — the app is the ONLY poster: macOS
 /// binds the authorization to the executable that asked, so the CLI reading
 /// "its own" state inside the same bundle sees notDetermined forever
-/// (LEARNINGS.md). CLI and guard enqueue these into the spool; the app
+/// (PLATFORM-FACTS.md). CLI and guard enqueue these into the spool; the app
 /// drains and posts. The sound rides inside the payload — no afplay
 /// children, or children of any other kind.
 public struct NotificationRequest: Sendable, Equatable {

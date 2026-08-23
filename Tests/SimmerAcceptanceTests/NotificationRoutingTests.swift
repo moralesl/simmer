@@ -3,7 +3,7 @@ import Testing
 
 /// Notification routing, tested hermetically at the spool: the app is the
 /// only process that ever posts (macOS binds the grant to the executable —
-/// LEARNINGS.md), so what the CLI and the guard *enqueue* is exactly the
+/// PLATFORM-FACTS.md), so what the CLI and the guard *enqueue* is exactly the
 /// contract to assert. Once-ness, silence and the action buttons are all
 /// here, without a single real banner.
 extension Sim {

@@ -78,7 +78,7 @@ public struct SimmerEnvironment: Sendable {
     /// SIMMER_NOTIFY: `none` silences; anything else is the one transport
     /// there is. v1 has exactly one — the CLI enqueues into the spool under
     /// `stateDir` and Simmer.app posts, because the grant belongs to the app's
-    /// executable (LEARNINGS.md). The multi-transport world the spike had
+    /// executable (PLATFORM-FACTS.md). The multi-transport world the spike had
     /// (osascript, say, a borrowed bundle) is gone: simmer posts under its own
     /// identity or not at all, so there is nothing left to choose between and
     /// no SIMMER_NOTIFIER_APP override to honour (CONTRACTS.md § test seam).
