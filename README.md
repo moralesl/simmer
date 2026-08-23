@@ -96,6 +96,7 @@ The menu bar works regardless and can never be suppressed.
 | Command | Effect |
 |---|---|
 | `simmer 60m -r "reason"` | lease for 60 minutes |
+| `simmer run -- npm test` | lease scoped to the command: renewed while it runs, released on any exit; `--max 2h` caps it |
 | `simmer 2h --min-battery 30` | custom battery floor (default 20%) |
 | `simmer 2h --display-on` | keep the screen lit too — by default the screen may sleep while the Mac stays awake |
 | `simmer --until 23:00` | absolute time instead of a duration |
@@ -163,7 +164,7 @@ Wondering about Amphetamine, LidRun or plain `caffeinate`?
 ## Development
 
 ```bash
-make test    # 43 assertions, no sudo, no real power state touched
+make test    # 77 assertions, no sudo, no real power state touched
 ```
 
 The suite substitutes the four power operations via `SIMMER_FAKE_PMSET` and `SIMMER_FAKE_BATTERY`, so it can exercise the battery branch while the laptop is charging and never changes your machine.

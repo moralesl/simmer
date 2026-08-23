@@ -129,6 +129,63 @@ t "--force overrides"           "$SIMMER 1h --owner agent --force >/dev/null"
 t "same owner is silent"        "$SIMMER 2h --owner agent >/dev/null"
 t "extend needs no ownership"   "$SIMMER +25m >/dev/null"
 
+echo "run -- a lease scoped to a process lifetime"
+rm -f "$LEASE"; echo 0 > "$SIMMER_FAKE_PMSET"
+t "exit 0 passes through"        "$SIMMER run -- true >/dev/null"
+t "exit 1 passes through"        "$SIMMER run -- false >/dev/null; [ \$? = 1 ]"
+t "any code passes through"      "$SIMMER run -- sh -c 'exit 7' >/dev/null; [ \$? = 7 ]"
+t "and nothing is left behind"   "[ ! -f '$LEASE' ] && [ \"\$(switch)\" = 0 ]"
+t "refuses a command without --" "$SIMMER run true 2>&1 | grep -q usage"
+t "help documents run"           "$SIMMER --help | grep -q 'simmer run'"
+
+# While the command runs: lease held, owner=run, reason = basename + pid token.
+"$SIMMER" run -- sleep 2 >/dev/null 2>&1 & runner=$!
+sleep 0.7
+t "lease held while it runs"     "[ \"\$(switch)\" = 1 ] && grep -q '^owner=run' '$LEASE'"
+t "reason carries the pid token" "grep -q '^reason=sleep \[run [0-9]*\]' '$LEASE'"
+wait "$runner"
+t "released the moment it exits" "[ ! -f '$LEASE' ] && [ \"\$(switch)\" = 0 ]"
+
+# Renewal, shrunk to test scale: chunk 3s, renew every 1s. A 3s command must
+# get its deadline pushed at least once while it runs.
+SIMMER_RUN_CHUNK=3s SIMMER_RUN_INTERVAL=1s "$SIMMER" run -- sleep 3 >/dev/null 2>&1 & runner=$!
+sleep 0.7
+u1="$(grep '^until=' "$LEASE" | cut -d= -f2)"
+sleep 1.5
+u2="$(grep '^until=' "$LEASE" | cut -d= -f2)"
+wait "$runner"
+t "renewer extends the deadline" "[ -n '$u1' ] && [ '$u2' -gt '$u1' ]"
+t "and still cleans up after"    "[ ! -f '$LEASE' ] && [ \"\$(switch)\" = 0 ]"
+
+# Replaced mid-flight: someone stamps over the run's lease. The renewer must
+# stop extending and the cleanup must not remove what is now theirs.
+SIMMER_RUN_CHUNK=30s SIMMER_RUN_INTERVAL=1s "$SIMMER" run -- sleep 2 >/dev/null 2>&1 & runner=$!
+sleep 0.5
+RNOW=$(date +%s)
+lease $((RNOW+3600)) "$RNOW" replaced 10 1 "$RNOW" menubar
+wait "$runner"
+t "cleanup leaves a replaced lease" "grep -q '^owner=menubar' '$LEASE'"
+t "renewer never extended it"       "[ \"\$(grep '^until=' '$LEASE' | cut -d= -f2)\" = $((RNOW+3600)) ]"
+rm -f "$LEASE"; echo 0 > "$SIMMER_FAKE_PMSET"
+
+# --max: a hard cap on total awake time. The first chunk is already capped,
+# and running out of budget must not kill the command.
+RSTART=$(date +%s)
+SIMMER_RUN_CHUNK=30s SIMMER_RUN_INTERVAL=1s "$SIMMER" run --max 2s -- sleep 3 >/dev/null 2>&1 & runner=$!
+sleep 0.5
+umax="$(grep '^until=' "$LEASE" | cut -d= -f2)"
+wait "$runner"; maxrc=$?
+t "--max caps the first chunk"   "[ -n '$umax' ] && [ '$umax' -le $((RSTART+3)) ]"
+t "the command is not killed"    "[ $maxrc = 0 ]"
+t "budget exhaustion is logged"  "grep -q 'budget exhausted' '$STATE/simmer.log'"
+rm -f "$LEASE"; echo 0 > "$SIMMER_FAKE_PMSET"
+
+# run goes through cmd_take, so the different-owner refusal applies unchanged.
+lease $((NOW+1200)) "$NOW" human 10 1 "$NOW" menubar; echo 1 > "$SIMMER_FAKE_PMSET"
+t "run refuses a foreign lease"  "! $SIMMER run -- true 2>/dev/null"
+t "run --force overrides"        "$SIMMER run --force -- true >/dev/null"
+rm -f "$LEASE"; echo 0 > "$SIMMER_FAKE_PMSET"
+
 echo "surfaces render in every state"
 lease 0 $((NOW-600)) render 10 0 "$NOW"
 t "swiftbar, open-ended"        "$HERE/integrations/swiftbar/simmer.10s.sh | head -1 | grep -q '^∞ |'"

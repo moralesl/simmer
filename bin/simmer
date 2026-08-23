@@ -25,6 +25,7 @@
 #   simmer 2h --min-battery 30               custom battery floor
 #   simmer --until 23:00                     absolute time instead of duration
 #   simmer forever -r "long run"             no deadline, reminder every 30 min
+#   simmer run -- npm test                   lease scoped to the command's lifetime
 #   simmer                                   status
 #   simmer +20m                              extend
 #   simmer down                              hand it back now
@@ -536,6 +537,122 @@ cmd_extend() {
 }
 
 ############################################################################
+### run -- a lease scoped to a process lifetime
+#
+# `simmer run -- <cmd>` takes a lease, runs the command, and hands the lease
+# back on ANY exit -- success, failure, signal. The lease shape that cannot be
+# forgotten, because there is nothing to remember.
+#
+# Deliberately NOT one long lease for the whole run. An initial chunk
+# (SIMMER_RUN_CHUNK, default 45m) that a background renewer refreshes every
+# SIMMER_RUN_INTERVAL (default 20m) while the command is alive. Two things
+# fall out of that shape: if this runner is SIGKILLed -- the one exit no trap
+# can catch -- the lease still expires within one chunk, self-revoking by
+# construction; and no open-ended-lease reminders nag during a legitimate run.
+#
+# The pid token "[run <pid>]" in the reason is the ownership proof: renewer
+# and cleanup only ever touch a lease whose reason still carries it. If
+# someone replaced the lease (--force, or fresh after the guard released),
+# their deadline is theirs -- we stop renewing silently and just finish.
+
+run_lease_is_ours() { # <pid-token>
+  read_lease || return 1
+  case "$lease_reason" in *"$1"*) return 0 ;; esac
+  return 1
+}
+
+run_renewer() { # <pid-token> <runner-pid> <interval-s> <chunk-s> <budget-epoch, 0 = uncapped>
+  local tok="$1" runner="$2" interval="$3" chunk="$4" budget="$5" now target
+  while :; do
+    sleep "$interval" || return 0
+    # Command over (or the runner SIGKILLed): stop. Cleanup or expiry takes over.
+    kill -0 "$runner" 2>/dev/null || return 0
+    run_lease_is_ours "$tok" || return 0
+    now="$(date +%s)"
+    if [ "$budget" != 0 ] && [ "$now" -ge "$budget" ]; then
+      # --max reached: the lease lapses, the command does NOT. Killing work is
+      # never simmer's call -- the cap bounds the awake time, not the job.
+      log "run: --max budget exhausted, no longer renewing ($lease_reason)"
+      notify "☕ run budget exhausted" "sleep re-allowed, command still running" \
+             "$lease_reason" "Tink"
+      return 0
+    fi
+    target=$((now + chunk))
+    if [ "$budget" != 0 ] && [ "$target" -gt "$budget" ]; then target="$budget"; fi
+    if [ "$target" -gt "$lease_until" ]; then
+      lease_until="$target"; lease_warned=0
+      write_lease
+      log "run: renewed until $(date -r "$target" '+%H:%M:%S')"
+    fi
+  done
+}
+
+RUN_TOKEN=""; RUN_RENEW_PID=0
+
+run_cleanup() {
+  if [ "$RUN_RENEW_PID" != 0 ]; then kill "$RUN_RENEW_PID" 2>/dev/null || true; fi
+  # Release ONLY what is still ours. If the command outlived the lease (--max
+  # reached, or the guard released it) there is nothing of ours to return; if
+  # someone replaced the lease, it is theirs to keep.
+  if run_lease_is_ours "$RUN_TOKEN"; then
+    release "run finished${lease_reason:+ · $lease_reason}" || true
+  fi
+  return 0
+}
+
+cmd_run() {
+  local reason="" force=0 max_seconds=0 chunk interval
+  chunk="$(parse_duration "${SIMMER_RUN_CHUNK:-45m}")" ||
+    die "SIMMER_RUN_CHUNK: did not understand the duration: ${SIMMER_RUN_CHUNK:-}"
+  interval="$(parse_duration "${SIMMER_RUN_INTERVAL:-20m}")" ||
+    die "SIMMER_RUN_INTERVAL: did not understand the duration: ${SIMMER_RUN_INTERVAL:-}"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -r|--reason) reason="${2:-}"; shift 2 ;;
+      --max)       max_seconds="$(parse_duration "${2:-}")" || die "did not understand the duration: ${2:-}"; shift 2 ;;
+      -f|--force)  force=1; shift ;;
+      --)          shift; break ;;
+      *)           die "usage: simmer run [-r reason] [--max 2h] [--force] -- <command...>" ;;
+    esac
+  done
+  [ $# -gt 0 ] || die "run what? simmer run -- <command...>"
+
+  local start budget=0
+  start="$(date +%s)"
+  if [ "$max_seconds" -gt 0 ]; then budget=$((start + max_seconds)); fi
+  RUN_TOKEN="[run $$]"
+
+  local first="$chunk"
+  if [ "$budget" != 0 ] && [ "$max_seconds" -lt "$first" ]; then first="$max_seconds"; fi
+
+  # Through cmd_take, not a private path: the different-owner refusal, the
+  # battery floor and the second caffeinate clock all apply unchanged.
+  local take_args=("${first}s" -r "${reason:-$(basename "$1")} $RUN_TOKEN" --owner run)
+  if [ "$force" = 1 ]; then take_args=("${take_args[@]}" --force); fi
+  cmd_take "${take_args[@]}"
+
+  run_renewer "$RUN_TOKEN" $$ "$interval" "$chunk" "$budget" &
+  RUN_RENEW_PID=$!
+
+  # EXIT alone is not enough: bash does not run the EXIT trap when an
+  # untrapped signal kills it, so INT/TERM/HUP convert to an exit first.
+  trap run_cleanup EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  # The command's exit code is our exit code, untouched -- so its failure must
+  # not trip set -e before we can capture it.
+  local rc=0
+  set +e
+  "$@"
+  rc=$?
+  set -e
+  exit "$rc"
+}
+
+############################################################################
 ### Status
 
 cmd_status() {
@@ -958,6 +1075,7 @@ simmer keeps this Mac awake for a while -- lid closed -- then lets it sleep agai
 TRY THIS
   simmer 2h                  stay awake for two hours
   simmer 2h -r "big build"   ...and say what for, so you can see it later
+  simmer run -- npm test     stay awake exactly as long as this command runs
   simmer                     how much longer? what for?
   simmer +30m                need longer: 30 more minutes from now
   simmer down                finished early, let it sleep
@@ -987,6 +1105,9 @@ CHANGING THE DEFAULTS
                              sleep -- the Mac stays awake either way)
   --owner <name>             who is asking; simmer refuses to overwrite someone
                              else's lease unless you add --force
+  --max 2h                   with simmer run: hard cap on total awake time.
+                             When it is reached the lease lapses but the
+                             command keeps running -- simmer never kills work
 
 CHECKING ON IT
   simmer log                 what the watchdog has actually done
@@ -1025,6 +1146,7 @@ case "${1:-status}" in
   guard)               cmd_guard ;;
   doctor)              cmd_doctor ;;
   budget)              shift || true; cmd_budget "$@" ;;
+  run)                 shift || true; cmd_run "$@" ;;
   notify-test)         cmd_notify_test ;;
   render)              shift || true; cmd_render "$@" ;;
   extend)              shift || true; cmd_extend "$@" ;;
