@@ -8,7 +8,7 @@ passes the suite under the seam variables below is a valid simmer.
 
 ```
 simmer <duration> [-r reason] [--min-battery N] [--until HH:MM] [--owner name]
-       [--display-on] [--lock] [--force]        take (or replace own) awake time
+       [--display-on] [--force]                 take (or replace own) awake time
 simmer forever [...]                            no deadline; reminded, floor still applies
 simmer run [-r] [--max D] [--force] -- <cmd>    awake exactly while <cmd> runs
 simmer +<duration> | extend <duration>          move the deadline, from now
@@ -81,5 +81,15 @@ without changing the machine under the tester:
 
 ## Known v1→v2 deltas (each requires a decision recorded here)
 
-- D1 *(proposed)*: claims ledger replaces the single lease — owner conflicts and
-  `--force` disappear; `state`/`until` aggregate over claims. See V2-BRIEF.
+- D1 **approved 2026-08-23**: claims ledger replaces the single lease — owner
+  conflicts and `--force` disappear; `state`/`until` aggregate over claims.
+  Human-primacy rules are part of the contract: a human can release ANY claim
+  (`down --all` in the menu bar and CLI); an agent may only release its own; and
+  a human-set **cap** (`simmer cap 23:00`) clips every claim, present and
+  future — claims request from below, the cap rules from above. Sequencing:
+  landed in v1/bash FIRST (format=2) so the ported suite covers claims before
+  the Swift rewrite — a differential run must attribute divergence to the
+  language change, not the model change.
+- Planned, not yet contracted: `--lock` (lock the screen on take). Listed here
+  so no implementation invents behaviour for it; it enters the surface above
+  only together with its tests.

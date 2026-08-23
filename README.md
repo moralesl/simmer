@@ -164,7 +164,7 @@ Wondering about Amphetamine, LidRun or plain `caffeinate`?
 ## Development
 
 ```bash
-make test    # 77 assertions, no sudo, no real power state touched
+make test    # the hermetic suite: no sudo, no real power state touched
 ```
 
 The suite substitutes the four power operations via `SIMMER_FAKE_PMSET` and `SIMMER_FAKE_BATTERY`, so it can exercise the battery branch while the laptop is charging and never changes your machine.

@@ -22,7 +22,7 @@ The thing being guarded can flatten a battery, so the code guarding it should fi
 ## Before you commit
 
 ```bash
-make test     # 77 assertions, no sudo, no real power state touched
+make test     # the hermetic suite: no sudo, no real power state touched
 make check    # is this checkout what is actually installed
 bash -n bin/simmer
 ```

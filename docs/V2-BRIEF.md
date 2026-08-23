@@ -44,6 +44,21 @@ single switch — simmer should be too:
   countdown with per-claim release.
 - `simmer down` releases *your* claims; `down --all` everything.
 
+**Human primacy — the condition D1 was approved under.** The human has the final
+say, mechanically, not by convention:
+
+- A human can release ANY claim; an agent can release only its own. The menu bar
+  is a human surface, so every release control there acts with human authority.
+- **The cap**: `simmer cap 23:00` (menu bar: "Nothing past…") is a human-set
+  ceiling that clips every claim, current and future. Claims request from below;
+  the cap rules from above. An agent hitting the cap gets a truthful budget
+  answer, not an error to route around.
+- **What the human sees**: the menu bar countdown is the AGGREGATE — what the
+  machine will actually do — with the dropdown listing each claim as
+  `owner · reason · until` (👤 you, 🤖 agent, ⚙ run:…), each with its own
+  release. Notifications fire on aggregate changes only (latest deadline moved,
+  everything released, floor/thermal) — never per-claim spam.
+
 Cost: state becomes a claims dir instead of one lease file (format=2), and the
 v1 suite's owner-refusal assertions become documented deltas. Benefit: the
 entire conflict UX disappears, and multi-agent machines (Luis's reality) stop
@@ -82,12 +97,29 @@ The menu bar has exactly two jobs: **ambient truth** (zero clicks) and the
 
 ## Build phases
 
-1. `Sources/SimmerCore` — lease/claims, guard logic, budget, render, seam.
+0. **D1 lands in v1/bash first** (format=2 claims dir, aggregate budget/status,
+   cap, human-primacy release rules) plus a `SIMMER_FAKE_NOW` seam — nine
+   `date +%s` call sites currently make warn-once / remind / deadline-crossing
+   testable only via hand-written timestamps, and those are exactly the paths a
+   differential run must compare. Also lands here: `--require-ac` (release when
+   the charger disappears — an overnight lease is only sane on the charger) and
+   a pre-floor warning at floor+10% ("plug in, or I hand the switch back
+   soon"). Rationale for the sequencing: the suite then covers claims under
+   real multi-agent use BEFORE the language changes, so a differential
+   divergence is attributable to Swift, not to the new model.
+1. `Sources/SimmerCore` — claims, guard logic, budget, render, seam.
 2. CLI target passing the ported v1 suite (byte-compatible surface).
 3. The app: NSStatusItem + event-driven guard + notifier merged; differential
    runs against v1 throughout.
 4. Install: build + admin prompt + permission banner; brew tap.
-5. Swap main; tag v1.
+5. Swap main; tag v1 (prune later at Luis's call).
+6. **The Claude Code hook** — the flagship integration, possible because no
+   competitor has a query API: `integrations/claude-code/` ships a SessionStart
+   hook injecting one line of context ("simmer: no claim — the lid can
+   interrupt you") and a UserPromptSubmit hook that appends a line ONLY when
+   `budget` exits 1 or 3. The FOR-AGENTS protocol moves from prose an agent
+   must remember to a gate the harness enforces — the enforcement-ladder move,
+   applied to simmer itself. `simmer watch` gets its first consumer.
 
 ## Verified platform facts — do not re-derive these
 
@@ -96,7 +128,7 @@ New for v2 (2026-08-23):
 | Fact | Status |
 |---|---|
 | Native admin prompt (`do shell script … with administrator privileges`) from an unsigned context | ✅ verified — ran as root after one password dialog |
-| Ad-hoc app shows its own NSStatusItem (menu bar) | spike built and launched; awaiting eyes-on confirmation |
+| Ad-hoc app shows its own NSStatusItem (menu bar) | ✅ verified — 🍲 + countdown + working dropdown, eyes-on |
 
 
 Tested on macOS 26.5.1, Apple silicon, August 2026.
@@ -241,7 +273,10 @@ the v1 suite must pass unmodified against the v2 binary before anything else is
 polished. Decision D1 (claims ledger) is approved/rejected in CONTRACTS.md — read
 it there, do not relitigate it.
 
-Work in phases with atomic commits; differential-test against the v1 binary in
-the fake environment after every phase. Platform facts in the brief are verified
+Start with phase 0: D1 in the EXISTING bash v1 (claims ledger, cap, human
+primacy, SIMMER_FAKE_NOW, --require-ac, pre-floor warning), suite extended to
+cover it, committed atomically. Only then begin Swift. Work in phases with
+atomic commits; differential-test against the v1 binary in the fake environment
+after every phase. Platform facts in the brief are verified
 — do not re-spike them. Ask Luis only what a phase genuinely blocks on.
 ```

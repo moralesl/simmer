@@ -17,7 +17,7 @@ If that is Amphetamine or LidRun, use them; they are good products.
 | Scriptable | ✓ | GUI only — no contract to script against | GUI + one-keystroke lid close (⌥L), webhooks (Pro) | ✓ — the CLI *is* the tool |
 | Triggers / process detection | ✗ | ✓ (app running, battery, display, …) | ✓ (auto-detects Claude Code, Cursor, Docker, Ollama) | ✗ |
 | Notifications under own identity | n/a | ✓ | ✓ | ✓ (locally built, ad-hoc-signed bundle) |
-| Source / auditability | Apple, opaque | closed | closed | MIT, ~one bash script, 59-test hermetic suite |
+| Source / auditability | Apple, opaque | closed | closed | MIT, ~one bash script, hermetic test suite |
 | Price | free (built in) | free (App Store) | $9–19 one-time | free |
 
 Two of these — LidRun and simmer — are architecturally the same tool: `pmset -a disablesleep` behind a privileged path, with auto-reversion and a battery floor.

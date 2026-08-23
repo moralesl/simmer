@@ -152,7 +152,7 @@ can substitute them:
 
 Without this, testing the guard needs root, changes the machine under you, and
 the battery branch is untestable whenever the laptop is charging. With it,
-`make test` is 43 assertions that touch nothing.
+`make test` runs the whole suite and touches nothing.
 
 ## Deliberately not here
 

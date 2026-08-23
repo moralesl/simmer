@@ -147,6 +147,19 @@ battery_line() {
   if on_battery; then echo "battery ${pct}%"; else echo "on AC, battery ${pct}%"; fi
 }
 
+# How long the screen stays UNLOCKED after the lid closes. simmer is the tool
+# that turns a lax "require password" setting into a running, unlocked laptop in
+# a bag -- which obliges it to say so. sysadminctl needs no root; it reports to
+# stderr, and "immediate"/"off" carry no number.
+lock_delay_seconds() {
+  if [ -n "${SIMMER_FAKE_LOCKDELAY:-}" ]; then printf '%s' "$SIMMER_FAKE_LOCKDELAY"; return; fi
+  local out; out="$(sysadminctl -screenLock status 2>&1)"
+  case "$out" in
+    *immediate*) printf '0' ;;
+    *) printf '%s' "$out" | grep -oE '[0-9]+ second' | grep -oE '[0-9]+' | head -1 ;;
+  esac
+}
+
 # Thermal pressure. Nominal reads as "No thermal warning level has been
 # recorded"; under pressure macOS reports "Thermal Warning Level = N". A hot
 # machine with the lid closed is the one state this tool can create and the
@@ -510,6 +523,9 @@ cmd_take() {
     log "took: until $(date -r "$until_epoch" '+%H:%M')${reason:+ ($reason)}, battery floor ${min_battery}%"
     echo "☕ simmering until $(date -r "$until_epoch" '+%H:%M') ($(human_duration $((until_epoch - now))))${reason:+ · $reason}"
     echo "   lid may close · $(battery_line) · releases below ${min_battery}%"
+    local delay; delay="$(lock_delay_seconds)"
+    [ -n "$delay" ] && [ "$delay" != 0 ] &&
+      echo "   note: the screen stays UNLOCKED ${delay}s after the lid closes (System Settings > Lock Screen)"
     notify "☕ Simmering until $(date -r "$until_epoch" '+%H:%M')" \
            "$(human_duration $((until_epoch - now))) · lid may close" \
            "${reason:-}" "Submarine"
@@ -1084,6 +1100,7 @@ cmd_doctor() {
   fi
   say "state directory writable"           "[ -w '$STATE' ]"
   say "caffeinate present"                 "command -v caffeinate"
+  say "screen locks immediately on lid close" "[ \"\$(lock_delay_seconds)\" = 0 ]"
   echo
   echo "State:"
   cmd_status | sed 's/^/  /'

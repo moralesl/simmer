@@ -30,6 +30,7 @@ export SIMMER_FAKE_PMSET="$TMP/disablesleep"; echo 0 > "$SIMMER_FAKE_PMSET"
 # before this line every run sprayed the desktop with them.
 export SIMMER_NOTIFY=none
 export SIMMER_FAKE_THERMAL=0   # a genuinely warm Mac must not fail the suite
+export SIMMER_FAKE_LOCKDELAY=0 # nor should the tester's lock-screen setting
 # Point the bundle transport somewhere empty so its selection logic is testable.
 export SIMMER_NOTIFIER_APP="$TMP/NoSuch.app"
 export SIMMER_FAKE_BATTERY="80:0"          # 80%, on AC
@@ -228,6 +229,8 @@ t "menu bar title has one icon"  "! $HERE/integrations/swiftbar/simmer.10s.sh | 
 t "status readable when idle"   "$SIMMER | grep -q 'sleep allowed'"
 t "help documents down/force"   "$SIMMER --help | grep -q 'simmer down' && $SIMMER --help | grep -q -- '--force'"
 t "--version prints"            "$SIMMER --version | grep -q simmer"
+t "warns about a lazy lock delay" "SIMMER_FAKE_LOCKDELAY=300 $SIMMER 30m --owner t --force | grep -q 'UNLOCKED 300s'"
+t "silent when lock is immediate" "! $SIMMER 30m --owner t --force | grep -q UNLOCKED"
 t "notify-test runs"            "SIMMER_NOTIFY=auto $SIMMER notify-test >/dev/null 2>&1"
 if command -v swiftc >/dev/null 2>&1; then
   t "notifier source compiles"  "swiftc -O -o '$TMP/nb' '$HERE/notifier/main.swift'"
