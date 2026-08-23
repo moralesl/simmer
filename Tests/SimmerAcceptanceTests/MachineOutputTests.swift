@@ -49,6 +49,31 @@ import Testing
         #expect(object["claim_count"] as? Int == 1)
     }
 
+    /// The exit code is the API, but a person at a terminal cannot see one:
+    /// fit and no-fit must not print the identical sentence.
+    @Test func budgetSaysTheVerdictInWordsToo() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["1h", "--owner", "test"])
+
+        let fits = sim.run(["budget", "--need", "20m"])
+        #expect(fits.code == 0)
+        #expect(fits.out.contains("fits"))
+        #expect(!fits.out.contains("does not fit"))
+
+        let doesNot = sim.run(["budget", "--need", "90m"])
+        #expect(doesNot.code == 1)
+        #expect(doesNot.out.contains("does not fit"))
+        #expect(doesNot.out.contains("30 min short"))
+
+        // Without --need there is no question, so no verdict is invented.
+        let bare = sim.run(["budget"])
+        #expect(!bare.out.contains("fits"))
+        // --seconds and --json stay machine-only: no prose added to either.
+        #expect(sim.run(["budget", "--need", "20m", "--seconds"]).out
+            .trimmingCharacters(in: .whitespacesAndNewlines) == "3600")
+        #expect(!sim.run(["budget", "--need", "20m", "--json"]).out.contains("fits ("))
+    }
+
     @Test func budgetToleratesOwnerAndReason() {
         let sim = Sim(); defer { sim.tearDown() }
         // The spike shipped a bug where --owner made budget exit 1. Never again.
@@ -89,6 +114,34 @@ import Testing
         #expect(claims?.first?["owner"] as? String == "test")
         #expect(claims?.first?["human"] as? Bool == false)
         #expect(object["version"] is String)
+    }
+
+    /// Booleans are booleans, on every machine surface, and the same field
+    /// never has two types. Asserted against the raw text: JSONSerialization
+    /// bridges 0/1 to Bool, so `as? Bool` would have accepted the very drift
+    /// this test exists to catch.
+    @Test func yesNoFieldsAreBooleansNotOnesAndZeros() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let claimed = sim.run(["2h", "-r", "ac", "--require-ac", "--owner", "test", "--json"]).out
+        #expect(claimed.contains("\"require_ac\":true"))
+        #expect(!claimed.contains("\"require_ac\":1"))
+        #expect(claimed.contains("\"human\":false"))
+
+        let status = sim.run(["status", "--json"]).out
+        #expect(status.contains("\"require_ac\":true"))
+        #expect(!status.contains("\"require_ac\":1"))
+
+        // events.jsonl has always written it as a boolean; one field with two
+        // types across two surfaces of one binary is the drift being fenced.
+        let events = sim.events(named: "claim")
+        #expect(events.last?["require_ac"] as? Bool == true)
+        let eventText = (try? String(contentsOf: sim.stateDir.appendingPathComponent("events.jsonl"),
+                                     encoding: .utf8)) ?? ""
+        #expect(eventText.contains("\"require_ac\":true"))
+
+        // The no-flag case is `false`, not absent and not 0.
+        let plain = sim.run(["1h", "--owner", "other", "--json"]).out
+        #expect(plain.contains("\"require_ac\":false"))
     }
 
     @Test func aLiveClaimWithTheSwitchOffIsSaidOutLoud() {
@@ -210,6 +263,50 @@ import Testing
         #expect(result.code == 1)
         #expect(!FileManager.default.fileExists(atPath: probe))
     }
+
+    /// The renewer thread, exercised rather than assumed: an initial chunk is
+    /// short on purpose so a SIGKILLed runner self-expires, which only works
+    /// if something keeps moving the deadline while the command lives.
+    ///
+    /// Real clock — an empty SIMMER_FAKE_NOW falls back to it — because a
+    /// frozen clock cannot express "later", and renewal is entirely about
+    /// later. The only unhermetic thing here is time passing.
+    @Test func theRenewerMovesTheDeadlineWhileTheCommandRuns() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["run", "-r", "renewing", "--", "sleep", "2.5"],
+                             env: ["SIMMER_FAKE_NOW": "",
+                                   "SIMMER_RUN_CHUNK": "60s",
+                                   "SIMMER_RUN_INTERVAL": "1s"])
+        #expect(result.code == 0)
+        let log = sim.run(["log", "20"], env: ["SIMMER_FAKE_NOW": ""]).out
+        #expect(log.contains("run: renewed until"))
+        // And it still cleaned up after itself: nothing left holding the Mac.
+        #expect(sim.claimCount == 0)
+        #expect(sim.switchValue == "0")
+    }
+
+    /// A renewal is a claim like any other, so the human ceiling outranks it —
+    /// the path that would otherwise let a long `run` walk past a cap one
+    /// renewal at a time.
+    @Test func renewalNeverWalksPastTheCap() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let live: [String: String] = ["SIMMER_FAKE_NOW": ""]
+        sim.run(["cap", "30s", "--owner", "terminal"], env: live)
+        guard let cap = sim.capUntil else { #expect(Bool(false), "no cap written"); return }
+
+        let probe = sim.root.appendingPathComponent("after-renewals.txt").path
+        sim.run(["run", "--", "sh", "-c", "sleep 2.5; cat '\(sim.claimsDir.path)'/run:* > '\(probe)'"],
+                env: live.merging(["SIMMER_RUN_CHUNK": "60s",
+                                   "SIMMER_RUN_INTERVAL": "1s"]) { _, new in new })
+        let contents = (try? String(contentsOfFile: probe, encoding: .utf8)) ?? ""
+        let until = contents.split(separator: "\n")
+            .first { $0.hasPrefix("until=") }
+            .flatMap { Int($0.dropFirst(6)) }
+        #expect(until != nil)
+        // Renewals ran (interval 1s over 2.5s) and every one of them stopped
+        // at the ceiling rather than at now+chunk.
+        #expect((until ?? 0) <= cap)
+    }
 }
 
 @Suite struct RenderTests {
@@ -267,6 +364,41 @@ import Testing
         #expect(sim.run(["down", "-r", "reason", "--owner", "test"]).code == 0)
         #expect(sim.run(["cap", "-r", "reason", "--owner", "terminal"]).code == 0)
         #expect(sim.run(["log", "5", "-r", "reason", "--owner", "x"]).code == 0)
+    }
+
+    /// Every verb the sugar layer recognises must have a subcommand behind it.
+    /// A name with nothing behind it reaches the raw parser, whose "Unexpected
+    /// argument" is the one refusal in the surface that names no fix — so the
+    /// gate is mechanical rather than a promise to remember.
+    @Test(arguments: ["claim", "extend", "release", "cap", "status", "budget",
+                      "run", "guard", "doctor", "log", "render", "notify-test"])
+    func everyDocumentedVerbResolves(_ verb: String) {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run([verb, "--help"])
+        #expect(result.code == 0)
+        #expect(!result.combined.contains("Unexpected argument"))
+    }
+
+    @Test func anUnknownWordIsRefusedWithAFixNotAParserDump() {
+        let sim = Sim(); defer { sim.tearDown() }
+        for word in ["notify-post", "wibble", "statuss"] {
+            let result = sim.run([word])
+            #expect(result.code == 1)
+            #expect(!result.combined.contains("Unexpected argument"))
+            // claim owns the diagnosis, and it names what good input looks like.
+            #expect(result.err.contains("did not understand the duration"))
+            #expect(result.err.contains("2h"))
+        }
+    }
+
+    @Test func helpDescribesTheSurfaceThatExists() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let help = sim.run(["--help"]).out
+        #expect(help.contains("simmer render"))
+        #expect(help.contains("1d"))
+        #expect(help.contains("uninstall"))
+        // v1 has exactly one transport: the app posts, or nothing does.
+        #expect(!help.contains("per transport"))
     }
 
     @Test func logTailsTheGuardsActions() {

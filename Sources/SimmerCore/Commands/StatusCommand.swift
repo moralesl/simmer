@@ -76,7 +76,7 @@ extension Commands {
             if aggregate.until == 0 {
                 outcome.stdout.append("☕ simmering, no deadline · for \(Durations.human(ctx.now - aggregate.since))\(reasonPart)")
             } else {
-                outcome.stdout.append("☕ simmering until \(Formats.hhmm(aggregate.until)) · \(Durations.human(aggregate.left)) left\(reasonPart)")
+                outcome.stdout.append("☕ simmering until \(Formats.hhmmDated(aggregate.until, now: ctx.now)) · \(Durations.human(aggregate.left)) left\(reasonPart)")
             }
             // The parts, whenever there is more than one. With a single claim
             // the line above already said everything.

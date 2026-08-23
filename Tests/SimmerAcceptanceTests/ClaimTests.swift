@@ -6,7 +6,7 @@ import Testing
 /// fixture that mutates state behind the implementation is how the spike's
 /// suite leaked (LEARNINGS.md).
 @Suite struct DurationTests {
-    @Test(arguments: ["90", "90m", "1h", "1h30m", "45min", "2h15", "30s", "2H"])
+    @Test(arguments: ["90", "90m", "1h", "1h30m", "45min", "2h15", "30s", "2H", "1d", "1d12h"])
     func acceptsDuration(_ text: String) {
         let sim = Sim(); defer { sim.tearDown() }
         // budget parses without claiming anything; exit 3 = parsed fine, no claim.
@@ -67,6 +67,50 @@ import Testing
         let until = Int(sim.claimField("test", "until") ?? "") ?? 0
         #expect(until > Sim.epoch)
         #expect((until - Sim.epoch) <= 86_400)
+        // Same calendar day: no day qualifier to add.
+        #expect(!result.out.contains("tomorrow"))
+    }
+
+    /// A deadline on another day must say so. The fixed epoch is 09:00 in
+    /// Europe/Berlin, so 08:00 means tomorrow — and "until 08:00" alone reads
+    /// as a time that has already gone.
+    @Test func aDeadlineOnAnotherDaySaysWhichDay() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let wrapped = sim.run(["--until", "08:00", "--owner", "test"])
+        #expect(wrapped.code == 0)
+        #expect(wrapped.out.contains("tomorrow"))
+        #expect(sim.claimField("test", "until") == String(Sim.epoch + 23 * 3600))
+        // Status agrees with the claim that made it.
+        #expect(sim.run(["status"]).out.contains("tomorrow"))
+        // A day-long claim lands tomorrow too, by the same rule.
+        #expect(sim.run(["1d", "--owner", "long"]).out.contains("tomorrow"))
+        #expect(sim.claimField("long", "until") == String(Sim.epoch + 86_400))
+    }
+
+    /// The switch flips before the claim file lands. If the claim cannot be
+    /// recorded, nothing holds the machine awake and nothing schedules it back
+    /// down — so this must refuse and hand the switch back, never print a
+    /// deadline for a claim that does not exist.
+    @Test func aClaimThatCannotBeRecordedIsRefusedNotAnnounced() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.freezeClaims()
+        let result = sim.run(["2h", "-r", "doomed", "--owner", "test"])
+        #expect(result.code == 1)
+        #expect(result.err.contains("could not record the claim"))
+        #expect(!result.out.contains("simmering until"))
+        // The machine is left as it was found.
+        #expect(sim.switchValue == "0")
+        sim.unfreezeClaims()
+        #expect(sim.claimCount == 0)
+        #expect(sim.run(["status"]).out.contains("sleep allowed"))
+    }
+
+    @Test func releasingTheLastClaimSaysTheMachineCanSleepAgain() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["30m", "--owner", "test"])
+        let result = sim.run(["down", "--owner", "test"])
+        #expect(result.out.contains("sleep allowed again"))
+        #expect(sim.switchValue == "0")
     }
 
     @Test func fakeClockDrivesRelativeArithmetic() {

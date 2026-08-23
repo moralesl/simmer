@@ -43,7 +43,14 @@ public struct Ledger: Sendable {
         return Claim.parse(text, fallbackId: url.lastPathComponent)
     }
 
-    public func write(_ claim: Claim) {
+    /// False when the claim did not reach disk. Callers that already announced
+    /// awake time MUST check: the switch flips before the claim file lands, so
+    /// a swallowed failure is the one state where simmer says "simmering
+    /// until 11:00" about a claim that does not exist. The guard would heal it
+    /// within 30s — toward sleep, the safe direction — but the sentence was
+    /// still a lie, and honesty is not something the next tick can restore.
+    @discardableResult
+    public func write(_ claim: Claim) -> Bool {
         atomicWrite(claim.serialized(), to: claimsDir.appendingPathComponent(claim.id))
     }
 
@@ -88,9 +95,12 @@ public struct Ledger: Sendable {
         return CapRecord(until: until, setBy: setBy, setAt: setAt)
     }
 
-    public func writeCap(until: Int, setBy: String, now: Int) {
+    /// False when the cap did not reach disk — same argument as `write`: a
+    /// ceiling that was announced but not recorded is worse than a refusal.
+    @discardableResult
+    public func writeCap(until: Int, setBy: String, now: Int) -> Bool {
         let text = "format=\(Claim.format)\nuntil=\(until)\nset_by=\(setBy)\nset_at=\(now)\n"
-        atomicWrite(text, to: capFile)
+        return atomicWrite(text, to: capFile)
     }
 
     public func clearCap() {
@@ -175,8 +185,11 @@ public struct Ledger: Sendable {
     // told about ITS OWN executable's (never-granted) state, which is the
     // misread that produced a wrong LEARNINGS entry before this file existed.
 
+    /// A heartbeat, so a failed write is not worth reporting: the next one is
+    /// three seconds away, and doctor treats a missing or stale file as "the
+    /// app is not talking" — which is exactly what it would mean.
     public func writeAppStatus(notifyStatus: String, now: Int) {
-        atomicWrite("pid=\(getpid())\nnotify=\(notifyStatus)\nts=\(now)\n", to: appStatusFile)
+        _ = atomicWrite("pid=\(getpid())\nnotify=\(notifyStatus)\nts=\(now)\n", to: appStatusFile)
     }
 
     public struct AppStatus {
@@ -241,10 +254,19 @@ public struct Ledger: Sendable {
 
     // MARK: primitives
 
-    private func atomicWrite(_ text: String, to url: URL) {
+    /// Temp file then rename, so a racing reader never sees half a record.
+    /// Returns whether the record actually landed; the temp file is cleaned up
+    /// on the failure path rather than left behind next to real state.
+    private func atomicWrite(_ text: String, to url: URL) -> Bool {
         let tmp = url.appendingPathExtension("tmp.\(getpid())")
-        try? text.write(to: tmp, atomically: false, encoding: .utf8)
-        _ = try? FileManager.default.replaceItemAt(url, withItemAt: tmp)
+        do {
+            try text.write(to: tmp, atomically: false, encoding: .utf8)
+            _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
+            return true
+        } catch {
+            try? FileManager.default.removeItem(at: tmp)
+            return false
+        }
     }
 
     /// POSIX O_APPEND, not seek-then-write: the app's event tick and the

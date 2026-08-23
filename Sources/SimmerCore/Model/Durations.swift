@@ -1,7 +1,9 @@
 import Foundation
 
-/// Durations: 90 · 90m · 2h · 1h30m · 45min · 30s · 2H · 2h15.
+/// Durations: 90 · 90m · 2h · 1h30m · 45min · 30s · 2H · 2h15 · 1d.
 /// Bare number = minutes; a trailing bare number after a unit = minutes.
+/// Days exist because overnight is a first-class case — `--require-ac` was
+/// added for exactly it — and "1d" is how a person spells it.
 public enum Durations {
     public static func parse(_ text: String) -> Int? {
         let t = text.lowercased()
@@ -26,6 +28,7 @@ public enum Durations {
                 total += n * 60
             } else {
                 switch unit {
+                case "d", "day", "days": total += n * 86_400
                 case "h", "hour", "hours": total += n * 3600
                 case "m", "min", "minute", "minutes": total += n * 60
                 case "s", "sec", "second", "seconds": total += n
@@ -88,6 +91,29 @@ public enum Formats {
 
     public static func logStamp(_ epoch: Int) -> String {
         formatted(epoch, "yyyy-MM-dd HH:mm:ss")
+    }
+
+    /// "23:00" · "08:00 tomorrow" · "08:00 on Wed 20 Jan".
+    ///
+    /// A deadline on another calendar day is the one case where a bare HH:mm
+    /// misleads: `simmer --until 08:00` typed at 09:00 means tomorrow, and
+    /// "until 08:00" reads as a time already gone. The day comparison is
+    /// relative arithmetic, so it reads the passed-in (fake-aware) `now`.
+    public static func hhmmDated(_ epoch: Int, now: Int) -> String {
+        let time = hhmm(epoch)
+        switch calendarDaysApart(from: now, to: epoch) {
+        case ..<1: return time
+        case 1: return "\(time) tomorrow"
+        default: return "\(time) on \(formatted(epoch, "EEE d MMM"))"
+        }
+    }
+
+    private static func calendarDaysApart(from: Int, to: Int) -> Int {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone.current
+        let start = calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(from)))
+        let end = calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(to)))
+        return calendar.dateComponents([.day], from: start, to: end).day ?? 0
     }
 
     private static func formatted(_ epoch: Int, _ format: String) -> String {

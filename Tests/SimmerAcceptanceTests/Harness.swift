@@ -26,7 +26,37 @@ struct Sim {
     }
 
     func tearDown() {
+        // A test may have frozen the claims directory; a 0500 directory cannot
+        // be emptied, so restore it before removing the tree.
+        unfreezeClaims()
         try? FileManager.default.removeItem(at: root)
+    }
+
+    /// Make the claims directory unwritable — the shape a wrong owner or a
+    /// restrictive umask produces on a real machine. State is only ever *read*
+    /// back elsewhere in this suite; this changes permissions, never records.
+    func freezeClaims() {
+        // The directory is created by the binary's first run, so create it
+        // here when the test freezes it before ever invoking simmer —
+        // chmod on a missing path silently does nothing.
+        try? FileManager.default.createDirectory(at: claimsDir, withIntermediateDirectories: true)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o500],
+                                               ofItemAtPath: claimsDir.path)
+    }
+
+    func unfreezeClaims() {
+        guard FileManager.default.fileExists(atPath: claimsDir.path) else { return }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700],
+                                               ofItemAtPath: claimsDir.path)
+    }
+
+    var capUntil: Int? {
+        guard let text = try? String(contentsOf: stateDir.appendingPathComponent("cap"),
+                                     encoding: .utf8) else { return nil }
+        for line in text.split(separator: "\n") where line.hasPrefix("until=") {
+            return Int(line.dropFirst(6))
+        }
+        return nil
     }
 
     private final class BundleMarker {}

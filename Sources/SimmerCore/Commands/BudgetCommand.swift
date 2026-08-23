@@ -70,7 +70,15 @@ extension Commands {
             outcome.stdout.append(String(left))
         } else {
             let reasonPart = aggregate.reason.isEmpty ? "" : " · \(aggregate.reason)"
-            outcome.stdout.append("\(Durations.human(left)) left of \(Durations.human(aggregate.until - aggregate.since)) · until \(Formats.hhmm(aggregate.until))\(reasonPart)")
+            outcome.stdout.append("\(Durations.human(left)) left of \(Durations.human(aggregate.until - aggregate.since)) · until \(Formats.hhmmDated(aggregate.until, now: ctx.now))\(reasonPart)")
+            // The verdict, in words. The exit code carries it for scripts, but
+            // a person at a terminal cannot see an exit code: fit and no-fit
+            // printed the identical line, which made --need look broken.
+            if let fits {
+                outcome.stdout.append(fits
+                    ? "✅ \(Durations.human(needSeconds)) fits"
+                    : "❌ \(Durations.human(needSeconds)) does not fit — \(Durations.human(needSeconds - left)) short")
+            }
             // The truthful answer to "why can I not have more", so an agent at
             // the ceiling reports it instead of retrying with a bigger number.
             if aggregate.capped {

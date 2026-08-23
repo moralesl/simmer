@@ -138,7 +138,18 @@ public enum Commands {
                           reason: input.reason, minBattery: input.minBattery,
                           requireAC: input.requireAC, displayOn: input.displayOn,
                           reminded: ctx.now)
-        ctx.ledger.write(claim)
+        // The switch is already on. If the claim cannot be recorded, nothing
+        // holds it open and nothing schedules it back down — so settle here
+        // (which reverts it, the ledger being empty) and refuse, rather than
+        // print a deadline for a claim that does not exist.
+        guard ctx.ledger.write(claim) else {
+            ctx.ledger.log("ERROR: could not record the claim for \(ctx.owner)", now: ctx.now)
+            Engine.settle(ctx: ctx, why: "the claim could not be recorded")
+            outcome.merge(.failure(
+                "could not record the claim in \(ctx.ledger.claimsDir.path) — nothing is holding the Mac awake. Run 'simmer doctor'",
+                json: input.json))
+            return outcome
+        }
         ctx.ledger.event("claim", now: ctx.now, [
             ("owner", .string(ctx.owner)),
             ("reason", .string(input.reason)),
@@ -157,7 +168,7 @@ public enum Commands {
             outcome.stdout.append("   reminder every 30 min · releases below \(input.minBattery)% battery · 'simmer down' ends it")
         } else {
             ctx.ledger.log("claim \(ctx.owner): until \(Formats.hhmm(untilEpoch))\(input.reason.isEmpty ? "" : " (\(input.reason))"), battery floor \(input.minBattery)%", now: ctx.now)
-            outcome.stdout.append("☕ simmering until \(Formats.hhmm(untilEpoch)) (\(Durations.human(untilEpoch - ctx.now)))\(reasonPart)")
+            outcome.stdout.append("☕ simmering until \(Formats.hhmmDated(untilEpoch, now: ctx.now)) (\(Durations.human(untilEpoch - ctx.now)))\(reasonPart)")
             outcome.stdout.append("   lid may close · \(Present.batteryLine(ctx.power)) · releases below \(input.minBattery)%")
             if clippedByCap {
                 outcome.stdout.append("   clipped by the cap at \(Formats.hhmm(capUntil))")
@@ -257,7 +268,16 @@ public enum Commands {
         let before = ctx.aggregate()
         claim.until = target
         claim.warned = false
-        ctx.ledger.write(claim)
+        // Same rule as claiming: an extension that did not reach disk must not
+        // be announced. Here the old deadline still stands, so there is
+        // nothing to settle — only something to admit.
+        guard ctx.ledger.write(claim) else {
+            ctx.ledger.log("ERROR: could not record the extension for \(ctx.owner)", now: ctx.now)
+            outcome.merge(.failure(
+                "could not record the extension — your claim still ends at \(Formats.hhmmDated(before.until, now: ctx.now)). Run 'simmer doctor'",
+                json: json))
+            return outcome
+        }
         ctx.ledger.event("extend", now: ctx.now, [
             ("owner", .string(ctx.owner)),
             ("until", .int(target)),
@@ -266,7 +286,7 @@ public enum Commands {
         let after = ctx.aggregate()
 
         ctx.ledger.log("extended \(ctx.owner) until \(Formats.hhmm(target))", now: ctx.now)
-        outcome.stdout.append("☕ simmering until \(Formats.hhmm(target)) (\(Durations.human(target - ctx.now)))")
+        outcome.stdout.append("☕ simmering until \(Formats.hhmmDated(target, now: ctx.now)) (\(Durations.human(target - ctx.now)))")
         if clippedByCap {
             outcome.stdout.append("   clipped by the cap at \(Formats.hhmm(capUntil))")
         }

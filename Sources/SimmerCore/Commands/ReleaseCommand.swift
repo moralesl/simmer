@@ -63,7 +63,10 @@ extension Commands {
             ctx.ledger.event("release", now: ctx.now, [("owner", .string(ctx.owner))])
             let after = ctx.aggregate()
             if after.count == 0 {
-                outcome.stdout.append("⏾ released")
+                // Say what changed about the MACHINE, not only about the
+                // claim: this is the moment the lid stops being held, and
+                // every neighbouring path says so.
+                outcome.stdout.append("⏾ released · sleep allowed again")
             } else {
                 let untilText = after.until == 0 ? "further notice" : Formats.hhmm(after.until)
                 outcome.stdout.append("⏾ your claim is released · \(after.count) still live, awake until \(untilText)")

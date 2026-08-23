@@ -25,6 +25,27 @@ import Testing
         #expect(Durations.parse("0") == nil)
         #expect(Durations.parse("0m") == nil)
         #expect(Durations.parse("15a4h") == nil) // a bare number only at the end
+        // Days: overnight is a first-class case, and "1d" is how it is spelled.
+        #expect(Durations.parse("1d") == 86_400)
+        #expect(Durations.parse("2days") == 172_800)
+        #expect(Durations.parse("1d12h") == 129_600)
+        #expect(Durations.parse("1d30") == 88_200) // trailing bare number = minutes
+        #expect(Durations.parse("0d") == nil)
+    }
+
+    /// A deadline on another calendar day must never render as a bare HH:mm:
+    /// "until 08:00" for a time 23 hours away reads as a time already gone.
+    @Test func aDeadlineOnAnotherDaySaysWhichDay() {
+        // 2027-01-15 09:00 Europe/Berlin, the acceptance suite's fixed epoch.
+        let now = 1_800_000_000
+        #expect(Formats.hhmmDated(now + 3600, now: now) == Formats.hhmm(now + 3600))
+        #expect(!Formats.hhmmDated(now + 3600, now: now).contains("tomorrow"))
+        #expect(Formats.hhmmDated(now + 86_400, now: now).hasSuffix(" tomorrow"))
+        // Beyond tomorrow, name the date — "tomorrow" would be a lie and a
+        // bare time would be worse.
+        let far = Formats.hhmmDated(now + 3 * 86_400, now: now)
+        #expect(far.contains(" on "))
+        #expect(!far.contains("tomorrow"))
     }
 
     @Test func untilRollsToTomorrowWhenBehindUs() {
@@ -189,6 +210,57 @@ import Testing
         Engine.settle(ctx: ctx, why: "two")
         // The second pass found the switch already right and wrote nothing.
         #expect(power.switchWrites.count == 1)
+    }
+}
+
+/// A write that does not land must be reported, never swallowed: the switch
+/// flips before the claim file does, so a silent failure is the one state
+/// where simmer announces awake time nothing is holding.
+@Suite struct LedgerWriteFailures {
+    /// A claims directory that exists but cannot be written to — the shape a
+    /// wrong owner or a restrictive umask produces.
+    func makeReadOnlyLedger() -> (Ledger, URL) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-ro-\(UUID().uuidString)")
+        let ledger = Ledger(stateDir: dir) // creates claims/
+        try? FileManager.default.setAttributes([.posixPermissions: 0o500],
+                                               ofItemAtPath: ledger.claimsDir.path)
+        return (ledger, dir)
+    }
+
+    @Test func aClaimThatCannotBeWrittenReturnsFalse() {
+        let (ledger, dir) = makeReadOnlyLedger()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700],
+                                                   ofItemAtPath: ledger.claimsDir.path)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        #expect(ledger.write(Claim(owner: "test", until: 2000, started: 900)) == false)
+        #expect(ledger.claims().isEmpty)
+    }
+
+    @Test func aWritableLedgerStillReturnsTrue() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-rw-\(UUID().uuidString)")
+        let ledger = Ledger(stateDir: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(ledger.write(Claim(owner: "test", until: 2000, started: 900)) == true)
+        #expect(ledger.writeCap(until: 3000, setBy: "terminal", now: 1000) == true)
+        #expect(ledger.claims().count == 1)
+        #expect(ledger.readCap()?.until == 3000)
+    }
+
+    /// No leftovers next to real state when a write fails.
+    @Test func aFailedWriteLeavesNoTempFileBehind() {
+        let (ledger, dir) = makeReadOnlyLedger()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700],
+                                                   ofItemAtPath: ledger.claimsDir.path)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        _ = ledger.write(Claim(owner: "test", until: 2000, started: 900))
+        let entries = (try? FileManager.default.contentsOfDirectory(atPath: ledger.claimsDir.path)) ?? []
+        #expect(entries.isEmpty)
     }
 }
 

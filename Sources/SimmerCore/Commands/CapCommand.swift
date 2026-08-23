@@ -69,7 +69,14 @@ extension Commands {
                 return outcome
             }
 
-            ctx.ledger.writeCap(until: target, setBy: ctx.owner, now: ctx.now)
+            // An announced ceiling that did not reach disk is not a ceiling.
+            guard ctx.ledger.writeCap(until: target, setBy: ctx.owner, now: ctx.now) else {
+                ctx.ledger.log("ERROR: could not record the cap", now: ctx.now)
+                outcome.merge(.failure(
+                    "could not record the cap in \(ctx.ledger.capFile.path) — no ceiling is in force. Run 'simmer doctor'",
+                    json: json))
+                return outcome
+            }
             ctx.ledger.log("cap set to \(Formats.hhmm(target)) by \(ctx.owner)", now: ctx.now)
 
             // Clipping is immediate, not merely a promise about future claims.
