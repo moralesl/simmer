@@ -231,6 +231,7 @@ t "help documents down/force"   "$SIMMER --help | grep -q 'simmer down' && $SIMM
 t "--version prints"            "$SIMMER --version | grep -q simmer"
 t "warns about a lazy lock delay" "SIMMER_FAKE_LOCKDELAY=300 $SIMMER 30m --owner t --force | grep -q 'UNLOCKED 300s'"
 t "silent when lock is immediate" "! $SIMMER 30m --owner t --force | grep -q UNLOCKED"
+t "60s grace stays silent"        "! SIMMER_FAKE_LOCKDELAY=60 $SIMMER 30m --owner t --force | grep -q UNLOCKED"
 t "notify-test runs"            "SIMMER_NOTIFY=auto $SIMMER notify-test >/dev/null 2>&1"
 if command -v swiftc >/dev/null 2>&1; then
   t "notifier source compiles"  "swiftc -O -o '$TMP/nb' '$HERE/notifier/main.swift'"

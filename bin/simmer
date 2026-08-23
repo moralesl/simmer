@@ -524,7 +524,7 @@ cmd_take() {
     echo "☕ simmering until $(date -r "$until_epoch" '+%H:%M') ($(human_duration $((until_epoch - now))))${reason:+ · $reason}"
     echo "   lid may close · $(battery_line) · releases below ${min_battery}%"
     local delay; delay="$(lock_delay_seconds)"
-    [ -n "$delay" ] && [ "$delay" != 0 ] &&
+    [ -n "$delay" ] && [ "$delay" -gt 60 ] 2>/dev/null &&
       echo "   note: the screen stays UNLOCKED ${delay}s after the lid closes (System Settings > Lock Screen)"
     notify "☕ Simmering until $(date -r "$until_epoch" '+%H:%M')" \
            "$(human_duration $((until_epoch - now))) · lid may close" \
@@ -1100,7 +1100,9 @@ cmd_doctor() {
   fi
   say "state directory writable"           "[ -w '$STATE' ]"
   say "caffeinate present"                 "command -v caffeinate"
-  say "screen locks immediately on lid close" "[ \"\$(lock_delay_seconds)\" = 0 ]"
+  # 60s of grace is a deliberate choice a human can make; five minutes is a
+  # laptop that walks away unlocked. The line between them is the threshold.
+  say "screen locks within 60s of lid close"  "[ \"\$(lock_delay_seconds || echo 999)\" -le 60 ]"
   echo
   echo "State:"
   cmd_status | sed 's/^/  /'
