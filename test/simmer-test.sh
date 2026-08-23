@@ -254,6 +254,9 @@ t "--seconds is -1 for forever" "[ \"\$($SIMMER budget --seconds)\" = -1 ]"
 clear_all; echo 0 > "$SIMMER_FAKE_PMSET"
 t "exit 3 with nothing claimed" "$SIMMER budget >/dev/null; [ \$? = 3 ]"
 t "--seconds stays silent then" "[ -z \"\$($SIMMER budget --seconds 2>/dev/null)\" ]"
+# budget's answer cannot depend on who asks, but callers pass --owner to
+# everything else, so dying on it here would be a papercut with no upside.
+t "budget tolerates --owner"    "$SIMMER budget --owner agent >/dev/null; [ \$? = 3 ]"
 # The aggregate is what an agent is really asking about: whose claim provides
 # the time does not change how long the work has.
 claim mine  $((NOW+600))  "$NOW" mine  20 1 "$NOW"

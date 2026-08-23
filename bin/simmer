@@ -1355,6 +1355,11 @@ cmd_budget() {
       # The whole answer as one object. Output only: the exit codes stay the
       # contract, so `budget --json --need 20m || wind_down` keeps working.
       --json)    json=1; shift ;;
+      # Accepted and ignored. budget answers over the aggregate by contract, so
+      # who is asking cannot change the answer -- but callers pass --owner to
+      # every other command and dying on it here is a papercut with no upside.
+      --owner)      shift 2 ;;
+      -r|--reason)  shift 2 ;;
       *)         die "usage: simmer budget [--need 20m] [--seconds] [--json]" ;;
     esac
   done
