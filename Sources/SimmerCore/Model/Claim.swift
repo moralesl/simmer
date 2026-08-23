@@ -1,7 +1,7 @@
 import Foundation
 
 /// One claim: a deadline, a reason, a battery floor, and a name on it.
-/// A claim's id IS its owner (CONTRACTS.md § D1) — one live claim per owner,
+/// A claim's id IS its owner (CONTRACTS.md § the claims ledger) — one live claim per owner,
 /// and no actor can address another's by construction.
 ///
 /// Persisted as a flat format=2 key=value file so the menu bar can read a

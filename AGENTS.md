@@ -21,6 +21,9 @@ make install     # ~/Applications/Simmer.app + ~/.local/bin/simmer + the guard
 make uninstall   # removes exactly what install wrote
 ```
 
+`BRIEF.md` and `DESIGN-NOTES.md` guided the v1 rewrite and are not in the tree; what they decided is in `docs/CONTRACTS.md`, and their text is in git history.
+Cite the contract, not them.
+
 ## Iron rules
 
 - **The test seam is load-bearing.** Every side effect outside the process goes through `SIMMER_FAKE_*` / `XDG_STATE_HOME` — a new side effect ships WITH its seam, or the suite is lying about being hermetic.
@@ -35,5 +38,11 @@ make uninstall   # removes exactly what install wrote
   Never let a test bundle ask for notification permission under a production id.
 - **SimmerCore stays pure**: no AppKit, no printing, no argv, no globals.
   The CLI and the app are renderers over it — that is what keeps them from disagreeing.
+- **simmer never escalates its own privileges.** The sudoers rule is composed in `SudoRule`, shown in full, and run by a human — no `osascript … with administrator privileges`, no Authorization Services.
+  Widening the rule's scope, letting the app run it, or letting the installer's copy drift from `SudoRule` all fail `SudoRuleTests`.
+- **Yes/no means a JSON boolean** on every surface except the flat `--machine` (and its `status --json` mirrors `on_battery`/`sleep_disabled`).
+  Asserted against raw JSON text — `as? Bool` accepts `0`/`1` and would miss it.
+- **A verb in `Normalize.verbs` must have a subcommand behind it.** Otherwise it reaches the raw parser, whose "Unexpected argument" is the one refusal in the surface that names no fix.
+  `everyDocumentedVerbResolves` is the gate.
 
 The bash spike (v0.1) that preceded this implementation lives at the git tag `v0.1` — reference material only; nothing imports from it.

@@ -13,7 +13,18 @@ On Apple silicon the machine sleeps the moment you close it no matter which asse
 
 **Why does it need my password?** Only root can flip that switch, and the guard has to be able to flip it back while nobody is at the keyboard.
 So a two-line `/etc/sudoers.d` rule, scoped to exactly `pmset -a disablesleep 0` and `pmset -a disablesleep 1` and nothing else.
-Asked once, at install, and the rule is printed in full before it is asked for.
+Asked once, at install, and the rule is printed in full before it is asked for. simmer never escalates its own privileges: it composes the command and shows it, and you run it — the app's setup window hands you the command rather than performing it, and `simmer doctor` prints it if it is missing ([SECURITY.md](../SECURITY.md)).
+
+**How do I remove it?** Two commands, and the second one is yours because it needs root:
+
+```bash
+make -C ~/.local/share/simmer uninstall   # the app, the CLI symlink, the guard
+sudo rm /etc/sudoers.d/simmer             # the sudo rule
+```
+
+`~/.local/share/simmer` is the checkout the one-paste installer made.
+The uninstall removes exactly what the install wrote — nothing else, and it never touches a sudoers rule it cannot prove it wrote.
+Your state (`~/.local/state/simmer/`) is left alone; delete it if you want the log and the claims gone too.
 
 **I removed simmer but `sudo -l` still shows the pmset rule.** Look for it under another name: `sudo grep -rn disablesleep /etc/sudoers /etc/sudoers.d/`.
 This machine carried one called `awake`, from before the tool was renamed, and every simmer install adopted it silently instead of writing its own.

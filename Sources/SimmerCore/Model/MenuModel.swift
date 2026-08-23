@@ -5,7 +5,7 @@ import Foundation
 /// AppKit is logic the suite cannot reach.
 public enum MenuAction: Equatable, Sendable {
     /// Take/replace the menu bar's own claim — the only way to guarantee more
-    /// time without touching anyone else's (CONTRACTS § D1).
+    /// time without touching anyone else's (CONTRACTS.md § the claims ledger).
     case claim(String)
     case claimForever
     case releaseMine
@@ -52,7 +52,7 @@ public struct MenuItemModel: Equatable, Sendable {
 }
 
 public enum MenuModel {
-    /// Lead with why, then act (DESIGN-NOTES): header first, the claims, the
+    /// Lead with why, then act: header first, the claims, the
     /// 80% actions, the cap, then the bridge to the CLI.
     public static func build(aggregate: Aggregate, batteryLine: String) -> [MenuItemModel] {
         var items: [MenuItemModel] = []
@@ -114,7 +114,7 @@ public enum MenuModel {
 
     static func releaseItems(_ aggregate: Aggregate) -> [MenuItemModel] {
         let mineExists = aggregate.live.contains { $0.claim.owner == "menubar" }
-        // Destructive actions name their blast radius (DESIGN-NOTES).
+        // Destructive actions name their blast radius.
         let everything = "Release everything (\(aggregate.count))"
         if mineExists && aggregate.count > 1 {
             return [MenuItemModel(title: "Release mine", symbol: "moon.zzz.fill",

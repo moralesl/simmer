@@ -6,7 +6,8 @@ import SimmerCore
 /// The event-driven half of the guard: lid (via sleep/wake), power source
 /// changes, thermal state. Each one fires the same idempotent tick() the
 /// LaunchAgent runs every 30 seconds — instant response, with the launchd
-/// backstop for when this process is not running (BRIEF.md: both ways).
+/// backstop for when this process is not running — the guard runs both
+/// ways over one idempotent tick() (CONTRACTS.md § v1 surface additions).
 final class PowerEvents {
     static let shared = PowerEvents()
     private var powerSourceRunLoopSource: CFRunLoopSource?

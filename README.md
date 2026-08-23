@@ -6,19 +6,19 @@
 
 **Keep your Mac awake for a bounded time — lid closed — then let it sleep again.**
 
-[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey?logo=apple)](#) [![status](https://img.shields.io/badge/v1-swift-brightgreen)](docs/CONTRACTS.md)
+[![test](https://github.com/moralesl/simmer/actions/workflows/test.yml/badge.svg)](https://github.com/moralesl/simmer/actions/workflows/test.yml) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey?logo=apple)](#) [![status](https://img.shields.io/badge/v1-swift-brightgreen)](docs/CONTRACTS.md)
 
 </div>
 
 ## Install
 
-One paste, one native password dialog, one click on Allow:
+One paste, one password, one click on Allow:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/moralesl/simmer/main/bootstrap.sh | bash
 ```
 
-That checks the Command Line Tools are genuinely present, clones, compiles locally (which is why there is no Gatekeeper warning and no Apple account — see the FAQ), installs `Simmer.app` with its menu bar and background guard, shows the exact two-line sudo rule before asking for your password once, and launches the app so the notification permission banner arrives carrying simmer's own icon.
+That checks the Command Line Tools are genuinely present, clones, compiles locally (which is why there is no Gatekeeper warning and no Apple account — see the FAQ), installs `Simmer.app` with its menu bar and background guard, shows the exact two-line sudo rule in full before `sudo` asks for your password once, and launches the app so the notification permission banner arrives carrying simmer's own icon. simmer never gives itself root: it shows you the rule and you approve it — see [SECURITY.md](SECURITY.md).
 
 ```bash
 simmer 2h -r "big build"    # stay awake two hours, lid may close
@@ -107,6 +107,20 @@ make uninstall   # removes exactly what install wrote
 
 The acceptance suite honours `SIMMER_BIN`, so it can gate any implementation of [docs/CONTRACTS.md](docs/CONTRACTS.md) — that is what makes it the executable form of the contract.
 During development the app builds under a `.devN` bundle id; the clean production id is spent only at release, because macOS caches a notification permission verdict per bundle id forever ([docs/LEARNINGS.md](docs/LEARNINGS.md) § 1).
+
+Contributing: [CONTRIBUTING.md](CONTRIBUTING.md).
+Reporting something sensitive: [SECURITY.md](SECURITY.md).
+
+## Uninstall
+
+```bash
+make -C ~/.local/share/simmer uninstall   # the app, the CLI symlink, the guard
+sudo rm /etc/sudoers.d/simmer             # the sudo rule — needs root, so it is yours
+```
+
+`~/.local/share/simmer` is where the one-paste installer puts the checkout.
+The uninstall removes exactly what the install wrote and nothing else; it leaves the sudo rule alone deliberately, because removing it needs root and simmer only ever removes what simmer wrote.
+State (`~/.local/state/simmer/`) is yours to keep or delete.
 
 ## For agents
 

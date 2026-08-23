@@ -3,7 +3,8 @@ import Foundation
 extension Commands {
     /// One renderer per surface, all in the core, all reading the ledger the
     /// same way. The launcher shims are deferred until after the first release
-    /// (BRIEF.md), but the renderers stay here and stay tested — a fourth
+    /// (the CLI is a renderer over the core), but the renderers stay here and
+    /// stay tested — a fourth
     /// surface costs a case branch here and a one-line shim there.
     public static func render(surface: String, query: String, ctx: Context) -> Outcome {
         var outcome = Outcome()

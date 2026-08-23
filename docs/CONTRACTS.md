@@ -1,20 +1,12 @@
 # Contracts
 
-What stays true across implementations.
-The v0.1 spike (bash) and v1 (Swift) both honour this page; the test suite is the executable form of it, and any implementation that passes it under the seam variables below is a valid simmer.
+**This page is the law, in prose.** What stays true across implementations: the surface, the exit codes, the machine output, and the reasoning behind each choice.
 
-**This page is the law, in prose.** v1 is being written from scratch and brings its own tests; it does not inherit the spike's harness.
+`Tests/SimmerAcceptanceTests` is the executable form of it.
+It drives the built binary through its public surface and honours `SIMMER_BIN`, so **any** implementation that passes it under the seam variables below is a valid simmer — which is the question that matters: does it satisfy every row here, including the exit codes and the machine output, without root and without changing the machine under the tester?
 
-The v0.1 spike and its two instruments live at the git tag `v0.1` (`git show v0.1:archive/…` — the tree no longer carries them).
-They were reference material rather than v1's gate; v1's own suites now exist under `Tests/`:
-
-- `make -C archive/v0.1-spike test` (at the tag) — 175 hermetic assertions over the surface below.
-  Honours `SIMMER_BIN`, so it *can* be pointed at a v1 binary, but v1 owes no allegiance to it.
-- `make -C archive/v0.1-spike diff` (at the tag) — a differential harness: identical CLI scenarios against two binaries, normalised and diffed, with contract-bearing lines compared exactly and prose allowed to differ.
-  The idea is worth stealing even if the script is not.
-
-Whatever v1 writes instead must still be able to answer: does an implementation satisfy every row below, including the exit codes and the machine output, without root and without changing the machine under the tester?
-That is what the seam section exists for.
+Human-facing sentences may be reworded at any time.
+Everything a script can read — exit codes, `--json`, `--machine`, `events.jsonl` — is contract, and machine fields are append-only.
 
 ## CLI surface
 
@@ -34,8 +26,9 @@ simmer log [n] · doctor · notify-test · --version · --help
 simmer render swiftbar|raycast|alfred [query]   surfaces, drawn by the core
 ```
 
-Durations: `90`, `90m`, `2h`, `1h30m`, `45min`, `30s`, `2H`.
-Bare number = minutes.
+Durations: `90`, `90m`, `2h`, `1h30m`, `45min`, `30s`, `2H`, `1d`, `1d12h`.
+Bare number = minutes; a trailing bare number after a unit is minutes (`2h15`).
+Days exist because overnight is a first-class case — `--require-ac` was added for exactly it.
 
 `--force` is accepted and does nothing.
 It used to mean "stamp over someone else's lease"; the claims model removed the conflict it resolved.
@@ -59,7 +52,12 @@ Callers that conflate them keep working while the machine sleeps.
 
 `status --machine`: `key=value` lines — `state` (active·forever·idle·orphan), `until` (epoch, 0=none), `left`, `left_short`, `reason`, `owner`, `min_battery`, `battery`, `on_battery`, `sleep_disabled`, `since`, `claim_count`, `cap` (epoch, 0=none).
 `status --json` / `budget --json`: the same data as one JSON object; numbers are numbers, `fits` is `true|false|null`, `seconds_left` is `-1` for no deadline, `capped` is `true` when the deadline reported IS the cap, and `claims` is an array with one object per live claim (`id`, `owner`, `until`, `left`, `reason`, `min_battery`, `require_ac`, `since`, `human`).
-Fields are append-only; removing or renaming one is a major version.
+Fields are append-only; removing or renaming one is a major version, **and so is changing one's type.**
+
+**Yes/no fields are JSON booleans**, everywhere they appear: `require_ac`, `human`, `capped`, `clipped_by_cap`, `fits`, and every boolean in `events.jsonl`.
+The two exceptions are the flat surfaces, which have no types at all: `--machine` emits `0`/`1`, and `status --json` keeps `on_battery` and `sleep_disabled` as `0`/`1` because they mirror `--machine` field for field.
+A reader must never have to discover that one field answers the same question in a different type than its neighbour, and one field must never carry two types across two surfaces of the same binary.
+The acceptance suite asserts this against the raw JSON text, because `JSONSerialization` bridges `0`/`1` to `Bool` and would let exactly that drift through a typed assertion.
 
 **The top-level fields describe the AGGREGATE** — what the machine will actually do — and the descriptive ones (`reason`, `owner`, `min_battery`, `since`) come from the claim that *defines* the aggregate deadline.
 With one claim that is the same answer the single-lease shape gave, which is why every existing reader keeps working.
@@ -96,7 +94,7 @@ Any implementation MUST honour these, or it cannot be tested without root and wi
 | `XDG_STATE_HOME=<dir>` | state isolation |
 | `SIMMER_RUN_CHUNK` / `SIMMER_RUN_INTERVAL` | run's renewal clocks |
 
-**Every side effect outside the process must be behind this seam, not merely the ones that are awkward to test.** The spike learned this by leaking 222 orphaned `caffeinate` processes from a suite that called itself hermetic: ten seam variables, and none of them covering the one call that spawned a detached child holding a real power assertion.
+**Every side effect outside the process must be behind this seam, not merely the ones that are awkward to test.** A suite that called itself hermetic leaked 222 orphaned `caffeinate` processes exactly this way: ten seam variables, and none of them covering the one call that spawned a detached child holding a real power assertion (`LEARNINGS.md`).
 If an implementation shells out or spawns anything, that has a `SIMMER_FAKE_*` too.
 
 `SIMMER_FAKE_NOW` is not a convenience.
@@ -111,22 +109,19 @@ Warn-once, the reminder interval and deadline crossings are the paths a differen
 4. One actor cannot touch another's awake time.
    Not by refusal — by construction: a claim's id is its owner, so no actor can address another's.
 5. Human-facing sentences may be reworded at any time; parse `--json`/`--machine`.
-   `make diff` enforces this asymmetry: contract lines must match exactly, prose differences are reported and allowed.
+   A differential harness is the instrument that enforces this asymmetry — contract-bearing lines must match exactly, prose differences are reported and allowed — and it is the only thing that catches a field name, an exit code or a field's *type* drifting.
 6. Reverting an **orphan** — the switch on with nothing claiming it — is allowed to anyone, always.
    Stopping is never the thing simmer stands in the way of.
 
-## D1 — the claims ledger
+## The claims ledger
 
-**Approved 2026-08-23.
-Landed in bash on 2026-08-23 (`format=2`), before the Swift rewrite**, so the suite covers claims under real multi-actor use before the language changes and a differential divergence is attributable to Swift rather than to the model.
-
-The ledger replaces the single lease: owner conflicts and `--force` disappear, `state`/`until` aggregate over claims.
+A ledger of claims rather than a single lease: owner conflicts and `--force` disappear, and `state`/`until` aggregate over claims.
 Human primacy is part of the contract: a human can release ANY claim, an agent only its own, and a human-set **cap** clips every claim present and future — claims request from below, the cap rules from above.
 
-### Resolved while landing it
+### The four readings the model does not determine on its own
 
-D1 left four things underdetermined.
-These are the readings the implementation and the suite encode; they are settled, not open.
+These are the readings the implementation and the suite encode.
+They are settled, not open.
 
 | Question | Resolution | Why this one |
 |---|---|---|
@@ -137,22 +132,23 @@ These are the readings the implementation and the suite encode; they are settled
 
 Human primacy is enforced against honest actors, not as a security boundary: nothing stops a process passing `--owner terminal`, and on a single-user Mac nothing could.
 What it buys is that an agent following the protocol cannot take a human's time away by accident, which is the failure that actually happens.
-The agent protocol states the obligation not to claim human authority.
-The v1 statement of that obligation is `FOR-AGENTS.md`, in this directory.
+The agent protocol states the obligation not to claim human authority: `FOR-AGENTS.md`, in this directory.
 
 ### Deltas from `format=1`, each deliberate
 
-| v0.1 spike | v1 | Why |
+An implementation migrating a single-lease predecessor owes these differences; the reasoning is what keeps them from being re-argued.
+
+| single lease (`format=1`) | claims (`format=2`) | Why |
 |---|---|---|
-| a second owner is refused | gets its own claim | D1 |
+| a second owner is refused | gets its own claim | awake time is counted, not owned |
 | `--force` replaces a lease | inert, and says so | nothing left to force |
 | `simmer down` releases whoever's lease | releases **yours** | an agent must not end a human's claim |
 | `simmer down` from a non-tty holding no claim released everything | **refused**, with the list | same reason. A human in that position still releases everything, and is told whose it was |
 | `simmer +20m` needed no ownership | needs a claim of yours | "extend" has to mean something specific once there are several |
 | `run` proved ownership with a `[run <pid>]` token in the reason | owner is `run:<pid>`; the reason is just the command | the identity moved to where identity lives |
-| a `run` could be replaced mid-flight | cannot happen | D1, by construction |
+| a `run` could be replaced mid-flight | cannot happen | by construction: its owner is `run:<pid>` |
 
-### Also landed with it
+### Part of the same model
 
 - `--require-ac` — the claim ends the moment the charger goes.
   An overnight claim is only sane on mains power; when the cable goes the assumption behind it is gone too, so it ends at 90% rather than at the floor hours later.
@@ -160,9 +156,9 @@ The v1 statement of that obligation is `FOR-AGENTS.md`, in this directory.
   At the floor itself the only thing left to report is that it is over.
 - `SIMMER_FAKE_NOW`.
 
-## v1 surface additions — blessed 2026-08-23, all additive
+## Surface guarantees
 
-The design-notes "take" items (the interaction proposals, consumed into this contract on adoption; their full text is in git history), adopted as contract:
+All additive to the surface above:
 
 - **Canonical verbs, sugar kept.** `claim` / `extend` / `release` are the grammar; `simmer 2h`, `simmer +20m`, `simmer down|off|stop` stay as documented, tested aliases.
   The alias set is exactly the surface above.

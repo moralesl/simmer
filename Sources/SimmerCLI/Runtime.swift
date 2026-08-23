@@ -2,7 +2,8 @@ import Foundation
 import SimmerCore
 
 /// The CLI boundary: resolves the environment once, builds a Context, and
-/// renders an Outcome — print, post, exit. Thin on purpose (BRIEF.md):
+/// renders an Outcome — print, post, exit. Thin on purpose (AGENTS.md,
+/// iron rules — SimmerCore stays pure and the CLI is a renderer over it):
 /// everything it can do, SimmerCore does, so the app and the CLI cannot
 /// disagree.
 enum Runtime {

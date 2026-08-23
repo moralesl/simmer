@@ -1,47 +1,13 @@
 # Learnings
 
-Everything this project has already paid for.
-The point of the page is that nobody pays twice — a fresh session should read this and `CONTRACTS.md` and then know as much as the session that finished before it.
+Traps this project has already paid for, and the practices that caught them.
+The point of the page is that nobody pays twice: everything here cost an hour or more, and almost none of it errors — the wrong thing simply happens.
 
-Three kinds of thing live here: platform traps, decisions already taken, and decisions still open.
-The last section is the one to read first.
+The verified facts about keeping a Mac awake and about notification identity are in `PLATFORM-FACTS.md`.
+The rules those facts produced are in `CONTRACTS.md`.
+This page is what was learned the hard way in between.
 
----
-
-## 1. Open — needs a human
-
-These are not blocked on work.
-They are blocked on a person deciding.
-
-| # | Question | Why it needs you |
-|---|---|---|
-| 1 | **Bundle id during development.** `io.github.moralesl.simmer` is *currently authorized* for notifications on Luis's Mac. macOS caches a permission verdict per bundle id **forever**, and a denial can never be undone for that id. A half-built v1 app could burn it. **Decided and implemented:** the Makefile defaults to a `.devN` id (`.dev` was burned on its first install day — see § 3); promotion is `make install BUNDLE_ID=io.github.moralesl.simmer`, a release-checklist step, never a default. See the bundle-id inventory in § 3. | Kept here because it is irreversible and easy to forget. |
-| 2 | **Distribution audience.** Answered once as "mixed, some non-technical", which is why `bootstrap.sh` exists. Worth re-confirming, because it decides whether a Homebrew tap or the one-paste line is the real channel — and therefore how much packaging work v1 owes. | Only you know who they are. |
-| 3 | **Raycast / Alfred.** Decided: not in v1; shims on `ROADMAP.md`, after first-release feedback. SwiftBar closed 2026-08-23: never — the app is the menu bar. | Scheduling only. |
-
----
-
-## 2. Decisions already taken — do not relitigate
-
-| Decision | Where it is recorded |
-|---|---|
-| Claims ledger replaces the single lease (`format=2`); `--force` is inert; the cap is human-only; a human may release any claim, an agent only its own | `CONTRACTS.md` § D1, with the four ambiguities that had to be resolved and why each way |
-| A claim's **id is its owner** — one live claim per owner | `CONTRACTS.md` § D1 |
-| Claims retire on **their own** battery floor; thermal ends all of them | `CONTRACTS.md` § D1 |
-| A **passed cap keeps refusing** until a human moves it | `CONTRACTS.md` § D1 |
-| No paid Apple signature, ever. Ad-hoc is enough | `PLATFORM-FACTS.md` |
-| **v1 starts from zero.** The bash implementation and its 175-assertion suite are the *v0.1 spike*, archived, and inherited by nothing. v1 writes its own tests against `CONTRACTS.md` | this file, § 4 |
-| **`simmer down` releases only your own claims — unless you are the human**, who may release any. Blessed 2026-08-23 | `CONTRACTS.md` § D1 |
-| Versioning: the bash spike is **v0.1** (tagged; `v0.0-lease` is the pre-claims design). The Swift application is **v1** | this table |
-| One Swift package, three products; the guard runs **both** ways — IOKit events in the app *and* a LaunchAgent tick as backstop, over one idempotent `tick()` | this file, § 5 |
-| Never distribute a `.dmg` or a browser-downloaded zip | `PLATFORM-FACTS.md` |
-
----
-
-## 3. Platform traps, each one paid for
-
-`PLATFORM-FACTS.md` holds the verified facts about keeping the Mac awake and about notification identity.
-These are the ones found *since*, and they are the kind that cost an hour each because nothing errors — the wrong thing simply happens.
+## Platform traps
 
 ### `command -v git` is not a check for git on macOS
 
@@ -55,47 +21,120 @@ Run the thing and look at its exit code: `git --version >/dev/null 2>&1`.
 
 `SIMMER_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` yields the **current working directory** under `curl … | bash`, because `BASH_SOURCE` is unset and `dirname ""` is `.`.
 Nothing errors.
-The installer then reads `$SIMMER_HOME/notifier/main.swift` from a directory that has nothing to do with the project.
+The installer then reads its own files from a directory that has nothing to do with the project.
 
 Any script that reads files relative to itself must verify the guess against a file only it has, and fail loudly.
-`bootstrap.sh` exists because of this.
+`bootstrap.sh` clones the repository and works from the clone for this reason.
+
+### A `curl | bash` installer can be cut off mid-download
+
+A dropped connection or a proxy truncating the response leaves bash executing however much of the script arrived.
+Everything therefore lives inside functions with a single `main "$@"` on the last line: a truncated download cannot call a function it never finished reading, so the failure mode is doing nothing rather than doing half an install.
 
 ### BSD `sed` has no `\b`
 
 It matches nothing, silently.
-This turned a differential harness into a machine that reported the clock ticking as a finding, twice, before it was spotted.
 On macOS the word boundaries are `[[:<:]]` and `[[:>:]]`.
 
 ### Measure an exit code, not a pipeline's exit code
 
-`visudo -c -f file | head -3; echo $?` reports `head`'s status, which is always
-0. The first attempt at validating a sudoers file concluded `visudo` accepted garbage.
-   It does not: broken → 1, valid → 0. Redirect, then measure.
+`visudo -c -f file | head -3; echo $?` reports `head`'s status, which is always 0 — which once produced the conclusion that `visudo` accepts garbage.
+It does not: broken → 1, valid → 0. Redirect, then measure.
 
 ### `launchctl bootout` returns before the job is gone
 
 Poll `launchctl print` until it fails, or the following `bootstrap` fails with `5: Input/output error`.
-(Already in `PLATFORM-FACTS.md`; repeated because it bit again while uninstalling.)
 
-### SwiftBar keeps per-plugin state as a mirrored path tree
+### A malformed file in `/etc/sudoers.d` can break `sudo` entirely
 
-Under `~/Library/Application Support/SwiftBar/Plugins/`, SwiftBar creates a directory *per component of the plugin's absolute path*.
-Removing a plugin symlink leaves that tree behind, so a renamed plugin accumulates ghosts — `awake.10s.sh` was still there long after the tool was called `simmer`.
-They are empty directories, so `rmdir` bottom-up is the right tool: it refuses if anything is actually in them, where `rm -rf` would not.
+Not just the rule — `sudo` itself, which on a laptop with one admin account is a genuinely bad afternoon.
+`visudo -c -f <file>` needs no root to check a file you own.
+Validate before installing, always: write the rule unprivileged, validate it, and only then install it as root.
 
-### Other tools hold power assertions too, and none of them tell you
+### An installer that checks for a *capability* silently adopts a stranger's grant
 
-While checking the machine was clean, `caffeinate -i -t 300` processes kept reappearing.
-They are **Claude Code's own** — the binary spawns one per session to stop idle sleep interrupting a long turn.
-Zero hits for `caffeinate` in any steering file, settings file or hook; the parent of every one is a `claude` process.
+Deciding whether to write a sudoers rule like this is wrong:
 
-Worth knowing for two reasons.
-It is a false positive when auditing simmer's own leaks, so match on simmer's `-ims`/`-dims` signature rather than on the process name.
-And it is the sharpest argument for the Claude Code integration (now `ROADMAP.md`): the tool being used to build simmer is itself holding an invisible, unaccountable, lid-incapable assertion.
+```bash
+if sudo -nl /usr/bin/pmset -a disablesleep 0 >/dev/null 2>&1; then
+  say "sudoers rule already in place"
+```
+
+That is a check for the **capability**, not for **its own file**.
+Where the capability is already granted by some other file — on this project's first machine, `/etc/sudoers.d/awake`, written years earlier when the tool had a different name — the installer reports "already in place" on every run, never writes its own rule, and quietly runs on a grant it does not own.
+
+Three consequences, and the third is the one that bites:
+
+1. `make uninstall` announced that it was leaving `/etc/sudoers.d/simmer` alone — a file that had never existed.
+   The uninstall instructions were wrong.
+2. The real grant survived every uninstall, under a name nobody would think to look for.
+3. Auditing the machine reported the rule as present and simmer-owned, because the only evidence anyone looked at was `sudo -nl`.
+
+Check for the tool's **own file AND** the capability, and report the difference:
+
+| own file | capability | say |
+|---|---|---|
+| present | yes | fine, nothing to do |
+| absent | yes | *"something else already grants this — `sudo grep -rn disablesleep /etc/sudoers.d/`"*. Do not adopt it silently |
+| absent | no | install it |
+
+And uninstall may only claim to leave behind what it actually wrote.
+
+A tool that gets renamed leaves grants and state under the old name, and nothing goes looking for them: this was the third pre-rename artifact found in one session, after a stale log in the state directory and a stale plugin in SwiftBar's tree.
+
+### A notification denial is cached per bundle id, forever
+
+macOS remembers the verdict against the **bundle id**, and a denial can never be undone for that id — not by reinstalling, not by deleting the bundle, only by hand in System Settings.
+So bundle ids are a resource that can only be spent.
+
+Two consequences worth designing around:
+
+- **Develop under a throwaway id.** The Makefile defaults to a `.devN` id; the production id is promoted only once the app is known-good.
+  Never let a half-built app ask for permission under the id you intend to ship.
+- **A spike that builds an `.app` registers it with LaunchServices**, and that registration outlives the directory it was built in — a stale entry can point at a deleted path for weeks.
+  It is invisible to every ordinary check: not on `PATH`, not in `~/Applications`, not a launchd job, and `mdfind` does not index `/private/tmp`.
+  Only `lsregister` shows it.
+
+```
+lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/\
+LaunchServices.framework/Support/lsregister
+"$lsregister" -dump | grep -c '<bundle id>'      # is it still known?
+"$lsregister" -u /path/to/Some.app               # forget it
+```
+
+Build spikes under a `.spike` id, and unregister them when done.
+
+### The notification grant belongs to the EXECUTABLE, not the bundle
+
+With two executables in one ad-hoc-signed bundle, **each reads (and would request) its own authorization state.**
+
+This is the costliest misread in the project's history, because both halves looked like evidence.
+A CLI binary exec'd directly from `Contents/MacOS/` reported `notDetermined` right after a reinstall, which read as "reinstalling resets the grant" — while banners posted by the *app* kept working the whole time, on the same bundle id, across the same reinstall.
+The tell was the status reading `notDetermined` at the very moment a correctly-branded banner sat on screen.
+
+The app's grant was never reset; the CLI's was never granted, so every CLI-posted banner silently dropped.
+Consequences, all structural now:
+
+- **The app is the only poster.** The CLI and the guard enqueue into `$STATE/notify-spool.jsonl`; the app drains it and posts, action buttons included.
+  App not running = no banners, which is honest — the menu bar is gone then too.
+- **The CLI never links UserNotifications at all** (enforced in `Package.swift`): asking it anything from the CLI answers a question about the wrong executable.
+- `doctor` and `notify-test` read the app's heartbeat file (`$STATE/app.status`), never the notification centre.
+
+### APFS is case-insensitive: `Simmer` and `simmer` in one directory are the same file
+
+The obvious bundle layout — app executable `Contents/MacOS/Simmer`, CLI `Contents/MacOS/simmer` — self-destructs on a default APFS volume: the second `cp` silently overwrites the first, and the "app" then runs the CLI's `main`, prints a status line and exits.
+Nothing errors; the bundle even signs.
+The app executable is therefore `simmer-app` (`CFBundleExecutable` does not have to match the app's name), and the CLI keeps the `Contents/MacOS/simmer` path the docs promise.
+
+### Two processes over one directory need a signal, not a faster poll
+
+The menu bar and the CLI are separate processes over the same ledger, so a claim taken in a terminal is invisible to the app until it looks again.
+Polling faster is the wrong fix: each refresh reads the power state, which costs a subprocess, so a shorter interval buys freshness with battery — and still shows a stale minute for most of every interval that straddles a minute boundary.
+Watch the state that matters (`LedgerWatcher`), redraw when the display would actually change (`StatusTitle.secondsUntilChange`), and keep a coarse periodic backstop for whatever the watch cannot see.
 
 ### A seam that covers *most* of the side effects is not a seam
 
-The spike's suite advertised itself as hermetic: "no sudo, no real power state touched, nothing left behind".
+A predecessor implementation's suite advertised itself as hermetic: "no sudo, no real power state touched, nothing left behind".
 It had ten `SIMMER_FAKE_*` variables covering the sleep switch, the battery, thermal pressure, the lock delay and the clock — and **zero** covering `caffeinate`, which every single claim spawned as a detached child process holding a real power assertion.
 
 Found by checking for orphans before declaring the machine clean: **222 `caffeinate` processes**, 219 of them orphaned to `ppid 1`, 13 with no `-t` and therefore never expiring.
@@ -106,197 +145,40 @@ Two independent causes, both instructive:
 
 1. **The seam had a hole.** Anything with a side effect outside the process has to go through the seam, not just the things that are hard to test.
    `caffeinate` was easy to call and therefore never questioned.
-2. **The test helper bypassed the only cleanup path.** `clear_all() { rm -f "$CLAIMS"/*; }` deleted claim files directly, and `retire_claim()` — the only code that kills the recorded child pid — never ran.
+2. **The test helper bypassed the only cleanup path.** A fixture deleted claim files directly, so the only code that killed the recorded child process never ran.
    A fixture that manipulates state behind the implementation's back will leak whatever the implementation was responsible for.
 
-For v1: no detached child processes at all. v1 holds its idle-sleep assertion in-process (`Sources/SimmerApp/AppState.swift`).
+Hence: no detached child processes at all, and the idle-sleep assertion is held in-process (`Sources/SimmerApp/AppState.swift`), where it dies with the process — an orphan is structurally impossible because there is no child to leak.
 
-### Bundle-id inventory — verified against LaunchServices, 2026-08-23
+### Other tools hold power assertions too, and none of them tell you
 
-macOS caches a notification permission verdict **per bundle id, forever**, and a denial can never be undone for that id.
-So the ids this project has already touched are a resource that can only be spent, never recovered.
+While auditing for simmer's own leaks, `caffeinate -i -t 300` processes kept reappearing.
+They belonged to Claude Code: the binary spawns one per session so idle sleep does not interrupt a long turn.
+Nothing in any configuration file mentions it; the parent of every one was a `claude` process.
 
-| Bundle id | State | Use it? |
-|---|---|---|
-| `io.github.moralesl.simmer` | **0 references in LaunchServices.** Clean. The bundle that held it was removed and unregistered | **The production id.** Register it only once the app is known-good |
-| `io.github.moralesl.simmer.dev` | **burned 2026-08-23**, on its first install: denied while its permission banner was pending. The CLI's `notify-post` had called `requestAuthorization` from a non-LaunchServices context — the suspected cause (same shape as the `/tmp` burn below); whether a Don't-Allow click contributed is unresolved. Either way: only the app may ever request authorization now; the CLI reads the verdict and posts under it | Never. Reversible only by hand in System Settings |
-| `io.github.moralesl.simmer.dev2` | current development id (Makefile default) | Development. Burn freely |
-| `io.github.moralesl.simmer.barspike` | was registered by a `SimmerBar.app` left in a previous session's scratchpad, carrying a notification activity type. Unregistered and the bundle deleted on 2026-08-23 | Do not reuse. Its history is unknown |
-| `ai.causaprima.simmer.notifier` | **burned.** Denied on a first run from `/tmp`, and that verdict is permanent | Never |
-
-Two things this cost, and both are worth avoiding again.
-A spike that builds an `.app` **registers it with LaunchServices**, and that registration outlives the scratchpad it was built in — a stale entry pointed at a deleted path for weeks.
-And it is invisible to every ordinary check: it is not on `PATH`, not in `~/Applications`, not a launchd job, and `mdfind` does not index `/private/tmp`.
-Only `lsregister -dump` shows it.
-
-    lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/\
-    LaunchServices.framework/Support/lsregister
-    "$lsregister" -dump | grep -c '<bundle id>'      # is it still known?
-    "$lsregister" -u /path/to/Some.app               # forget it
-
-**Build spikes under a `.spike` id, and unregister them when done.**
-
-### An installer that checks for a *capability* silently adopts a stranger's grant
-
-The spike's installer decided whether to write its sudoers rule like this:
-
-```bash
-if sudo -nl /usr/bin/pmset -a disablesleep 0 >/dev/null 2>&1; then
-  say "sudoers rule already in place"
-```
-
-That is a check for the **capability**, not for **its own file**.
-On this machine the capability was already granted — by `/etc/sudoers.d/awake`, written years earlier when the tool had a different name.
-So simmer reported "already in place" on every install, never wrote `/etc/sudoers.d/simmer`, and quietly ran on a rule it did not own.
-
-Three consequences, and the third is the one that bites:
-
-1. `make uninstall` printed *"Left alone on purpose: /etc/sudoers.d/simmer"* — a file that had never existed.
-   The uninstall instructions were wrong.
-2. The real grant survived every uninstall, under a name nobody would think to look for.
-3. Auditing the machine reported the rule as present and simmer-owned, because the only evidence anyone looked at was `sudo -nl`.
-
-**For v1: check for its own file AND the capability, and report the difference.**
-
-| own file | capability | say |
-|---|---|---|
-| present | yes | fine, nothing to do |
-| absent | yes | *"something else already grants this — `sudo grep -rn disablesleep /etc/sudoers.d/`"*. Do not adopt it silently |
-| absent | no | install it |
-
-And uninstall may only claim to leave behind what it actually wrote.
-
-This was the third artifact from the pre-rename `awake` era found in one session, after `awake.log` in the state directory and `awake.10s.sh` in SwiftBar's plugin tree.
-A tool that gets renamed leaves grants and state under the old name, and nothing goes looking for them.
-
-### APFS is case-insensitive: `Simmer` and `simmer` in one directory are the same file
-
-The obvious bundle layout — app executable `Contents/MacOS/Simmer`, CLI `Contents/MacOS/simmer` — self-destructs on a default APFS volume: the second `cp` silently overwrites the first, and the "app" then runs the CLI's `main`, prints a status line and exits.
-Nothing errors; the bundle even signs.
-Found on 2026-08-23 because the launch check watched process lifetime rather than trusting the build. v1's app executable is therefore `simmer-app` (`CFBundleExecutable` does not have to match the app's name), and the CLI keeps the `Contents/MacOS/simmer` path the docs promise.
-
-### The notification grant belongs to the EXECUTABLE, not the bundle — and a second binary in the bundle reads its own
-
-The costliest misread of 2026-08-23, in two acts.
-Act one: `notify-post --status` (the CLI binary, exec'd directly from `Contents/MacOS/`) said `notDetermined` right after a reinstall — diagnosed as "reinstalling resets the grant", written up as such, wrong.
-Act two: banners posted by the APP kept working the whole time, on the same bundle id, across the same reinstall.
-The tell: status read `notDetermined` at the very moment a Simmer-branded banner sat on screen.
-
-What is actually true on this machine: with two executables in one ad-hoc bundle, each reads (and would request) its **own** authorization state.
-The app's grant was never reset; the CLI's was never granted, so every CLI-posted banner silently dropped — which is also the real reason the osascript fallback kept firing before it was removed.
-
-Consequences, all structural now:
-
-- **The app is the only poster.** The CLI and the guard enqueue into `$STATE/notify-spool.jsonl`; the app drains it every few seconds and posts, action buttons included.
-  App not running = no banners, which is honest — the menu bar is gone then too.
-- **The CLI never links UserNotifications at all** (enforced in Package.swift): asking UN anything from the CLI answers questions about the wrong executable.
-- Doctor and notify-test read the app's heartbeat file (`$STATE/app.status`), never UN.
-- `SIMMER_NOTIFIER_APP` is retired: there is no notifier bundle to point anywhere — the spool lives under `XDG_STATE_HOME` and is seam-isolated by construction.
+Worth knowing for two reasons.
+It is a false positive when auditing simmer, so match on simmer's own signature rather than on the process name.
+And it is the sharpest argument for the editor integration on `ROADMAP.md`: the tool used to build simmer was itself holding an invisible, unaccountable, lid-incapable assertion.
 
 ### A CLT-only toolchain hides swift-testing from `swift test`
 
-`Testing.framework` ships with the Command Line Tools, but outside every default search path — `swift test` fails with *no such module 'Testing'*, and after `-F` is added it still dies at runtime missing `lib_TestingInterop.dylib`.
+`Testing.framework` ships with the Command Line Tools, but outside every default search path — `swift test` fails with *no such module 'Testing'*, and once `-F` is added it still dies at runtime missing `lib_TestingInterop.dylib`.
 Both live under `/Library/Developer/CommandLineTools/Library/Developer/` (`Frameworks/` and `usr/lib/`).
 `make test` adds the four flags when that directory exists; under full Xcode they are absent and unneeded.
-Never `xcodebuild` — the fix stays inside SwiftPM.
+Never reach for `xcodebuild` — the fix stays inside SwiftPM.
 
-### A malformed file in `/etc/sudoers.d` can break `sudo` entirely
-
-Not just the rule — `sudo` itself, which on a laptop with one admin account is a genuinely bad afternoon.
-`visudo -c -f <file>` needs no root to check a file you own.
-Validate before installing, always.
-
-### bash 3.2 specifics (relevant to the archived implementation, and to any shell in this repo)
-
-- **A `case` inside `$( )` breaks.** 3.2 reads the pattern's closing paren as the end of the substitution.
-  Name a helper function instead.
-- No `${var,,}`, no associative arrays, no `mapfile`.
-- `set -e` tolerates a failing `&&` list as a statement — `[ x = y ] && echo` at the top level does not exit.
-  Verified, because the opposite is widely assumed.
-
----
-
-## 4. Process learnings
+## Practices that caught the above
 
 ### Drive the real install, not just the suite
 
 175 hermetic assertions were green while `simmer budget --owner agent` still exited 1 on a flag it should ignore, and while `simmer extend` silently dropped `--owner` so the menu bar's Extend button addressed the wrong claim.
-Both were found by running the installed tool the way a person would, on the real machine.
+Both were found by running the installed tool the way a person would, on a real machine.
 A suite tests what you thought of.
 
-### Two suites, two questions — the shape worth rebuilding
+### Two suites, two questions
 
-Both live at the git tag `v0.1` (`archive/v0.1-spike/test/`) and gate nothing.
-The *shape* is what to carry across:
+- **Is this implementation internally right?** Unit tests over the mechanics — parsing, the codec, aggregate ties, settle.
+- **Does the built binary honour the contract?** An acceptance suite that drives the binary through its public surface, honouring `SIMMER_BIN` so it is not welded to one implementation.
 
-- **Is this implementation internally right?** One hermetic suite over the whole CLI surface, honouring `SIMMER_BIN` so it is not welded to one binary.
-  175 assertions, no sudo, no real power state touched, nothing left behind.
-- **Does it still answer what the previous one answered?** Identical CLI scenarios driven against two binaries, output normalised for everything that legitimately varies (epochs, wall-clock times, durations, pids, versions), then diffed.
-
-The second is the only instrument that catches a message, an exit code, a field name or a state value drifting, because that is precisely the class of change where every individual unit test still passes.
-It found `budget` silently dropping the "of 2 h 0 min" half of its answer.
-
-Its comparison levels encode contract guarantee 5 directly: **contract-bearing lines must match exactly, prose may be reworded.** Without that split it is unrunnable during a rewrite, when every sentence gets retyped.
-Scenarios that are *supposed* to differ are declared as such, so a delta quietly reverting is also a finding.
-
-### The reference must be pinned
-
-The archived `make diff` compares against the **`v0.0-lease` tag** — the pre-claims design — never `HEAD~1`.
-The recorded deltas only differ from *that* design; a moving reference turns each of them into a failure the day after it lands.
-A tag and a branch sharing a name makes `git show v1:path` ambiguous, which is why the tags are `v0.1` and `v0.0-lease` and there is no branch of either name.
-
-### The spike is reference, not a foundation
-
-The bash implementation satisfies the whole contract and has 175 hermetic assertions behind it.
-It is still archived rather than carried forward, and the call was Luis's: it was a spike, and a rewrite that starts by inheriting the previous thing's harness is not a rewrite.
-
-What that costs, stated plainly so nobody rediscovers it as a surprise: v1 begins with **no executable specification**.
-`CONTRACTS.md` is prose, and prose does not fail a build.
-The differential idea — identical CLI scenarios against two binaries, contract-bearing lines compared exactly and prose free to differ — was the brief's named safety mechanism for the port, and it does not apply to a from-scratch build with nothing to differ against.
-
-So the first real deliverable of v1 is not a feature.
-It is the test seam (`SIMMER_FAKE_NOW`, `SIMMER_FAKE_PMSET`, `SIMMER_FAKE_BATTERY`, `SIMMER_FAKE_THERMAL`, `XDG_STATE_HOME`) plus tests written fresh against the contract, because without those the guard's branches — deadline crossings, warn-once, the battery floor, thermal — are reachable only by waiting for real time to pass on a real battery.
-That is the one thing worth mining the archive for: not its code, but the fact that it could test all of that without root and without touching the machine.
-
-### Raise the judgment calls when you make them, not in the summary
-
-The honest failure of the session that produced this page: a long stretch of work went by with real decisions taken inside it — how to resolve D1's four ambiguities, whether a passed cap should block, whether to skip `make uninstall` because it deletes the notification identity — and they were reported afterwards rather than surfaced as they came up.
-Everything is written down and reversible, but reading a list of settled decisions is not the same as being asked.
-Surface them at the moment of decision.
-
----
-
-## 5. The shape v1 is being built to
-
-Decided, with the reasoning, so it does not get re-argued:
-
-**One Swift package, three products.**
-
-```
-SimmerCore   the logic. No AppKit, no printing, no argv.
-             claims · ledger · cap · aggregate · settle · tick · budget ·
-             render · the power seam · the clock seam
-simmer       the CLI. argv → SimmerCore. Thin on purpose, because the
-             acceptance suite drives THIS and nothing else.
-Simmer.app   menu bar (own NSStatusItem) + event-driven guard + the notifier,
-             merged. The bundle IS the notification identity. The CLI binary
-             lives in Contents/MacOS/ and is symlinked onto PATH.
-```
-
-**The guard runs both ways, over one function.** `SimmerCore.tick()` is pure and idempotent — it reads the ledger and settles the switch, never a delta — so it is safe to call from two places at once:
-
-```
-tick()
-  ▲            ▲
-  │            └─ LaunchAgent, StartInterval 30 + RunAtLoad   (backstop)
-  └─ the app's IOKit callbacks: lid, power, thermal            (instant)
-```
-
-Event-driven alone was rejected: a login item is a process a user can quit, and the thing being guarded can flatten a battery.
-`RunAtLoad` is also what heals a `disablesleep` left on by a crash or typed by hand, which is the property that makes forgetting structurally impossible rather than merely unlikely.
-
-**Deferred on purpose:** the Raycast, Alfred and SwiftBar shims.
-`simmer render <surface>` stays in the core and stays tested; only the files that call it wait.
-
-**Not yet contracted, and nothing may depend on them:** `--lock`, `events.jsonl`, `simmer watch`, `simmer why`.
-See `ROADMAP.md`.
+The second is what catches a message, an exit code, a field name or a field's *type* drifting — precisely the class of change where every unit test still passes.
+Where a rule can be a test rather than a sentence in a document, it is one: the sudoers rule's scope, the absence of self-escalation, that every documented verb resolves, and that yes/no fields are booleans are all asserted rather than remembered.

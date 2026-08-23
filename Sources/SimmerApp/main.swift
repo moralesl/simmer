@@ -2,7 +2,7 @@ import AppKit
 import SimmerCore
 
 // Simmer.app: the menu bar, the event-driven half of the guard, and the
-// notification identity — merged into one bundle (BRIEF.md). LSUIElement in
+// notification identity — merged into one bundle. LSUIElement in
 // Info.plist keeps it out of the Dock; the LaunchAgent backstop keeps the
 // contract honest when this process is not running.
 

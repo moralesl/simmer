@@ -60,7 +60,7 @@ public enum Tick {
 
             // Battery below THIS claim's floor, on battery power only. Per
             // claim rather than all at once, so an actor asking --min-battery
-            // 60 cannot drag anyone else's time down with it (CONTRACTS § D1).
+            // 60 cannot drag anyone else's time down with it (CONTRACTS.md § the claims ledger).
             if onBattery, let percent, percent <= claim.minBattery {
                 ledger.retire(claim, why: "battery \(percent)% below floor \(claim.minBattery)%",
                               now: ctx.now)
