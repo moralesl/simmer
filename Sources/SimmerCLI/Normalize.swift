@@ -12,7 +12,7 @@ enum Normalize {
     /// argument" is the one refusal in the surface that names no fix.
     static let verbs: Set<String> = [
         "claim", "extend", "release", "cap", "status", "budget", "run",
-        "guard", "doctor", "log", "render", "notify-test",
+        "guard", "doctor", "log", "render", "notify-test", "uninstall",
     ]
 
     static func arguments(_ args: [String]) -> [String] {

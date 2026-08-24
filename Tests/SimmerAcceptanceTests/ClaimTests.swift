@@ -246,3 +246,56 @@ import Testing
         #expect(sim.run(["status", "--machine"]).out.contains("state=forever"))
     }
 }
+
+/// A bare duration past half a day says so — and says the useful thing, which
+/// differs by power source.
+///
+/// `simmer 2000` is 33 h 20 min and is a far likelier typo for `--until 20:00`
+/// than an intention. Never a refusal: overnight is a first-class case.
+@Suite struct LongHaulTests {
+    @Test func onBatteryTheNoteNamesTheFloorNotAFlagYouCannotUse() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let out = sim.run(["2000", "--owner", "test"],
+                          env: ["SIMMER_FAKE_BATTERY": "80:1"]).out
+        #expect(out.contains("note:"), "\(out)")
+        #expect(out.contains("floor ends this"), "\(out)")
+        // --require-ac is refused outright on battery, so recommending it here
+        // would be advice the reader cannot act on.
+        #expect(!out.contains("--require-ac"), "\(out)")
+    }
+
+    @Test func onACTheNoteRecommendsRequireAC() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let out = sim.run(["2000", "--owner", "test"],
+                          env: ["SIMMER_FAKE_BATTERY": "80:0"]).out
+        #expect(out.contains("--require-ac"), "\(out)")
+    }
+
+    @Test func aClaimThatAlreadyAskedForACIsNotToldTo() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let out = sim.run(["1d", "--require-ac", "--owner", "test"],
+                          env: ["SIMMER_FAKE_BATTERY": "80:0"]).out
+        #expect(out.contains("ends if the charger is unplugged"), "\(out)")
+        #expect(!out.contains("note: over"), "\(out)")
+    }
+
+    /// The threshold has to leave ordinary claims alone — the note is worth
+    /// nothing if it fires on a two-hour build.
+    @Test func ordinaryDurationsGetNoNote() {
+        let sim = Sim(); defer { sim.tearDown() }
+        for duration in ["30m", "2h", "8h"] {
+            let out = sim.run([duration, "--owner", "test"],
+                              env: ["SIMMER_FAKE_BATTERY": "80:1"]).out
+            #expect(!out.contains("note:"), "\(duration): \(out)")
+        }
+    }
+
+    /// `forever` has no deadline to compare, and must not divide by an epoch
+    /// of 0 — which would read as a very long claim indeed.
+    @Test func foreverGetsNoLongHaulNote() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let out = sim.run(["forever", "--owner", "test"],
+                          env: ["SIMMER_FAKE_BATTERY": "80:1"]).out
+        #expect(!out.contains("note:"), "\(out)")
+    }
+}

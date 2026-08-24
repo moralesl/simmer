@@ -8,21 +8,18 @@ The reasoning behind them is in `CONTRACTS.md`; what the platform permits is in 
 **What does simmer actually do?** Borrows `pmset -a disablesleep` — the only thing that keeps a Mac running with the lid shut — with a deadline, and has a background guard hand it back.
 It never leaves the switch on with nothing scheduled to turn it off.
 
-**Why not `caffeinate`?** It does not survive the lid.
+**Why not `caffeinate`, Amphetamine, KeepingYouAwake or LidRun?** The full comparison, including where each of them is the better answer, is in the README ("How it compares").
+The short version for `caffeinate`: it does not survive the lid.
 On Apple silicon the machine sleeps the moment you close it no matter which assertions are held, so no assertion of any kind can be the mechanism — only `pmset -a disablesleep` holds a closed lid, and only root can set it. v1 does hold an idle-sleep assertion of its own, in-process, but that is belt-and-braces and never the thing doing the work.
 
 **Why does it need my password?** Only root can flip that switch, and the guard has to be able to flip it back while nobody is at the keyboard.
 So a two-line `/etc/sudoers.d` rule, scoped to exactly `pmset -a disablesleep 0` and `pmset -a disablesleep 1` and nothing else.
 Asked once, at install, and the rule is printed in full before it is asked for. simmer never escalates its own privileges: it composes the command and shows it, and you run it — the app's setup window hands you the command rather than performing it, and `simmer doctor` prints it if it is missing ([SECURITY.md](../SECURITY.md)).
 
-**How do I remove it?** Two commands, and the second one is yours because it needs root:
-
-```bash
-make -C ~/.local/share/simmer uninstall   # the app, the CLI symlink, the guard
-sudo rm /etc/sudoers.d/simmer             # the sudo rule
-```
-
-`~/.local/share/simmer` is the checkout the one-paste installer made.
+**How do I remove it?** `simmer uninstall`.
+It lists what is on the machine and prints the exact commands that remove it, resolved — so nothing depends on remembering where the one-paste installer put its checkout.
+It shows them rather than running them, for the same reason the sudo rule is shown rather than applied, and because a binary that deletes its own bundle mid-run is a worse idea than a paste.
+The sudo rule is the one command that needs root, and it stays yours.
 The uninstall removes exactly what the install wrote — nothing else, and it never touches a sudoers rule it cannot prove it wrote.
 Your state (`~/.local/state/simmer/`) is left alone; delete it if you want the log and the claims gone too.
 

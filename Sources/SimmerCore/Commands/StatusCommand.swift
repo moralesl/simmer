@@ -60,13 +60,28 @@ extension Commands {
             }
 
             let reasonPart = aggregate.reason.isEmpty ? "" : " · \(aggregate.reason)"
-            if aggregate.until == 0 {
-                outcome.stdout.append("☕ simmering, no deadline · for \(Durations.human(ctx.now - aggregate.since))\(reasonPart)")
-            } else {
-                outcome.stdout.append("☕ simmering until \(Formats.hhmmDated(aggregate.until, now: ctx.now)) · \(Durations.human(aggregate.left)) left\(reasonPart)")
+            // With one claim the summary line IS the whole answer, so it has to
+            // name the holder when that is not the caller. It used to print the
+            // reason alone — so a person typing `simmer` while an agent held
+            // the only claim saw "39 min left · eval batch" and nothing saying
+            // whose it was, while `simmer down` in the same state listed
+            // "🤖 agent:evals" as it ended it. The informative surface was the
+            // destructive one; you learned who held it by taking it away.
+            //
+            // Only when it is somebody else's: telling you that you hold your
+            // own claim is noise, and with several claims the rows below
+            // already answer it.
+            var holder = ""
+            if aggregate.count == 1, let only = aggregate.live.first,
+               only.claim.owner != ctx.owner {
+                holder = " · \(Present.ownerGlyph(only.claim.owner)) \(only.claim.owner)"
             }
-            // The parts, whenever there is more than one. With a single claim
-            // the line above already said everything.
+            if aggregate.until == 0 {
+                outcome.stdout.append("☕ simmering, no deadline · for \(Durations.human(ctx.now - aggregate.since))\(holder)\(reasonPart)")
+            } else {
+                outcome.stdout.append("☕ simmering until \(Formats.hhmmDated(aggregate.until, now: ctx.now)) · \(Durations.human(aggregate.left)) left\(holder)\(reasonPart)")
+            }
+            // The parts, whenever there is more than one.
             if aggregate.count > 1 {
                 outcome.stdout.append(contentsOf: Present.claimRows(ctx: ctx))
             }

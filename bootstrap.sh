@@ -19,11 +19,13 @@
 set -euo pipefail
 
 REPO="${SIMMER_REPO:-https://github.com/moralesl/simmer}"
-# Which commit-ish to install. Defaults to the default branch; set
-# SIMMER_REF=v1.0.0 to pin a release. Once releases exist, the documented
-# one-liner names a tag — a first-time visitor should not be running whatever
-# landed on main an hour ago.
-REF="${SIMMER_REF:-main}"
+# Which commit-ish to install. Empty means "work it out": the newest release
+# tag, and `main` only when there are none. Defaulting to `main` meant a
+# first-time visitor got whatever landed an hour ago, and pinning the version
+# in the README instead would go stale the first time one is cut.
+# SIMMER_REF=v1.0.0 still overrides, and SIMMER_REF=main is how you ask for the
+# development branch on purpose.
+REF="${SIMMER_REF:-}"
 # A stable path: ~/.local/bin/simmer symlinks into it and the launchd guard
 # names it. Machinery, not a project someone works in.
 DIR="${SIMMER_DIR:-$HOME/.local/share/simmer}"
@@ -35,6 +37,14 @@ step() { printf '\n▸ %s\n' "$*"; }
 require_macos() {
   [ "$(uname -s)" = Darwin ] ||
     die "simmer is macOS only — it exists to work around macOS lid behaviour."
+
+  # Package.swift declares .macOS(.v14) and Info.plist LSMinimumSystemVersion
+  # 14.0, so an older Mac was going to fail — the only question was whether it
+  # failed in one sentence here or in a wall of compiler output four minutes in.
+  local major
+  major="$(sw_vers -productVersion | cut -d. -f1)"
+  [ "${major:-0}" -ge 14 ] ||
+    die "simmer needs macOS 14 or newer; this is $(sw_vers -productVersion)."
 }
 
 # `command -v git` is NOT the check: on a Mac with no developer tools,
@@ -57,8 +67,67 @@ NOCLT
   exit 1
 }
 
+# The real floor, and the one nothing said out loud: `swift-tools-version: 6.0`
+# in Package.swift means Swift 6, which means Xcode or Command Line Tools 16 or
+# newer. macOS 14 is necessary and not sufficient — a Mac on 14 with CLT 15
+# passes every check above and then dies on:
+#
+#   error: 'simmer': package 'simmer' is using Swift tools version 6.0.0 but
+#          the installed version is 5.10.0
+#
+# which tells the reader nothing about what to do. This is that same fact, said
+# before four minutes of cloning and building. CI hit it too: the macos-14 leg
+# defaults to Xcode 15.4 and had been red at manifest load.
+require_swift6() {
+  local full major
+  # Report the whole version, compare on the major. "Swift 5" in the message
+  # when `swiftc` says 5.10 reads like the check itself is broken.
+  full="$(swiftc --version 2>&1 | sed -n 's/.*Swift version \([0-9][0-9.]*\).*/\1/p' | head -1)"
+  major="${full%%.*}"
+  [ "${major:-0}" -ge 6 ] && return 0
+  cat >&2 <<NOSWIFT
+simmer: simmer needs Swift 6, and this machine has Swift ${full:-(unreadable)}.
+
+Swift 6 ships with Xcode 16 / Command Line Tools 16 and newer. Update the
+Command Line Tools, then paste the simmer line again:
+
+  sudo rm -rf /Library/Developer/CommandLineTools
+  xcode-select --install
+
+If you have several Xcodes installed, pointing the toolchain at a current one
+is enough:
+
+  sudo xcode-select -s /Applications/Xcode.app
+NOSWIFT
+  exit 1
+}
+
+# The newest `v*` tag on the remote, or empty. Resolved here rather than at the
+# top of the file because it needs a working git, and require_toolchain has run
+# by now — on a Mac with no developer tools /usr/bin/git is a stub that pops
+# Apple's installer and exits non-zero.
+resolve_ref() {
+  [ -n "$REF" ] && return 0
+  # `v[1-9]*`, not `v*`. The v0.x tags are history kept on purpose — v0.1 is
+  # the bash spike this implementation replaced, cited by README, FAQ and
+  # AGENTS.md as reference material. A version sort over `v*` would rank it
+  # "newest release" for as long as no v1 tag exists and quietly install the
+  # spike, which is the one thing those three documents say it is not for.
+  REF="$(git ls-remote --tags --refs --sort=-v:refname "$REPO" 'v[1-9]*' 2>/dev/null |
+         head -1 | sed 's|.*/||')"
+  if [ -n "$REF" ]; then
+    echo "  newest release: $REF  (SIMMER_REF=main for the development branch)"
+  else
+    # No release yet. Say so, rather than silently installing a branch.
+    REF=main
+    echo "  no release tagged yet — installing from main"
+  fi
+}
+
 fetch() {
-  step "fetching simmer into $DIR ($REF)"
+  step "fetching simmer into $DIR"
+  resolve_ref
+  echo "  ref: $REF"
   if [ -d "$DIR/.git" ]; then
     git -C "$DIR" fetch --quiet origin ||
       die "could not fetch in $DIR — check the network, or the URL $REPO"
@@ -173,13 +242,14 @@ epilogue() {
 
   The checkout lives at $DIR
   Update later with:  curl -fsSL ${REPO}/raw/main/bootstrap.sh | bash
-  Remove it with:     make -C $DIR uninstall
+  Remove it with:     simmer uninstall
 EOF
 }
 
 main() {
   require_macos
   require_toolchain
+  require_swift6
   fetch
   build_and_install
   install_sudo_rule

@@ -16,8 +16,14 @@ final class AppState {
 
     private init() {
         let env = ProcessInfo.processInfo.environment
-        let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
-        environment = SimmerEnvironment(env: env, isTTY: false, executablePath: executable)
+        // `binPath` is what a launcher would exec, and that is the CLI — never
+        // this process. `Bundle.main.executablePath` reads CFBundleExecutable,
+        // which is `simmer-app`: the one binary that cannot serve as the CLI.
+        // Both ship in Contents/MacOS, so the sibling is the answer.
+        let cli = (Bundle.main.executableURL?.deletingLastPathComponent()
+            .appendingPathComponent("simmer").path)
+            ?? CommandLine.arguments[0]
+        environment = SimmerEnvironment(env: env, isTTY: false, executablePath: cli)
         seamActive = env["SIMMER_FAKE_PMSET"] != nil
     }
 
@@ -96,4 +102,8 @@ final class AppState {
 
 extension Notification.Name {
     static let simmerStateChanged = Notification.Name("simmerStateChanged")
+    /// Something a setup row reports has changed — the notification grant, or
+    /// the login-item registration. Posted on transitions only (Notifier), so
+    /// an observer may do real work per event.
+    static let simmerSetupChanged = Notification.Name("simmerSetupChanged")
 }

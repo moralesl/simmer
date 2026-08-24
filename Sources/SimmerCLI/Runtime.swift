@@ -11,13 +11,51 @@ enum Runtime {
     static let guardLabel = "io.github.moralesl.simmer.guard"
 
     static func environment() -> SimmerEnvironment {
-        let argv0 = CommandLine.arguments.first ?? "simmer"
-        let executable = URL(fileURLWithPath: argv0,
-                             relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
-            .standardizedFileURL.path
         return SimmerEnvironment(env: ProcessInfo.processInfo.environment,
                                  isTTY: isatty(0) != 0,
-                                 executablePath: executable)
+                                 executablePath: executablePath())
+    }
+
+    /// Where this process's binary actually is — the path a launcher can exec.
+    ///
+    /// Ask the kernel, not `argv[0]`. Resolving `argv[0]` against the working
+    /// directory is right only when it contains a slash; invoked through PATH
+    /// — which is how every installed copy is invoked — `argv[0]` is the bare
+    /// word "simmer", and joining that to the cwd produced a path that does
+    /// not exist. `simmer render swiftbar` then embedded it in every action it
+    /// emitted, so a launcher surface built on it would have had a dead button
+    /// for every row.
+    ///
+    /// `_NSGetExecutablePath` reports the path as exec'd, symlink unresolved,
+    /// which is the one to embed: `~/.local/bin/simmer` is stable across
+    /// reinstalls where the bundle-internal target it points at is not.
+    private static func executablePath() -> String {
+        var size = UInt32(PATH_MAX)
+        var buffer = [CChar](repeating: 0, count: Int(size))
+        if _NSGetExecutablePath(&buffer, &size) == 0 {
+            return String(cString: buffer)
+        }
+        // Only reachable if PATH_MAX was not enough; it says how much it needs.
+        buffer = [CChar](repeating: 0, count: Int(size))
+        if _NSGetExecutablePath(&buffer, &size) == 0 {
+            return String(cString: buffer)
+        }
+        // Belt and braces. A wrong answer here is silent — a dead launcher
+        // button, not an error — so the fallback resolves argv[0] the only way
+        // that can be correct for each of its two shapes rather than assuming
+        // one of them.
+        let argv0 = CommandLine.arguments.first ?? "simmer"
+        if argv0.contains("/") {
+            return URL(fileURLWithPath: argv0,
+                       relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+                .standardizedFileURL.path
+        }
+        for directory in (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":") {
+            let candidate = URL(fileURLWithPath: String(directory))
+                .appendingPathComponent(argv0).path
+            if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
+        }
+        return argv0
     }
 
     /// One context per invocation. Migration from the format=1 lease happens
@@ -37,14 +75,23 @@ enum Runtime {
                        version: version, binPath: env.binPath)
     }
 
+    /// Where a command's human lines go. `stdout` for every subcommand except
+    /// `run`, whose stdout belongs to the command it wraps — see RunCLI.
+    enum HumanStream { case stdout, stderr }
+
     /// Print, post, exit. The single exit path for every subcommand.
-    static func deliver(_ outcome: Outcome) -> Never {
-        emit(outcome)
+    static func deliver(_ outcome: Outcome, human: HumanStream = .stdout) -> Never {
+        emit(outcome, human: human)
         exit(outcome.exit)
     }
 
-    static func emit(_ outcome: Outcome) {
-        for line in outcome.stdout { print(line) }
+    static func emit(_ outcome: Outcome, human: HumanStream = .stdout) {
+        for line in outcome.stdout {
+            switch human {
+            case .stdout: print(line)
+            case .stderr: FileHandle.standardError.write(Data((line + "\n").utf8))
+            }
+        }
         for line in outcome.stderr {
             FileHandle.standardError.write(Data((line + "\n").utf8))
         }

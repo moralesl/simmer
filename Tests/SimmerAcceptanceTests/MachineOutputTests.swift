@@ -144,6 +144,33 @@ import Testing
         #expect(plain.contains("\"require_ac\":false"))
     }
 
+    /// One claim, and it is not yours: the summary line has to say whose.
+    ///
+    /// This is the flagship read — with an agent holding the only claim, the
+    /// person typing `simmer` got the reason and no owner, while `simmer down`
+    /// in the same state named "🤖 agent:evals" while ending it. The surface
+    /// that told you the most was the one that destroyed the thing.
+    @Test func oneForeignClaimIsAttributedOnTheSummaryLine() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["2h", "-r", "eval batch", "--owner", "agent:evals"])
+
+        let seenByAnother = sim.run(["status"], env: ["SIMMER_OWNER": "terminal"]).out
+        #expect(seenByAnother.contains("agent:evals"), "\(seenByAnother)")
+        #expect(seenByAnother.contains("🤖"), "\(seenByAnother)")
+        #expect(seenByAnother.contains("eval batch"), "\(seenByAnother)")
+
+        // Your own claim needs no attribution — that would be noise.
+        let seenByTheHolder = sim.run(["status"], env: ["SIMMER_OWNER": "agent:evals"]).out
+        #expect(!seenByTheHolder.contains("🤖"), "\(seenByTheHolder)")
+        #expect(seenByTheHolder.contains("eval batch"), "\(seenByTheHolder)")
+
+        // With several claims the rows carry it; the summary line stays clean.
+        sim.run(["1h", "--owner", "terminal"])
+        let several = sim.run(["status"], env: ["SIMMER_OWNER": "terminal"]).lines
+        #expect(several.first?.contains("agent:evals") == false, "\(several)")
+        #expect(several.contains { $0.contains("🤖 agent:evals") }, "\(several)")
+    }
+
     @Test func aLiveClaimWithTheSwitchOffIsSaidOutLoud() {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["30m", "--owner", "test"])
@@ -221,6 +248,51 @@ import Testing
 }
 
 @Suite struct RunTests {
+    /// The wrapped command owns stdout, byte for byte.
+    ///
+    /// `simmer run` announced its claim on stdout, so it landed in the middle
+    /// of the command's output: `X=$(simmer run -- ./build)` and
+    /// `simmer run -- ./gen.sh > out.json` both silently captured three lines
+    /// of simmer prose. `caffeinate`, which this is a drop-in for, adds nothing
+    /// to either stream.
+    @Test func theWrappedCommandOwnsStdout() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let direct = sim.run(["run", "--", "sh", "-c", "printf 'a\\nb\\n'"])
+
+        #expect(direct.out == "a\nb\n", "stdout was \(direct.out.debugDescription)")
+        // The claim still has to be announced — on stderr, where commentary on
+        // the run belongs. Silence would be the other way to pass this test and
+        // the wrong one.
+        #expect(direct.err.contains("simmering"), "the claim went unannounced: \(direct.err)")
+    }
+
+    /// A command that writes nothing leaves stdout empty — the strictest form
+    /// of the same rule, and the one a redirect into a parser depends on.
+    @Test func aSilentCommandLeavesStdoutEmpty() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["run", "--", "true"]).out.isEmpty)
+    }
+
+    /// The reason names the command, not just the program.
+    ///
+    /// It was `command[0]` alone, so `npm test` and `npm run build` both
+    /// recorded "npm" — two live runs appeared in `simmer status` as two
+    /// identical rows, which is precisely the moment the reason has a job to do.
+    @Test func theRunReasonNamesTheWholeCommand() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let probe = sim.root.appendingPathComponent("seen.txt").path
+        sim.run(["run", "--", "sh", "-c", "\(Sim.binary) status --json > '\(probe)'"])
+        let text = (try? String(contentsOf: URL(fileURLWithPath: probe), encoding: .utf8)) ?? ""
+
+        #expect(text.contains("sh -c"), "the reason lost the arguments: \(text.prefix(200))")
+        // -r still wins over the derived description.
+        let probe2 = sim.root.appendingPathComponent("seen2.txt").path
+        sim.run(["run", "-r", "chosen", "--",
+                 "sh", "-c", "\(Sim.binary) status --json > '\(probe2)'"])
+        let text2 = (try? String(contentsOf: URL(fileURLWithPath: probe2), encoding: .utf8)) ?? ""
+        #expect(text2.contains("\"reason\":\"chosen\""), "\(text2.prefix(200))")
+    }
+
     @Test func exitCodesPassThroughUntouched() {
         let sim = Sim(); defer { sim.tearDown() }
         #expect(sim.run(["run", "--", "true"]).code == 0)
@@ -321,6 +393,33 @@ import Testing
         #expect(active.contains("param1=\"down\""))
     }
 
+    /// Every action a launcher surface emits must name a binary that exists.
+    ///
+    /// This is asserted through a PATH shim, because the bug it catches is only
+    /// reachable that way: found on PATH, `argv[0]` is the bare word "simmer",
+    /// and the old code joined that to the working directory. Every `bash=`
+    /// path in the SwiftBar surface pointed at `<cwd>/simmer` — nothing, on any
+    /// real machine. The rest of the suite execs an absolute path, which is the
+    /// one invocation shape that hid it.
+    @Test func swiftBarActionsPointAtABinaryThatExists() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.runThroughPATH(["45m", "-r", "brew", "--owner", "test"])
+        let out = sim.runThroughPATH(["render", "swiftbar"]).out
+
+        var checked = 0
+        for line in out.split(separator: "\n") {
+            guard let start = line.range(of: "bash=\"") else { continue }
+            guard let end = line[start.upperBound...].firstIndex(of: "\"") else { continue }
+            let path = String(line[start.upperBound..<end])
+            checked += 1
+            #expect(FileManager.default.isExecutableFile(atPath: path),
+                    "render swiftbar points at \(path), which is not executable")
+        }
+        // A surface that emitted no actions at all would pass the loop above
+        // vacuously — the assertion is that the actions exist AND resolve.
+        #expect(checked > 0, "render swiftbar emitted no bash= actions to check")
+    }
+
     @Test func raycastIsOneLine() {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["45m", "--owner", "test"])
@@ -371,7 +470,8 @@ import Testing
     /// argument" is the one refusal in the surface that names no fix — so the
     /// gate is mechanical rather than a promise to remember.
     @Test(arguments: ["claim", "extend", "release", "cap", "status", "budget",
-                      "run", "guard", "doctor", "log", "render", "notify-test"])
+                      "run", "guard", "doctor", "log", "render", "notify-test",
+                      "uninstall"])
     func everyDocumentedVerbResolves(_ verb: String) {
         let sim = Sim(); defer { sim.tearDown() }
         let result = sim.run([verb, "--help"])
@@ -388,7 +488,7 @@ import Testing
     /// rather than the four that were wrong: a new command cannot join the
     /// surface without answering the question one way or the other.
     @Test(arguments: ["claim", "extend", "release", "cap", "status", "budget",
-                      "doctor", "log", "render", "notify-test"])
+                      "doctor", "log", "render", "notify-test", "uninstall"])
     func everyVerbHonoursJSON(_ verb: String) {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["2h", "--owner", "terminal"]) // something for them to describe
@@ -410,10 +510,59 @@ import Testing
                 "\(verb) --json emitted non-JSON on stdout: \(stdout.prefix(120))")
     }
 
-    @Test func theTwoVerbsWithoutAMachineAnswerSaySo() {
+    /// A refusal from the PARSER is still a refusal, and a `--json` caller is
+    /// owed the object for it.
+    ///
+    /// `everyVerbHonoursJSON` above walks the verb list, so it only ever sees
+    /// input the parser accepts. Malformed input took a different path and
+    /// exited 1 with an empty stdout stream — which a caller cannot distinguish
+    /// from a command that worked and had nothing to say. Every row here
+    /// produced zero bytes on stdout before this gate existed.
+    @Test(arguments: [
+        ["-5m"],                       // reads as an option, not a duration
+        ["--nonsense"],
+        ["-x"],
+        ["claim", "--min-battery"],     // option present, value missing
+        ["run", "echo", "hi"],          // the command, but no `--`
+        ["extend", "--until"],
+    ])
+    func aParseFailureStillAnswersJSON(_ args: [String]) {
         let sim = Sim(); defer { sim.tearDown() }
-        for verb in [["notify-test"], ["render", "raycast"]] {
-            let result = sim.run(verb + ["--json"])
+        let result = sim.run(args + ["--json"])
+
+        #expect(result.code == 1, "\(args) exited \(result.code), want 1")
+        let stdout = result.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(!stdout.isEmpty, "\(args) --json wrote nothing to stdout")
+        guard let object = try? JSONSerialization.jsonObject(with: Data(stdout.utf8))
+                as? [String: Any] else {
+            #expect(Bool(false), "\(args) --json emitted non-JSON: \(stdout.prefix(120))")
+            return
+        }
+        #expect(object["action"] as? String == "refused", "\(args): \(stdout.prefix(120))")
+        // The diagnosis has to be IN the object — an empty `error` would pass
+        // a shape check while telling the caller nothing.
+        let error = object["error"] as? String ?? ""
+        #expect(!error.isEmpty, "\(args): refused with an empty error")
+        // Usage text names internal subcommand spellings nobody typed; it
+        // belongs on a human's stderr, not in a contracted field.
+        #expect(!error.contains("Usage:"), "\(args): usage text leaked into error")
+    }
+
+    /// `run` joined these two: its stdout belongs to the command it wraps, so
+    /// there is no stream left to put an object on. It had been accepting
+    /// `--json`, printing prose and exiting 0 — the one verb
+    /// `everyVerbHonoursJSON` skips, and therefore the one place the rule went
+    /// unenforced.
+    @Test func theVerbsWithoutAMachineAnswerSaySo() {
+        let sim = Sim(); defer { sim.tearDown() }
+        // Each row is the whole invocation: for `run` the flag has to sit
+        // BEFORE the terminator, because everything after `--` belongs to the
+        // command — which is itself the behaviour under test here.
+        for invocation in [["notify-test", "--json"],
+                           ["render", "raycast", "--json"],
+                           ["run", "--json", "--", "true"],
+                           ["uninstall", "--json"]] {
+            let result = sim.run(invocation)
             #expect(result.code == 1)
             #expect(result.err.contains("no JSON form"))
             // A refusal that names no fix is the one thing the surface forbids.

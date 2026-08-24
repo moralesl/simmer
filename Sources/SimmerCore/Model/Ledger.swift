@@ -188,13 +188,22 @@ public struct Ledger: Sendable {
     /// A heartbeat, so a failed write is not worth reporting: the next one is
     /// three seconds away, and doctor treats a missing or stale file as "the
     /// app is not talking" — which is exactly what it would mean.
-    public func writeAppStatus(notifyStatus: String, now: Int) {
-        _ = atomicWrite("pid=\(getpid())\nnotify=\(notifyStatus)\nts=\(now)\n", to: appStatusFile)
+    ///
+    /// `login` rides along for the same reason `notify` does: only the app can
+    /// answer it (SMAppService is bundle-scoped and the app is the bundle's
+    /// main app), and the CLI asking for itself would learn about the wrong
+    /// thing. One channel, already beating, rather than a second way to ask.
+    public func writeAppStatus(notifyStatus: String, loginStatus: String, now: Int) {
+        _ = atomicWrite("pid=\(getpid())\nnotify=\(notifyStatus)\nlogin=\(loginStatus)\nts=\(now)\n",
+                        to: appStatusFile)
     }
 
     public struct AppStatus {
         public var pid: Int
         public var notify: String
+        /// `enabled` · `notRegistered` · `requiresApproval` · `notFound` ·
+        /// `unknown` when written by a version that predates the field.
+        public var login: String
         public var ts: Int
     }
 
@@ -202,17 +211,19 @@ public struct Ledger: Sendable {
         guard let text = try? String(contentsOf: appStatusFile, encoding: .utf8) else { return nil }
         var pid = 0, ts = 0
         var notify = "unknown"
+        var login = "unknown"
         for line in text.split(separator: "\n") {
             guard let eq = line.firstIndex(of: "=") else { continue }
             let key = String(line[..<eq]), value = String(line[line.index(after: eq)...])
             switch key {
             case "pid": pid = Int(value) ?? 0
             case "notify": notify = value
+            case "login": login = value
             case "ts": ts = Int(value) ?? 0
             default: break
             }
         }
-        return AppStatus(pid: pid, notify: notify, ts: ts)
+        return AppStatus(pid: pid, notify: notify, login: login, ts: ts)
     }
 
     // MARK: migration from the single lease (format=1)

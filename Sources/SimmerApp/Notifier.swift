@@ -42,13 +42,35 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         post(ctx.ledger.drainNotifications(now: ctx.now))
     }
 
+    /// The last pair published, so a transition can be told from a heartbeat.
+    private var lastPublished: (notify: String, login: String)?
+
     /// The heartbeat: pid + authorization state, for doctor and notify-test.
     /// They must never ask UN themselves — they would be told about their own
     /// executable's never-granted state.
+    ///
+    /// This already re-reads both values every three seconds, which makes it
+    /// the one place that knows when either actually moved. It now says so.
+    /// Announcing on CHANGE rather than on every beat is what lets an observer
+    /// do real work per event: the setup window shells out to `sudo -nl` to
+    /// draw its first row, and that must not run five times a minute forever.
     func publishStatus() {
         let ctx = AppState.shared.context()
-        ctx.ledger.writeAppStatus(notifyStatus: BundleNotifier.authorizationStatus(),
-                                  now: ctx.now)
+        let notify = BundleNotifier.authorizationStatus()
+        let login = LoginItem.statusWord
+        ctx.ledger.writeAppStatus(notifyStatus: notify, loginStatus: login, now: ctx.now)
+
+        // The compare-and-post happens on main, and so does the only mutation
+        // of `lastPublished`. This method has two callers on two queues — the
+        // three-second timer on main, and `requestAuthorization`'s completion
+        // handler on a background one — so reading and writing the field
+        // wherever the call happened to land would be a race on it.
+        DispatchQueue.main.async { [self] in
+            let current = (notify: notify, login: login)
+            guard lastPublished == nil || lastPublished! != current else { return }
+            lastPublished = current
+            NotificationCenter.default.post(name: .simmerSetupChanged, object: nil)
+        }
     }
 
     func authorizationStatus(_ completion: @escaping (UNAuthorizationStatus) -> Void) {

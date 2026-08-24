@@ -78,8 +78,10 @@ CHECKING ON IT
   simmer --version
 
 REMOVING IT
-  make -C ~/.local/share/simmer uninstall     the app, the CLI, the guard
-  sudo rm /etc/sudoers.d/simmer               the sudo rule (needs root)
+  simmer uninstall           what is installed, and the exact commands that
+                             remove it — no need to know where the checkout
+                             went. It shows them rather than running them; the
+                             sudo rule needs root and stays yours
 
 FOR SCRIPTS AND AGENTS
   simmer budget --need 20m   "is there room to start a 20-minute job?"

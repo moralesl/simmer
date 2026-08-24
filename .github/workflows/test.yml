@@ -6,6 +6,10 @@
 # machine by parsing `pmset` and `sysadminctl` output — text that is free to
 # change between releases. A green run on the newest macOS says nothing about
 # the oldest one simmer claims to support.
+#
+# The OS varies; the toolchain does not. Swift 6 is a real requirement of this
+# package (`swift-tools-version: 6.0`) and every leg selects a toolchain that
+# has it — see the Toolchain step.
 name: test
 
 on:
@@ -26,8 +30,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The matrix varies the OS on purpose — it must not vary the compiler as
+      # well. `macos-14` ships several Xcodes and *defaults* to 15.4, whose
+      # Swift 5.10 cannot even parse `swift-tools-version: 6.0`, so the floor
+      # leg failed at manifest load while `macos-15` went green: the one leg
+      # that exists to test the oldest supported OS was testing nothing.
+      # Select the newest toolchain the image carries, on every leg, so the
+      # only difference between them is the thing being tested.
       - name: Toolchain
-        run: swift --version
+        run: |
+          newest="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$newest" ]; then sudo xcode-select -s "$newest"; fi
+          swift --version
+          # Assert the floor rather than trust the image: when a runner update
+          # drops the toolchain the manifest needs, this must say so here and
+          # not as a manifest parse error three steps later.
+          major="$(swift -version 2>&1 | sed -n 's/.*Swift version \([0-9]*\).*/\1/p' | head -1)"
+          [ "${major:-0}" -ge 6 ] || {
+            echo "::error::Package.swift needs Swift 6; this image offers ${major:-unknown}"
+            exit 1
+          }
 
       - name: Build (release, all products)
         run: swift build -c release
@@ -42,3 +64,75 @@ jobs:
         run: |
           plutil -lint launchd/guard.plist.template app/Info.plist.template
           bash -n bootstrap.sh
+
+  # `bootstrap.sh` is the highest-consequence file in the repository: it is
+  # piped from curl into bash and it writes to /etc/sudoers.d. It was also the
+  # only one with no static analysis — `bash -n` above answers "does this
+  # parse", never "does an unquoted path break on a home directory with a
+  # space in it".
+  #
+  # Linux on purpose: shellcheck is preinstalled there and the analysis is
+  # platform-independent, so this costs seconds instead of a brew install on
+  # each macOS leg. The macOS-only checks (`plutil`) stay where they are.
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        run: |
+          # Absent tool fails rather than skips — same reason as the CLT leg.
+          command -v shellcheck >/dev/null || {
+            echo "::error::shellcheck is not on this image; the installer would go unchecked"
+            exit 1
+          }
+          shellcheck --version
+          # Default severity, deliberately: it is where the correctness checks
+          # live (quoting, unset variables, misused tests) and bootstrap.sh is
+          # clean against it today, so this is a ratchet for the next edit.
+          # `--enable=all` adds only preference checks — brace style, [[ ]] over
+          # [ ] — which would mean rewriting every line of a working installer
+          # for no change in what it does.
+          shellcheck bootstrap.sh
+
+  # The toolchain the whole build is designed around, and the one CI never
+  # used. "CLT-only by design: the bundle is hand-assembled and ad-hoc signed,
+  # never xcodebuild" (Makefile) exists because colleagues' machines have at
+  # best the Command Line Tools — but runners ship full Xcode, so the
+  # `CLT_FRAMEWORKS` branch that makes `swift test` find Testing.framework
+  # there had never once executed. Every green run was evidence about a
+  # toolchain no user of this tool is required to have.
+  #
+  # One OS is enough: the variable here is the toolchain, and the matrix above
+  # already covers the OS.
+  command-line-tools:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select the Command Line Tools
+        run: |
+          # Absent CLT must fail, not skip. A leg that quietly becomes a no-op
+          # when an image changes is worse than no leg: it keeps reporting
+          # green about something it stopped testing.
+          if [ ! -d /Library/Developer/CommandLineTools ]; then
+            echo "::error::this image no longer ships /Library/Developer/CommandLineTools — the CLT-only path is now untested, which the Makefile's central claim depends on"
+            exit 1
+          fi
+          sudo xcode-select -s /Library/Developer/CommandLineTools
+          xcode-select -p
+          swift --version
+          # A CLT older than Swift 6 is real information, not a CI problem: it
+          # means a colleague on this OS with only the Command Line Tools
+          # cannot build simmer, which is what the README promises they can.
+          major="$(swift -version 2>&1 | sed -n 's/.*Swift version \([0-9]*\).*/\1/p' | head -1)"
+          [ "${major:-0}" -ge 6 ] || {
+            echo "::error::the Command Line Tools here offer Swift ${major:-unknown}; Package.swift needs 6 — bootstrap.sh must say so before the compiler does"
+            exit 1
+          }
+
+      - name: Build, both suites, and the bundle — no Xcode
+        run: |
+          swift build -c release
+          make test
+          make app

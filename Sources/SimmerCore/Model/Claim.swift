@@ -32,6 +32,13 @@ public struct Claim: Sendable, Equatable {
     public static let format = 2
     public static let defaultMinBattery = 20
 
+    /// Past this, a bare duration gets a sentence about it. Half a day is the
+    /// line where "how long I need" stops being plausible as a number of
+    /// minutes: `simmer 2000` is 33 h 20 min and is far more likely to be a
+    /// typo for `--until 20:00`. Not a refusal — overnight is a first-class
+    /// case, which is why `--require-ac` exists.
+    public static let longHaulSeconds = 12 * 3600
+
     public init(owner: String, until: Int, started: Int, reason: String = "",
                 minBattery: Int = Claim.defaultMinBattery, requireAC: Bool = false,
                 displayOn: Bool = false, warned: Bool = false, prewarned: Bool = false,

@@ -25,17 +25,61 @@ final class SetupWindow: NSObject {
 
     func show() {
         if window == nil { build() }
+        observeOnce()
         refresh()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private var observing = false
+
+    /// Every row re-reads on any signal that one of them may have moved.
+    ///
+    /// Each of the three buttons used to refresh after its own action, and
+    /// nothing else ever did — so the rows were only ever correct about the
+    /// button you last pressed. The permission prompt a person actually answers
+    /// on first launch is requested by `Notifier.setUp()`, not by this window,
+    /// so clicking Allow left "Waiting for you to click Allow" on screen until
+    /// some unrelated button was pressed and refreshed all three at once. The
+    /// `.denied` row's "Open Settings" was the same dead end from the other
+    /// direction: nothing re-read anything when you came back.
+    ///
+    /// Two signals rather than three buttons:
+    ///   · the heartbeat, which already re-reads both values every three
+    ///     seconds and now says so when one changes — this is the one that
+    ///     catches an answer given to a banner nobody here asked for;
+    ///   · becoming active, which catches whatever was changed in System
+    ///     Settings while we were in the background, including the sudo rule
+    ///     installed in a terminal.
+    private func observeOnce() {
+        guard !observing else { return }
+        observing = true
+        for name in [Notification.Name.simmerSetupChanged,
+                     NSApplication.didBecomeActiveNotification] {
+            NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                // Only while on screen: `refresh` shells out to `sudo -nl` for
+                // the first row, and that must not run for a window nobody is
+                // looking at.
+                guard let self, self.window?.isVisible == true else { return }
+                self.refresh()
+            }
+        }
+    }
+
     /// Shown automatically only while something still needs a human.
+    ///
+    /// The login item counts. It was left out, so the window never opened for
+    /// it — and on the happy path (bootstrap installs the sudo rule, the person
+    /// clicks Allow) there was no occasion on which anyone was shown that
+    /// row at all.
     func showIfNeeded() {
+        let loginNeedsAHuman = SMAppService.mainApp.status == .requiresApproval
         sudoState { ok, _ in
             Notifier.shared.authorizationStatus { status in
                 DispatchQueue.main.async {
-                    if !ok || status != .authorized { self.show() }
+                    if !ok || status != .authorized || loginNeedsAHuman { self.show() }
                 }
             }
         }
@@ -136,10 +180,19 @@ final class SetupWindow: NSObject {
                 }
             }
         }
-        if SMAppService.mainApp.status == .enabled {
+        switch SMAppService.mainApp.status {
+        case .enabled:
             loginRow.set(.ok, "The menu bar comes back after a restart", button: nil)
-        } else {
-            loginRow.set(.off, "Not enabled — the launchd guard runs either way", button: "Enable")
+        case .requiresApproval:
+            // Registered, and macOS wants the person to say yes — a different
+            // situation from "nobody asked", and it needs different advice.
+            loginRow.set(.warn, "Waiting for your approval in System Settings > Login Items",
+                         button: "Open Settings")
+        default:
+            // Reachable when registration was attempted and did not take, or
+            // when it was turned off on purpose — which simmer does not undo.
+            loginRow.set(.off, "Off — no menu bar and no banners after a restart",
+                         button: "Enable")
         }
     }
 
