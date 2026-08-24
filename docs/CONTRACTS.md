@@ -51,9 +51,14 @@ Callers that conflate them keep working while the machine sleeps.
 ## Machine-readable output
 
 `status --machine`: `key=value` lines — `state` (active·forever·idle·orphan), `until` (epoch, 0=none), `left`, `left_short`, `reason`, `owner`, `min_battery`, `battery`, `on_battery`, `sleep_disabled`, `since`, `claim_count`, `cap` (epoch, 0=none).
-`status --json` / `budget --json`: the same data as one JSON object; numbers are numbers, `fits` is `true|false|null`, `seconds_left` is `-1` for no deadline, `capped` is `true` when the deadline reported IS the cap, and `claims` is an array with one object per live claim (`id`, `owner`, `until`, `left`, `reason`, `min_battery`, `require_ac`, `since`, `human`).
+`status --json` / `budget --json`: the same data as one JSON object; numbers are numbers, `fits` is `true|false|null`, `seconds_left` is a number, `-1` for no deadline, or `null` when nothing is claimed (see below), `capped` is `true` when the deadline reported IS the cap, and `claims` is an array with one object per live claim (`id`, `owner`, `until`, `left`, `reason`, `min_battery`, `require_ac`, `since`, `human`).
 
 **"No deadline" is spelled two ways, deliberately, and here is which.** `until` is `0`; a per-claim `left` and `budget`'s `seconds_left` are `-1`; the *aggregate* `left` is `0`, because it is a countdown and there is nothing to count.
+
+**`budget --json`'s `seconds_left` has a third value, and it is not a fourth spelling of "no deadline".** It is `null` when `state` is `idle` or `orphan` — nothing is claimed, so there is no clock to read at all, and an absent clock is not `-1` seconds on one any more than it is `0`.
+The three readings map exactly onto the three exit codes: a number with `0`/`1`, `-1` with `0` (`state: "forever"` — no deadline, so anything fits), `null` with `3`.
+A caller that switches on the exit code never has to inspect the type; one that reads the field must accept all three.
+`fits` is `null` on the same principle whenever no `--need` was given: no question was asked.
 Read `state == "forever"` — or `until == 0` — as the question "is there a deadline at all"; never infer it from a `left` of 0, which an active claim reaches legitimately in its final second.
 The two spellings are frozen: both shipped before v1.0 and the append-only rule covers conventions, not only names.
 Fields are append-only; removing or renaming one is a major version, **and so is changing one's type.**
