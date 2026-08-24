@@ -108,14 +108,19 @@ NOSWIFT
 # Apple's installer and exits non-zero.
 resolve_ref() {
   [ -n "$REF" ] && return 0
-  REF="$(git ls-remote --tags --refs --sort=-v:refname "$REPO" 'v*' 2>/dev/null |
+  # `v[1-9]*`, not `v*`. The v0.x tags are history kept on purpose — v0.1 is
+  # the bash spike this implementation replaced, cited by README, FAQ and
+  # AGENTS.md as reference material. A version sort over `v*` would rank it
+  # "newest release" for as long as no v1 tag exists and quietly install the
+  # spike, which is the one thing those three documents say it is not for.
+  REF="$(git ls-remote --tags --refs --sort=-v:refname "$REPO" 'v[1-9]*' 2>/dev/null |
          head -1 | sed 's|.*/||')"
   if [ -n "$REF" ]; then
     echo "  newest release: $REF  (SIMMER_REF=main for the development branch)"
   else
-    # No tags yet. Say which, rather than silently installing a branch.
+    # No release yet. Say so, rather than silently installing a branch.
     REF=main
-    echo "  no release tags yet — installing from main"
+    echo "  no release tagged yet — installing from main"
   fi
 }
 
