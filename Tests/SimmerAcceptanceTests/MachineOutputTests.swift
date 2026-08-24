@@ -144,6 +144,33 @@ import Testing
         #expect(plain.contains("\"require_ac\":false"))
     }
 
+    /// One claim, and it is not yours: the summary line has to say whose.
+    ///
+    /// This is the flagship read — with an agent holding the only claim, the
+    /// person typing `simmer` got the reason and no owner, while `simmer down`
+    /// in the same state named "🤖 agent:evals" while ending it. The surface
+    /// that told you the most was the one that destroyed the thing.
+    @Test func oneForeignClaimIsAttributedOnTheSummaryLine() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["2h", "-r", "eval batch", "--owner", "agent:evals"])
+
+        let seenByAnother = sim.run(["status"], env: ["SIMMER_OWNER": "terminal"]).out
+        #expect(seenByAnother.contains("agent:evals"), "\(seenByAnother)")
+        #expect(seenByAnother.contains("🤖"), "\(seenByAnother)")
+        #expect(seenByAnother.contains("eval batch"), "\(seenByAnother)")
+
+        // Your own claim needs no attribution — that would be noise.
+        let seenByTheHolder = sim.run(["status"], env: ["SIMMER_OWNER": "agent:evals"]).out
+        #expect(!seenByTheHolder.contains("🤖"), "\(seenByTheHolder)")
+        #expect(seenByTheHolder.contains("eval batch"), "\(seenByTheHolder)")
+
+        // With several claims the rows carry it; the summary line stays clean.
+        sim.run(["1h", "--owner", "terminal"])
+        let several = sim.run(["status"], env: ["SIMMER_OWNER": "terminal"]).lines
+        #expect(several.first?.contains("agent:evals") == false, "\(several)")
+        #expect(several.contains { $0.contains("🤖 agent:evals") }, "\(several)")
+    }
+
     @Test func aLiveClaimWithTheSwitchOffIsSaidOutLoud() {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["30m", "--owner", "test"])
