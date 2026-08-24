@@ -6,6 +6,10 @@
 # machine by parsing `pmset` and `sysadminctl` output — text that is free to
 # change between releases. A green run on the newest macOS says nothing about
 # the oldest one simmer claims to support.
+#
+# The OS varies; the toolchain does not. Swift 6 is a real requirement of this
+# package (`swift-tools-version: 6.0`) and every leg selects a toolchain that
+# has it — see the Toolchain step.
 name: test
 
 on:
@@ -26,8 +30,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The matrix varies the OS on purpose — it must not vary the compiler as
+      # well. `macos-14` ships several Xcodes and *defaults* to 15.4, whose
+      # Swift 5.10 cannot even parse `swift-tools-version: 6.0`, so the floor
+      # leg failed at manifest load while `macos-15` went green: the one leg
+      # that exists to test the oldest supported OS was testing nothing.
+      # Select the newest toolchain the image carries, on every leg, so the
+      # only difference between them is the thing being tested.
       - name: Toolchain
-        run: swift --version
+        run: |
+          newest="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$newest" ]; then sudo xcode-select -s "$newest"; fi
+          swift --version
+          # Assert the floor rather than trust the image: when a runner update
+          # drops the toolchain the manifest needs, this must say so here and
+          # not as a manifest parse error three steps later.
+          major="$(swift -version 2>&1 | sed -n 's/.*Swift version \([0-9]*\).*/\1/p' | head -1)"
+          [ "${major:-0}" -ge 6 ] || {
+            echo "::error::Package.swift needs Swift 6; this image offers ${major:-unknown}"
+            exit 1
+          }
 
       - name: Build (release, all products)
         run: swift build -c release
