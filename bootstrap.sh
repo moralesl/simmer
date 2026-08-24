@@ -19,11 +19,13 @@
 set -euo pipefail
 
 REPO="${SIMMER_REPO:-https://github.com/moralesl/simmer}"
-# Which commit-ish to install. Defaults to the default branch; set
-# SIMMER_REF=v1.0.0 to pin a release. Once releases exist, the documented
-# one-liner names a tag — a first-time visitor should not be running whatever
-# landed on main an hour ago.
-REF="${SIMMER_REF:-main}"
+# Which commit-ish to install. Empty means "work it out": the newest release
+# tag, and `main` only when there are none. Defaulting to `main` meant a
+# first-time visitor got whatever landed an hour ago, and pinning the version
+# in the README instead would go stale the first time one is cut.
+# SIMMER_REF=v1.0.0 still overrides, and SIMMER_REF=main is how you ask for the
+# development branch on purpose.
+REF="${SIMMER_REF:-}"
 # A stable path: ~/.local/bin/simmer symlinks into it and the launchd guard
 # names it. Machinery, not a project someone works in.
 DIR="${SIMMER_DIR:-$HOME/.local/share/simmer}"
@@ -100,8 +102,27 @@ NOSWIFT
   exit 1
 }
 
+# The newest `v*` tag on the remote, or empty. Resolved here rather than at the
+# top of the file because it needs a working git, and require_toolchain has run
+# by now — on a Mac with no developer tools /usr/bin/git is a stub that pops
+# Apple's installer and exits non-zero.
+resolve_ref() {
+  [ -n "$REF" ] && return 0
+  REF="$(git ls-remote --tags --refs --sort=-v:refname "$REPO" 'v*' 2>/dev/null |
+         head -1 | sed 's|.*/||')"
+  if [ -n "$REF" ]; then
+    echo "  newest release: $REF  (SIMMER_REF=main for the development branch)"
+  else
+    # No tags yet. Say which, rather than silently installing a branch.
+    REF=main
+    echo "  no release tags yet — installing from main"
+  fi
+}
+
 fetch() {
-  step "fetching simmer into $DIR ($REF)"
+  step "fetching simmer into $DIR"
+  resolve_ref
+  echo "  ref: $REF"
   if [ -d "$DIR/.git" ]; then
     git -C "$DIR" fetch --quiet origin ||
       die "could not fetch in $DIR — check the network, or the URL $REPO"
