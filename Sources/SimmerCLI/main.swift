@@ -29,11 +29,26 @@ do {
     exit(exitCode.rawValue)
 } catch {
     let exitCode = SimmerRoot.exitCode(for: error)
-    let message = SimmerRoot.fullMessage(for: error)
     if exitCode.isSuccess {
+        let message = SimmerRoot.fullMessage(for: error)
         if !message.isEmpty { print(message) }
         exit(0)
     }
+    // A `--json` caller gets the refusal object, even when the refusal came
+    // from the parser rather than from a command. The alternative is what this
+    // replaced: an empty stdout stream, which is indistinguishable to the
+    // caller from a command that worked and had nothing to say — the exact
+    // failure the "honoured or refused, never accepted and dropped" rule
+    // exists to prevent (AGENTS.md, CONTRACTS.md § Surface guarantees).
+    //
+    // Deliberately the one-line `message(for:)` and not `fullMessage(for:)`:
+    // the latter appends usage text naming internal subcommand spellings
+    // nobody typed, which belongs in a human's terminal and not in a
+    // contracted field.
+    if rawArguments.contains("--json") {
+        Runtime.deliver(.failure(SimmerRoot.message(for: error), json: true))
+    }
+    let message = SimmerRoot.fullMessage(for: error)
     if !message.isEmpty {
         FileHandle.standardError.write(Data(("simmer: " + message + "\n").utf8))
     }

@@ -410,6 +410,44 @@ import Testing
                 "\(verb) --json emitted non-JSON on stdout: \(stdout.prefix(120))")
     }
 
+    /// A refusal from the PARSER is still a refusal, and a `--json` caller is
+    /// owed the object for it.
+    ///
+    /// `everyVerbHonoursJSON` above walks the verb list, so it only ever sees
+    /// input the parser accepts. Malformed input took a different path and
+    /// exited 1 with an empty stdout stream — which a caller cannot distinguish
+    /// from a command that worked and had nothing to say. Every row here
+    /// produced zero bytes on stdout before this gate existed.
+    @Test(arguments: [
+        ["-5m"],                       // reads as an option, not a duration
+        ["--nonsense"],
+        ["-x"],
+        ["claim", "--min-battery"],     // option present, value missing
+        ["run", "echo", "hi"],          // the command, but no `--`
+        ["extend", "--until"],
+    ])
+    func aParseFailureStillAnswersJSON(_ args: [String]) {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(args + ["--json"])
+
+        #expect(result.code == 1, "\(args) exited \(result.code), want 1")
+        let stdout = result.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(!stdout.isEmpty, "\(args) --json wrote nothing to stdout")
+        guard let object = try? JSONSerialization.jsonObject(with: Data(stdout.utf8))
+                as? [String: Any] else {
+            #expect(Bool(false), "\(args) --json emitted non-JSON: \(stdout.prefix(120))")
+            return
+        }
+        #expect(object["action"] as? String == "refused", "\(args): \(stdout.prefix(120))")
+        // The diagnosis has to be IN the object — an empty `error` would pass
+        // a shape check while telling the caller nothing.
+        let error = object["error"] as? String ?? ""
+        #expect(!error.isEmpty, "\(args): refused with an empty error")
+        // Usage text names internal subcommand spellings nobody typed; it
+        // belongs on a human's stderr, not in a contracted field.
+        #expect(!error.contains("Usage:"), "\(args): usage text leaked into error")
+    }
+
     @Test func theTwoVerbsWithoutAMachineAnswerSaySo() {
         let sim = Sim(); defer { sim.tearDown() }
         for verb in [["notify-test"], ["render", "raycast"]] {
