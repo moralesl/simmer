@@ -28,14 +28,30 @@ AGENT_PLIST   = $(HOME)/Library/LaunchAgents/$(GUARD_LABEL).plist
 BIN_DIR      ?= $(HOME)/.local/bin
 
 # A CLT-only toolchain ships Testing.framework outside the default search
-# paths; swift test finds nothing without these. Harmless under full Xcode.
-CLT_FRAMEWORKS = /Library/Developer/CommandLineTools/Library/Developer/Frameworks
-CLT_TESTLIB    = /Library/Developer/CommandLineTools/Library/Developer/usr/lib
+# paths; swift test finds nothing without these.
+#
+# Applied only when the CLT is the SELECTED toolchain, not merely present. The
+# old condition was existence alone, with a comment claiming it was "harmless
+# under full Xcode" — it is not. With an Xcode selected and the CLT also
+# installed, these flags make the compiler's output link a DIFFERENT copy of
+# Testing.framework than it compiled against, which is an undefined-symbol
+# link failure ("Testing.__requiringUnsafe", "__TestContentRecordContainer").
+# It stayed hidden because the maintainer's Mac has no Xcode at all, so both
+# sides were always the CLT; CI selecting the newest Xcode is what surfaced it.
+#
+# `xcode-select -p` honours DEVELOPER_DIR, so overriding that for one command
+# switches this correctly too.
+CLT_DEVELOPER_DIR = /Library/Developer/CommandLineTools
+CLT_FRAMEWORKS = $(CLT_DEVELOPER_DIR)/Library/Developer/Frameworks
+CLT_TESTLIB    = $(CLT_DEVELOPER_DIR)/Library/Developer/usr/lib
+SELECTED_DEVELOPER_DIR := $(shell xcode-select -p 2>/dev/null)
+ifeq ($(SELECTED_DEVELOPER_DIR),$(CLT_DEVELOPER_DIR))
 ifneq ($(wildcard $(CLT_FRAMEWORKS)/Testing.framework),)
 TEST_FLAGS = -Xswiftc -F -Xswiftc $(CLT_FRAMEWORKS) \
              -Xlinker -F -Xlinker $(CLT_FRAMEWORKS) \
              -Xlinker -rpath -Xlinker $(CLT_FRAMEWORKS) \
              -Xlinker -rpath -Xlinker $(CLT_TESTLIB)
+endif
 endif
 
 .PHONY: build test app install uninstall clean
