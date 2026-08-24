@@ -1,10 +1,10 @@
 import Foundation
 
 extension Commands {
-    /// `simmer release` / `simmer down`: hand YOUR claim back. A human holding
-    /// no claim releases everything and is told whose it was (human primacy +
-    /// honesty); an agent in the same position is refused and shown the list,
-    /// because ending someone else's work is not an agent's call.
+    /// `simmer release` / `simmer down`: hand YOUR claim back. Holding no
+    /// claim, everyone is refused and shown the list — a human is pointed at
+    /// `--all` (their authority, stated explicitly), an agent is not, because
+    /// ending someone else's work is not an agent's call.
     public static func release(all: Bool, json: Bool, ctx: Context) -> Outcome {
         var outcome = Outcome()
         let claims = ctx.ledger.claims()
@@ -76,20 +76,13 @@ extension Commands {
             return outcome
         }
 
-        // No claim of ours, but somebody has one.
+        // No claim of ours, but somebody has one. Ending work you did not
+        // start deserves an explicit flag, even from a human — so name the
+        // blast radius and the fix instead of acting.
         if ctx.isHuman {
-            // "simmer down" from a human means "let my Mac sleep", and always has.
-            outcome.stdout.append("⏾ you hold no claim; releasing all \(claims.count):")
-            outcome.stdout.append(contentsOf: Present.claimRows(ctx: ctx))
-            for claim in claims {
-                ctx.ledger.retire(claim, why: "released by a human holding no claim", now: ctx.now)
-            }
-            ctx.ledger.event("release_all", now: ctx.now, [
-                ("by", .string(ctx.owner)),
-                ("released", .array(claims.map { .string($0.owner) })),
-            ])
-            settleAndReport("released by hand")
-            releasedJSON(claims.map(\.owner))
+            outcome.stderr.append("simmer: you hold no claim; these are live:")
+            outcome.stderr.append(contentsOf: Present.claimRows(ctx: ctx))
+            outcome.merge(.failure("to end them all: simmer down --all", json: json))
             return outcome
         }
 

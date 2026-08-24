@@ -128,19 +128,21 @@ public enum MenuModel {
         // Destructive actions name their blast radius.
         let everything = "Release everything (\(aggregate.count))"
         if mineExists && aggregate.count > 1 {
+            // Both visible: the ⌥-alternate hid "everything" from the person
+            // it exists for, and the title already names its blast radius.
             return [MenuItemModel(title: "Release mine", symbol: "moon.zzz.fill",
                                   action: .releaseMine),
                     MenuItemModel(title: everything, symbol: "moon.zzz.fill",
-                                  action: .releaseAll, isAlternate: true)]
+                                  action: .releaseAll)]
         }
         if mineExists {
             return [MenuItemModel(title: "Release my claim", symbol: "moon.zzz.fill",
                                   action: .releaseMine)]
         }
-        // A human holding no claim: releasing means releasing everyone's —
-        // bare release carries human authority and does exactly that.
+        // A human holding no claim: the only release on offer is everyone's,
+        // and the title says so. (Bare release refuses this case by design.)
         return [MenuItemModel(title: everything, symbol: "moon.zzz.fill",
-                              action: .releaseMine)]
+                              action: .releaseAll)]
     }
 
     static func capItem(_ aggregate: Aggregate) -> MenuItemModel {

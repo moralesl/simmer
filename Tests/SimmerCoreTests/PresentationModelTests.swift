@@ -130,15 +130,16 @@ import Testing
     }
 
     @Test func releaseNamesItsBlastRadius() {
-        // menubar holds nothing: the only release ends everyone's, and says how many.
+        // menubar holds nothing: the only release ends everyone's, says how
+        // many, and carries the explicit-all action (bare release refuses).
         var items = build(claims: [claim("terminal", until: 4000),
                                    claim("agent", until: 2000)])
-        #expect(items.contains { $0.title == "Release everything (2)" && !$0.isAlternate })
+        #expect(items.contains { $0.title == "Release everything (2)" && $0.action == .releaseAll && !$0.isAlternate })
 
-        // menubar holds one of several: mine is primary, everything is ⌥.
+        // menubar holds one of several: both releases visible, mine first.
         items = build(claims: [claim("menubar", until: 4000), claim("agent", until: 2000)])
         #expect(items.contains { $0.title == "Release mine" && $0.action == .releaseMine })
-        #expect(items.contains { $0.title == "Release everything (2)" && $0.isAlternate })
+        #expect(items.contains { $0.title == "Release everything (2)" && $0.action == .releaseAll && !$0.isAlternate })
 
         // menubar alone: no drama needed.
         items = build(claims: [claim("menubar", until: 4000)])

@@ -175,7 +175,7 @@ An implementation migrating a single-lease predecessor owes these differences; t
 | a second owner is refused | gets its own claim | awake time is counted, not owned |
 | `--force` replaces a lease | inert, and says so | nothing left to force |
 | `simmer down` releases whoever's lease | releases **yours** | an agent must not end a human's claim |
-| `simmer down` from a non-tty holding no claim released everything | **refused**, with the list | same reason. A human in that position still releases everything, and is told whose it was |
+| `simmer down` holding no claim released everything | **refused**, with the list | ending work you did not start deserves an explicit flag. A human is pointed at `down --all` — their authority, stated; an agent is not, because that call is not theirs |
 | `simmer +20m` needed no ownership | needs a claim of yours | "extend" has to mean something specific once there are several |
 | `simmer +20m` set the deadline to now+20m | **adds** 20 minutes to it | see § Surface guarantees — a "+" that subtracts is the one surprise this tool cannot afford |
 | `run` proved ownership with a `[run <pid>]` token in the reason | owner is `run:<pid>`; the reason is just the command | the identity moved to where identity lives |

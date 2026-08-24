@@ -36,14 +36,16 @@ import Testing
         #expect(sim.switchValue == "0")
     }
 
-    @Test func aHumanHoldingNothingClearsAllAndIsToldWhose() {
+    @Test func aHumanHoldingNothingIsPointedAtAllAndNothingMoves() {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["30m", "-r", "bot", "--owner", "agent"])
         let result = sim.run(["down", "--owner", "terminal"])
-        #expect(result.code == 0)
-        #expect(result.out.contains("agent"))
-        #expect(sim.claimCount == 0)
-        #expect(sim.switchValue == "0")
+        #expect(result.code == 1)
+        // Told whose the claims are, and handed the explicit spelling.
+        #expect(result.err.contains("agent"))
+        #expect(result.err.contains("down --all"))
+        #expect(sim.claimCount == 1)
+        #expect(sim.switchValue == "1")
     }
 
     @Test func simmerHumanGrantsAuthorityRegardlessOfOwner() {
