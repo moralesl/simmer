@@ -28,7 +28,7 @@ jobs:
         os: [macos-14, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The matrix varies the OS on purpose — it must not vary the compiler as
       # well. `macos-14` ships several Xcodes and *defaults* to 15.4, whose
@@ -77,7 +77,7 @@ jobs:
   installer:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: shellcheck
         run: |
@@ -108,7 +108,7 @@ jobs:
   command-line-tools:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Select the Command Line Tools
         run: |
