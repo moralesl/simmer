@@ -62,7 +62,7 @@ struct RunCLI: ParsableCommand {
         let start = env.now()
         let budgetEpoch = maxSeconds > 0 ? start + maxSeconds : 0
         let first = (budgetEpoch != 0 && maxSeconds < chunk) ? maxSeconds : chunk
-        let reason = common.reason ?? URL(fileURLWithPath: command[0]).lastPathComponent
+        let reason = common.reason ?? Self.describe(command)
 
         // Through Commands.claim, not a private path: the battery floor and
         // the cap apply unchanged.
@@ -100,6 +100,25 @@ struct RunCLI: ParsableCommand {
             throw ExitCode(128 + child.terminationStatus)
         }
         throw ExitCode(child.terminationStatus)
+    }
+
+    /// The whole command, not just the program.
+    ///
+    /// This was `command[0]`'s last path component, so `simmer run -- npm test`
+    /// and `simmer run -- npm run build` both recorded "npm" — and two live
+    /// runs showed up in `simmer status` as two identical rows, which is
+    /// exactly when the reason is the thing you need. The program name alone is
+    /// the least distinguishing part of a command line.
+    ///
+    /// Bounded, because a reason goes in the menu bar and a claim file: enough
+    /// to tell two runs apart, and an ellipsis rather than a wrapped paragraph
+    /// when the command is a shell one-liner.
+    static func describe(_ command: [String], limit: Int = 60) -> String {
+        var parts = command
+        parts[0] = URL(fileURLWithPath: parts[0]).lastPathComponent
+        let joined = parts.joined(separator: " ")
+        guard joined.count > limit else { return joined }
+        return joined.prefix(limit - 1).trimmingCharacters(in: .whitespaces) + "…"
     }
 }
 

@@ -273,6 +273,26 @@ import Testing
         #expect(sim.run(["run", "--", "true"]).out.isEmpty)
     }
 
+    /// The reason names the command, not just the program.
+    ///
+    /// It was `command[0]` alone, so `npm test` and `npm run build` both
+    /// recorded "npm" — two live runs appeared in `simmer status` as two
+    /// identical rows, which is precisely the moment the reason has a job to do.
+    @Test func theRunReasonNamesTheWholeCommand() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let probe = sim.root.appendingPathComponent("seen.txt").path
+        sim.run(["run", "--", "sh", "-c", "\(Sim.binary) status --json > '\(probe)'"])
+        let text = (try? String(contentsOf: URL(fileURLWithPath: probe), encoding: .utf8)) ?? ""
+
+        #expect(text.contains("sh -c"), "the reason lost the arguments: \(text.prefix(200))")
+        // -r still wins over the derived description.
+        let probe2 = sim.root.appendingPathComponent("seen2.txt").path
+        sim.run(["run", "-r", "chosen", "--",
+                 "sh", "-c", "\(Sim.binary) status --json > '\(probe2)'"])
+        let text2 = (try? String(contentsOf: URL(fileURLWithPath: probe2), encoding: .utf8)) ?? ""
+        #expect(text2.contains("\"reason\":\"chosen\""), "\(text2.prefix(200))")
+    }
+
     @Test func exitCodesPassThroughUntouched() {
         let sim = Sim(); defer { sim.tearDown() }
         #expect(sim.run(["run", "--", "true"]).code == 0)
