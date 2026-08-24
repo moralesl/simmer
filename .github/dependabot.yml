@@ -1,0 +1,27 @@
+# simmer has one source dependency (swift-argument-parser) and a handful of
+# pinned actions. Both are places where an update lands silently otherwise.
+#
+# Monthly, not weekly: at this dependency count a weekly cadence produces noise
+# a single maintainer learns to close unread, which is worse than no bot.
+version: 2
+updates:
+  # Actions are the more urgent of the two — a compromised or abandoned action
+  # runs with the workflow's token.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "chore(ci)"
+    labels: [dependencies]
+
+  # Package.resolved is committed, so a bump here is reviewable as a diff.
+  # ArgumentParser is declared `from: "1.5.0"`, so patch and minor releases
+  # already resolve without a PR; these are the major ones worth a look.
+  - package-ecosystem: swift
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies]

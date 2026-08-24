@@ -1,0 +1,194 @@
+import Foundation
+
+/// Drives the BUILT `simmer` binary under the seam variables — the acceptance
+/// suite for any implementation of CONTRACTS.md, not just this one. Honours
+/// SIMMER_BIN, so it can be pointed at another binary and must still go green.
+///
+/// Hermetic: its own state directory per instance, the sleep switch is a file,
+/// battery/thermal/lock-delay are env, notifications are routed to none, and
+/// the clock is SIMMER_FAKE_NOW. No sudo, no real power state touched.
+struct Sim {
+    /// A fixed epoch far from now, so nothing accidentally passes because the
+    /// wall clock happens to be near a boundary. 2027-01-15 in Europe.
+    static let epoch = 1_800_000_000
+
+    let root: URL
+    let pmsetFile: URL
+    var stateDir: URL { root.appendingPathComponent("state/simmer") }
+    var claimsDir: URL { stateDir.appendingPathComponent("claims") }
+
+    init() {
+        root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-accept-\(UUID().uuidString)")
+        pmsetFile = root.appendingPathComponent("pmset")
+        try! FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try! "0".write(to: pmsetFile, atomically: true, encoding: .utf8)
+    }
+
+    func tearDown() {
+        // A test may have frozen the claims directory; a 0500 directory cannot
+        // be emptied, so restore it before removing the tree.
+        unfreezeClaims()
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    /// Make the claims directory unwritable — the shape a wrong owner or a
+    /// restrictive umask produces on a real machine. State is only ever *read*
+    /// back elsewhere in this suite; this changes permissions, never records.
+    func freezeClaims() {
+        // The directory is created by the binary's first run, so create it
+        // here when the test freezes it before ever invoking simmer —
+        // chmod on a missing path silently does nothing.
+        try? FileManager.default.createDirectory(at: claimsDir, withIntermediateDirectories: true)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o500],
+                                               ofItemAtPath: claimsDir.path)
+    }
+
+    func unfreezeClaims() {
+        guard FileManager.default.fileExists(atPath: claimsDir.path) else { return }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700],
+                                               ofItemAtPath: claimsDir.path)
+    }
+
+    var capUntil: Int? {
+        guard let text = try? String(contentsOf: stateDir.appendingPathComponent("cap"),
+                                     encoding: .utf8) else { return nil }
+        for line in text.split(separator: "\n") where line.hasPrefix("until=") {
+            return Int(line.dropFirst(6))
+        }
+        return nil
+    }
+
+    private final class BundleMarker {}
+
+    static let binary: String = {
+        if let bin = ProcessInfo.processInfo.environment["SIMMER_BIN"] { return bin }
+        // The test bundle lives in the products directory; walk up from it.
+        var dir = Bundle(for: BundleMarker.self).bundleURL
+        for _ in 0..<6 {
+            let candidate = dir.appendingPathComponent("simmer").path
+            if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
+            dir = dir.deletingLastPathComponent()
+        }
+        fatalError("no simmer binary found — build it, or set SIMMER_BIN")
+    }()
+
+    struct Result {
+        var out: String
+        var err: String
+        var code: Int32
+        var lines: [String] { out.split(separator: "\n").map(String.init) }
+        var combined: String { out + err }
+    }
+
+    /// Run the binary. `now` defaults to the fixed epoch; `env` overrides win.
+    /// `launcher` and `cwd` exist for `runThroughPATH`; everything else execs
+    /// the binary directly from the products directory.
+    @discardableResult
+    func run(_ args: [String], now: Int = Sim.epoch,
+             env overrides: [String: String] = [:],
+             launcher: String? = nil, cwd: URL? = nil) -> Result {
+        var environment: [String: String] = [
+            // A controlled PATH so the binary's own probes stay deterministic.
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": root.path,
+            "TZ": "Europe/Berlin",
+            "XDG_STATE_HOME": root.appendingPathComponent("state").path,
+            "SIMMER_FAKE_PMSET": pmsetFile.path,
+            "SIMMER_FAKE_BATTERY": "80:0",
+            "SIMMER_FAKE_THERMAL": "0",
+            "SIMMER_FAKE_LOCKDELAY": "0",
+            "SIMMER_FAKE_NOW": String(now),
+            "SIMMER_NOTIFY": "none",
+        ]
+        for (key, value) in overrides { environment[key] = value }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: launcher ?? Sim.binary)
+        process.arguments = args
+        process.environment = environment
+        if let cwd { process.currentDirectoryURL = cwd }
+        let outPipe = Pipe(), errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+        process.standardInput = FileHandle.nullDevice
+        try! process.run()
+        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return Result(out: String(decoding: outData, as: UTF8.self),
+                      err: String(decoding: errData, as: UTF8.self),
+                      code: process.terminationStatus)
+    }
+
+    /// Run the binary the way an installed copy is actually run: found on PATH,
+    /// so `argv[0]` is the bare word "simmer" and the working directory is
+    /// somewhere else entirely.
+    ///
+    /// Every other method here execs an absolute path, which is the one shape
+    /// that made a cwd-relative `argv[0]` look correct. That is why a dead
+    /// `bash=` path in every `render` action survived a green suite: the seam
+    /// substitutes the machine, but nothing was substituting the *invocation*.
+    @discardableResult
+    func runThroughPATH(_ args: [String], now: Int = Sim.epoch,
+                        env overrides: [String: String] = [:]) -> Result {
+        let shim = root.appendingPathComponent("shim")
+        try? FileManager.default.createDirectory(at: shim, withIntermediateDirectories: true)
+        let link = shim.appendingPathComponent("simmer")
+        if !FileManager.default.fileExists(atPath: link.path) {
+            try? FileManager.default.createSymbolicLink(
+                at: link, withDestinationURL: URL(fileURLWithPath: Sim.binary))
+        }
+        var environment = overrides
+        environment["PATH"] = "\(shim.path):/usr/bin:/bin:/usr/sbin:/sbin"
+        // A working directory that deliberately does NOT hold the binary:
+        // resolving argv[0] against it must not produce a real file by luck.
+        return run(["simmer"] + args, now: now, env: environment,
+                   launcher: "/usr/bin/env", cwd: root)
+    }
+
+    // MARK: state inspection — reads only; all mutations go through the binary
+
+    var switchValue: String {
+        (try? String(contentsOf: pmsetFile, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "?"
+    }
+
+    func setSwitch(_ on: Bool) {
+        try! (on ? "1" : "0").write(to: pmsetFile, atomically: true, encoding: .utf8)
+    }
+
+    var claimCount: Int {
+        ((try? FileManager.default.contentsOfDirectory(atPath: claimsDir.path)) ?? []).count
+    }
+
+    func claimField(_ id: String, _ key: String) -> String? {
+        guard let text = try? String(contentsOf: claimsDir.appendingPathComponent(id),
+                                     encoding: .utf8) else { return nil }
+        for line in text.split(separator: "\n") where line.hasPrefix("\(key)=") {
+            return String(line.dropFirst(key.count + 1))
+        }
+        return nil
+    }
+
+    func hasClaim(_ id: String) -> Bool {
+        FileManager.default.fileExists(atPath: claimsDir.appendingPathComponent(id).path)
+    }
+
+    /// Parsed events.jsonl — the transition record.
+    func events() -> [[String: Any]] {
+        guard let text = try? String(contentsOf: stateDir.appendingPathComponent("events.jsonl"),
+                                     encoding: .utf8) else { return [] }
+        return text.split(separator: "\n").compactMap {
+            try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+        }
+    }
+
+    func events(named name: String) -> [[String: Any]] {
+        events().filter { $0["event"] as? String == name }
+    }
+
+    func json(_ result: Result) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: Data(result.out.utf8)) as? [String: Any]) ?? [:]
+    }
+}
