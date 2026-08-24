@@ -8,7 +8,8 @@ The reasoning behind them is in `CONTRACTS.md`; what the platform permits is in 
 **What does simmer actually do?** Borrows `pmset -a disablesleep` — the only thing that keeps a Mac running with the lid shut — with a deadline, and has a background guard hand it back.
 It never leaves the switch on with nothing scheduled to turn it off.
 
-**Why not `caffeinate`?** It does not survive the lid.
+**Why not `caffeinate`, Amphetamine, KeepingYouAwake or LidRun?** The full comparison, including where each of them is the better answer, is in the README ("How it compares").
+The short version for `caffeinate`: it does not survive the lid.
 On Apple silicon the machine sleeps the moment you close it no matter which assertions are held, so no assertion of any kind can be the mechanism — only `pmset -a disablesleep` holds a closed lid, and only root can set it. v1 does hold an idle-sleep assertion of its own, in-process, but that is belt-and-braces and never the thing doing the work.
 
 **Why does it need my password?** Only root can flip that switch, and the guard has to be able to flip it back while nobody is at the keyboard.

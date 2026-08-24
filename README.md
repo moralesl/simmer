@@ -75,6 +75,24 @@ That is not a hypothetical — it is why this tool exists.
 simmer never exposes that switch.
 It *borrows* it, with a deadline, and a background watchdog hands it back.
 
+## How it compares
+
+The honest version, including where something else is the better answer.
+
+| | Holds a closed lid | Bounded by default | Several actors at once | Callable by an agent | Cost |
+|---|---|---|---|---|---|
+| **simmer** | yes — borrows `pmset -a disablesleep`, watchdog hands it back | yes; a deadline is required, and a human **cap** clips every claim | **yes** — counted claims, one per actor, nobody can end another's | exit codes + `--json` on every verb, and a written protocol ([FOR-AGENTS.md](docs/FOR-AGENTS.md)) | free, MIT |
+| `caffeinate` (Apple) | no — power assertions cannot hold the lid on Apple silicon | yes (`-t`) | no | yes, but it cannot do the thing | free, built in |
+| [KeepingYouAwake](https://github.com/newmarcel/KeepingYouAwake) | no — an assertion wrapper, same ceiling as `caffeinate` | timer | no | no | free, MIT |
+| [Amphetamine](https://apps.apple.com/app/amphetamine/id937984704) | yes, since 5.0 (a preference, off by default) | timers and triggers | no | no | free, App Store |
+| [LidRun](https://lidrun.com/) | yes, in Pro; mechanism not documented | timer 30 min–8 h, charging-only, thermal, ~4–5% battery floor | no | no (it *detects* Claude Code and Cursor rather than being called by them) | free lid-**open**; $9 one-time for closed-lid |
+
+**Pick something else when:** you want a polished GUI that notices your agent started on its own — LidRun is built for exactly that and costs less than lunch. You want a mature, free, App Store app and one person's laptop is the whole story — Amphetamine, and it has done lid-closed since 5.0. You only need the screen awake while you are sitting there — `caffeinate -d` is already installed.
+
+**simmer is the answer when the machine is shared with things that are not you.** That is the one column nothing else has: a person, an agent and a build each hold their own claim, the Mac sleeps when the last one ends, and no actor can take another's time away — by construction, because a claim's id *is* its owner. The rest follows from it: `budget` exists so an agent can ask "is there room to start" before it starts, the cap exists so a person outranks every agent, and `--json` is on every verb because the caller is often not a human.
+
+It also never asks for an account, a certificate, or a payment, and it compiles on your machine in about a minute — see the [FAQ](docs/FAQ.md) on why that is what makes it run with no Gatekeeper warning.
+
 ## The model
 
 Awake time is **counted, not owned**.
