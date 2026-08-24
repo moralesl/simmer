@@ -105,6 +105,32 @@ struct DoctorCLI: ParsableCommand {
             rows.append(Row(id: "notifications_authorized",
                             label: "notifications authorized for Simmer",
                             ok: appStatus.notify == "authorized"))
+            // Read from the heartbeat for the same reason `notify` is: only the
+            // app can answer it, and this executable asking would learn about
+            // the wrong subject.
+            //
+            // Off is reported, never red. The guard hands the switch back
+            // either way, so nothing here is broken — what is lost is the menu
+            // bar and every banner after the next restart, which is worth a
+            // line precisely because nothing else would ever mention it. A
+            // permanently red row teaches people to skim the whole report.
+            switch appStatus.login {
+            case "enabled":
+                rows.append(Row(id: "login_item",
+                                label: "opens at login (menu bar and banners survive a restart)",
+                                ok: nil))
+            case "requiresApproval":
+                rows.append(Row(id: "login_item",
+                                label: "opens at login — waiting for your approval in System Settings > Login Items",
+                                ok: nil))
+            case "unknown":
+                break
+            default:
+                rows.append(Row(
+                    id: "login_item",
+                    label: "does NOT open at login — after a restart there is no menu bar and no banners until you open Simmer. The guard still works. Enable it in Simmer's setup window.",
+                    ok: nil))
+            }
         }
 
         rows.append(Row(id: "claims_writable", label: "claims directory writable",

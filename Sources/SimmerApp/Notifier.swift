@@ -48,6 +48,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     func publishStatus() {
         let ctx = AppState.shared.context()
         ctx.ledger.writeAppStatus(notifyStatus: BundleNotifier.authorizationStatus(),
+                                  loginStatus: LoginItem.statusWord,
                                   now: ctx.now)
     }
 

@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // One tick on launch: heals anything a crash or a by-hand pmset left
         // behind, exactly like the LaunchAgent's RunAtLoad.
         AppState.shared.tick()
+        // Before showIfNeeded, so the window's login row reflects what just
+        // happened rather than the state a second ago.
+        LoginItem.registerOnceIfNeeded(stateDir: AppState.shared.environment.stateDir)
         SetupWindow.shared.showIfNeeded()
     }
 
