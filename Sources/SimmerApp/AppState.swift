@@ -102,4 +102,8 @@ final class AppState {
 
 extension Notification.Name {
     static let simmerStateChanged = Notification.Name("simmerStateChanged")
+    /// Something a setup row reports has changed — the notification grant, or
+    /// the login-item registration. Posted on transitions only (Notifier), so
+    /// an observer may do real work per event.
+    static let simmerSetupChanged = Notification.Name("simmerSetupChanged")
 }

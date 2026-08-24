@@ -19,7 +19,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppState.shared.tick()
         // Before showIfNeeded, so the window's login row reflects what just
         // happened rather than the state a second ago.
-        LoginItem.registerOnceIfNeeded(stateDir: AppState.shared.environment.stateDir)
+        //
+        // Never under the seam: a sandbox or a throwaway-bundle-id run would
+        // otherwise leave a real, persistent login item pointing at a build in
+        // a temporary directory — the same reason `updateAssertions` refuses to
+        // touch real power state there.
+        if !AppState.shared.seamActive {
+            LoginItem.registerOnceIfNeeded(stateDir: AppState.shared.environment.stateDir)
+        }
         SetupWindow.shared.showIfNeeded()
     }
 

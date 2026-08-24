@@ -25,9 +25,47 @@ final class SetupWindow: NSObject {
 
     func show() {
         if window == nil { build() }
+        observeOnce()
         refresh()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private var observing = false
+
+    /// Every row re-reads on any signal that one of them may have moved.
+    ///
+    /// Each of the three buttons used to refresh after its own action, and
+    /// nothing else ever did — so the rows were only ever correct about the
+    /// button you last pressed. The permission prompt a person actually answers
+    /// on first launch is requested by `Notifier.setUp()`, not by this window,
+    /// so clicking Allow left "Waiting for you to click Allow" on screen until
+    /// some unrelated button was pressed and refreshed all three at once. The
+    /// `.denied` row's "Open Settings" was the same dead end from the other
+    /// direction: nothing re-read anything when you came back.
+    ///
+    /// Two signals rather than three buttons:
+    ///   · the heartbeat, which already re-reads both values every three
+    ///     seconds and now says so when one changes — this is the one that
+    ///     catches an answer given to a banner nobody here asked for;
+    ///   · becoming active, which catches whatever was changed in System
+    ///     Settings while we were in the background, including the sudo rule
+    ///     installed in a terminal.
+    private func observeOnce() {
+        guard !observing else { return }
+        observing = true
+        for name in [Notification.Name.simmerSetupChanged,
+                     NSApplication.didBecomeActiveNotification] {
+            NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                // Only while on screen: `refresh` shells out to `sudo -nl` for
+                // the first row, and that must not run for a window nobody is
+                // looking at.
+                guard let self, self.window?.isVisible == true else { return }
+                self.refresh()
+            }
+        }
     }
 
     /// Shown automatically only while something still needs a human.
