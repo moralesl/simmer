@@ -59,10 +59,72 @@ public struct Claim: Sendable, Equatable {
 
     /// Anything not filename-safe becomes an underscore. The owner is echoed
     /// back verbatim from inside the file, so the sanitising stays invisible.
+    ///
+    /// **Flattening alone is not enough, and this is the reason the
+    /// fingerprint below exists.** The map is many-to-one: `agent:a/b` and
+    /// `agent:a_b` both flattened to `agent:a_b`, so the second actor's claim
+    /// silently replaced the first's — a two-hour claim destroyed by an
+    /// unrelated one-minute one, with nothing said. Every non-ASCII name
+    /// collapsed the same way (`agent:über` and `agent:öber` → `agent:_ber`),
+    /// which is not a contrived case for a tool whose author writes German.
+    ///
+    /// That is the one rule this tool cannot break — "no surface may cost a
+    /// caller awake time it already holds" (AGENTS.md) — failing at the exact
+    /// place the whole ownership model rests on, since "no actor can address
+    /// another's claim" is only true while the owner→id map keeps them apart.
+    ///
+    /// So the id is the owner **unchanged** whenever the owner is already
+    /// filename-safe and short enough — which is every claim any existing
+    /// machine holds, so no filename moves and no migration is owed. Only a
+    /// name that had to be altered carries a fingerprint of the ORIGINAL, and
+    /// that suffix is what keeps two owners that flatten alike apart.
+    ///
+    /// A fingerprint is collision-*resistant*, not injective, and saying so is
+    /// the honest version: two mangled owners can still meet, at even odds
+    /// around 77,000 distinct ones on a single Mac. The failure it replaces
+    /// needed two.
     public static func sanitizedId(_ owner: String) -> String {
-        String(owner.map { char in
+        let flattened = String(owner.map { char in
             char.isASCII && (char.isLetter || char.isNumber || "._:-".contains(char)) ? char : "_"
         })
+        // Flattening maps every non-ASCII scalar to "_", so `flattened` is
+        // pure ASCII and its character count IS its byte count.
+        let overlong = flattened.count > idStemBudget
+        guard flattened != owner || overlong else { return flattened }
+        let stem = overlong ? String(flattened.prefix(idStemBudget)) : flattened
+        return "\(stem)-\(fingerprint(owner))"
+    }
+
+    /// How much of a mangled owner survives into its id.
+    ///
+    /// **The ceiling is not `NAME_MAX`.** It is `NAME_MAX` (255 on APFS) minus
+    /// the `.tmp.<pid>` suffix `Ledger.atomicWrite` writes under before
+    /// renaming into place, because a claim that fits its final name and not
+    /// its temporary one never lands. An id of exactly 255 was measured
+    /// failing for that reason.
+    ///
+    /// And it failed by naming the wrong thing: "could not record the claim in
+    /// …/claims", which sends the reader to `simmer doctor` — where the claims
+    /// directory reports itself writable, because it is. Truncating instead is
+    /// only safe because the fingerprint is taken over the WHOLE owner, so
+    /// cutting the stem cannot merge two names that differ only past the cut.
+    static let idTempSuffix = ".tmp.".count + 8   // macOS pids are ≤ 5 digits
+    static let idBudget = 255 - idTempSuffix
+    static let idStemBudget = idBudget - 1 - 8    // the "-" and the fingerprint
+
+    /// A stable fingerprint of the raw owner, in hex so it is filename-safe.
+    ///
+    /// Hand-rolled FNV-1a and deliberately NOT Swift's `Hasher`, which is
+    /// seeded per process: an id that came out different on the next
+    /// invocation would leave every actor unable to address the claim it had
+    /// just written, which is a worse bug than the one this fixes.
+    static func fingerprint(_ text: String) -> String {
+        var hash: UInt32 = 2_166_136_261            // FNV offset basis
+        for byte in text.utf8 {
+            hash ^= UInt32(byte)
+            hash = hash.multipliedReportingOverflow(by: 16_777_619).partialValue
+        }
+        return String(format: "%08x", hash)
     }
 
     // MARK: format=2 codec

@@ -78,12 +78,33 @@ Per-claim detail is in `claims`, never in `--machine`: that format stays flat so
 
 - `claims/<id>` — one `format=2` key=value file per claim, written via temp-file
   + rename, never edited in place.
+    The id is derived from the owner — see § The claim id.
 - `cap` — the human ceiling, same discipline.
 - `simmer.log`.
 - in v1, additionally an append-only `events.jsonl` (one JSON object per transition: `v`, `ts`, `event`, `reason`, `owner`, …).
 
 A `format=1` lease is read **once**, converted into a claim, and deleted.
 An implementation must do this migration: someone upgrading mid-lease must not silently lose awake time they are relying on, and must never end up with both shapes on disk, which is how a guard learns to disagree with the CLI.
+
+### The claim id
+
+The whole ownership model rests on one property: **two different owners must never be handed the same claim file.** So the map from owner to id is contracted, not left to an implementation.
+
+- **A filename-safe owner IS its own id, unaltered** — ASCII letters, digits and `._:-`, within the length budget below.
+  That covers every owner any surface produces (`terminal`, `menubar`, `agent:evals`, `run:4821`), so no filename ever moves and nothing is owed a migration.
+- **Otherwise:** unsafe characters flatten to `_`, **and a fingerprint of the original owner is appended** — `agent:a/b` → `agent:a_b-e6a27fc6`.
+- The fingerprint is FNV-1a over the raw owner's UTF-8, as 8 lowercase hex digits.
+  It must **not** come from a per-process-seeded hash: an id that moves between invocations leaves an actor unable to address the claim it just wrote, which is worse than the collision it would be fixing.
+- The length budget is `NAME_MAX` **minus the temp-file suffix the rename goes through**, not `NAME_MAX` — a claim written under `<id>.tmp.<pid>` and renamed into place needs the temporary name to fit too.
+  An over-long owner is truncated *before* the fingerprint is appended, never after, so cutting the stem cannot merge two names that differ only past the cut.
+
+Flattening alone is many-to-one, and an implementation that stops there hands two actors the same file.
+`agent:a/b` and `agent:a_b` collided, so an unrelated one-minute claim silently destroyed a two-hour one: no refusal, no warning, nothing in any output to read.
+Every non-ASCII owner collapsed the same way (`agent:über`, `agent:öber` → `agent:_ber`).
+That is the one failure this tool exists to prevent, arriving through the mechanism the model calls impossible.
+
+A fingerprint is collision-*resistant*, not injective, and this says which it is: two mangled owners can still meet, at even odds somewhere around 77,000 distinct ones on a single Mac.
+The failure it replaces needed two.
 
 ## The test seam
 
@@ -115,8 +136,10 @@ Warn-once, the reminder interval and deadline crossings are the paths a differen
 2. The switch is never exposed, only leased.
    **Every mutation ends in one function that reads the ledger and puts the switch where it says** — that is what makes "no code path leaves `disablesleep` on without something scheduled to turn it off" a property rather than a promise.
 3. A warning fires once, ~5 minutes before the **aggregate** deadline; open-ended time reminds every 30 minutes; a claim on battery warns once at floor+10%, re-arming if the charger returns.
-4. One actor cannot touch another's awake time.
-   Not by refusal — by construction: a claim's id is its owner, so no actor can address another's.
+4. An actor that names only itself cannot touch another's awake time.
+   Not by refusal — by construction: a claim's id is its owner, so an actor addressing itself addresses nothing else.
+   The construction is exactly as strong as the owner→id map being one-to-one, which is why that map is contracted in § State rather than left to an implementation: while it was many-to-one, two honest actors with different names met in the same file and the shorter claim won.
+   A caller that *names someone else* is a different question, answered under human primacy below and in `SECURITY.md`.
 5. Human-facing sentences may be reworded at any time; parse `--json`/`--machine`.
    A differential harness is the instrument that enforces this asymmetry — contract-bearing lines must match exactly, prose differences are reported and allowed — and it is the only thing that catches a field name, an exit code or a field's *type* drifting.
 6. Reverting an **orphan** — the switch on with nothing claiming it — is allowed to anyone, always.
@@ -134,7 +157,7 @@ They are settled, not open.
 
 | Question | Resolution | Why this one |
 |---|---|---|
-| What is a claim's identity? | **The owner.** One live claim per owner, id = owner sanitised into a filename. | "Extend/release/replace *mine*" needs no registry and cannot be ambiguous, and an actor physically cannot name another's file. Actors that are genuinely several things make their identity unique (`run:<pid>`); concurrent agents should too (`--owner agent:funnel`). |
+| What is a claim's identity? | **The owner.** One live claim per owner, id = owner sanitised into a filename, **fingerprinted when sanitising changed it** (§ State). | "Extend/release/replace *mine*" needs no registry and cannot be ambiguous, and an actor naming only itself cannot name another's file. The sanitising must stay one-to-one for that to hold at all — it did not, and a one-minute claim ate a two-hour one. Actors that are genuinely several things make their identity unique (`run:<pid>`); concurrent agents should too (`--owner agent:funnel`). |
 | "floor/thermal end all of them" | Claims retire on **their own** floor; the last one out flips the switch. Thermal ends everything, unconditionally. | With the default floor everywhere — the normal case — the floor *does* end all of them. Per-claim means an agent asking `--min-battery 60` cannot drag a human's claim down with it, which the all-at-once reading would allow. Heat is a fact about the machine, not about anyone's plan for it, so it has no per-claim setting. |
 | Which claim's `reason`/`owner`/`floor` does `--machine` report? | The claim that **defines the aggregate deadline**. | One coherent rule, and identical to the single-lease answer whenever there is one claim — so every existing reader keeps working. |
 | A cap whose time has passed | **Refuses new claims**, in every surface, until a human moves or lifts it. | Letting it expire quietly would discard a decision a person made on purpose. Failing toward *sleep* is simmer's bias, and the refusal names the fix (`simmer cap off`) so it is a visible gate rather than a trap. |

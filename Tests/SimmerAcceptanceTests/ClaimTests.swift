@@ -245,6 +245,60 @@ import Testing
         #expect(sim.claimField("test", "until") == "0")
         #expect(sim.run(["status", "--machine"]).out.contains("state=forever"))
     }
+
+    /// Two owners that flatten to the same filename must get two claims.
+    ///
+    /// Reproduced against the built binary before it was fixed: `agent:a/b`
+    /// took two hours, `agent:a_b` — a different actor entirely — took one
+    /// minute, and `claim_count` stayed at 1. The long claim was gone, no
+    /// refusal, no warning, nothing in the output to read. That is the single
+    /// failure this tool exists to prevent, arriving through the one mechanism
+    /// the model calls impossible: "no actor can address another's claim".
+    ///
+    /// The unit suite owns the id map (`distinctOwnersNeverShareAClaimId`);
+    /// this owns the consequence, end to end, because the map being injective
+    /// is only interesting if two claims actually survive.
+    @Test func ownersThatFlattenAlikeStillGetSeparateClaims() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["2h", "-r", "long job", "--owner", "agent:a/b"]).code == 0)
+        let second = sim.run(["1m", "-r", "short job", "--owner", "agent:a_b"])
+        #expect(second.code == 0)
+
+        let status = sim.json(sim.run(["status", "--json"]))
+        #expect(status["claim_count"] as? Int == 2, "\(status)")
+        let claims = (status["claims"] as? [[String: Any]]) ?? []
+        #expect(Set(claims.compactMap { $0["owner"] as? String }) == ["agent:a/b", "agent:a_b"])
+        // The aggregate must follow the LONGER claim: the whole point is that
+        // the two hours were not quietly traded for one minute.
+        #expect(status["left"] as? Int ?? 0 > 3000, "\(status)")
+
+        // And each one can still address its own — releasing one leaves the
+        // other exactly where it was.
+        #expect(sim.run(["down", "--owner", "agent:a_b"]).code == 0)
+        let after = sim.json(sim.run(["status", "--json"]))
+        #expect(after["claim_count"] as? Int == 1, "\(after)")
+        #expect((after["claims"] as? [[String: Any]])?.first?["owner"] as? String == "agent:a/b")
+    }
+
+    /// An owner too long to be a filename is refused for what it is.
+    ///
+    /// It used to fail as "could not record the claim in …/claims", which
+    /// pointed at the directory and sent the reader to `simmer doctor` — where
+    /// the claims directory reports itself writable, because it is. The id now
+    /// carries a truncated stem plus the fingerprint of the whole name, so a
+    /// long owner is an ordinary claim instead of a dead end.
+    @Test func anOverlongOwnerStillGetsAClaim() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let long = String(repeating: "x", count: 400)
+        let result = sim.run(["30m", "-r", "long name", "--owner", long])
+        #expect(result.code == 0, "\(result.combined)")
+        #expect(sim.claimCount == 1)
+        // Addressable by the actor that wrote it — the id is derived, not stored
+        // in the caller, so this is the round trip that matters.
+        #expect(sim.run(["+10m", "--owner", long]).code == 0)
+        #expect(sim.run(["down", "--owner", long]).code == 0)
+        #expect(sim.claimCount == 0)
+    }
 }
 
 /// A bare duration past half a day says so — and says the useful thing, which

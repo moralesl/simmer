@@ -89,8 +89,77 @@ import Testing
 
     @Test func sanitizedIdEchoesOwnerVerbatimInside() {
         let claim = Claim(owner: "weird owner/name", until: 0, started: 0)
-        #expect(claim.id == "weird_owner_name")
+        #expect(claim.id.hasPrefix("weird_owner_name-"))
         #expect(Claim.parse(claim.serialized(), fallbackId: claim.id).owner == "weird owner/name")
+    }
+
+    /// An owner that needs no flattening keeps the id it has always had.
+    ///
+    /// This is the compatibility half of the fingerprint: every claim any
+    /// machine currently holds was written by an actor naming itself in the
+    /// safe set, so no filename moves and no migration is owed. If this fails,
+    /// every live claim on every installed copy became unaddressable by the
+    /// actor that wrote it.
+    @Test func aFilenameSafeOwnerIsItsOwnIdUntouched() {
+        for owner in ["terminal", "menubar", "agent:evals", "run:4821",
+                      "agent:cp-funnel", "script", "a.b_c-d:e"] {
+            #expect(Claim.sanitizedId(owner) == owner)
+        }
+    }
+
+    /// The property the whole ownership model rests on: two different actors
+    /// must never be handed the same claim file. It used to be false — every
+    /// pair below collided, and the loser lost awake time it already held,
+    /// silently (CONTRACTS.md § the claims ledger; AGENTS.md, the "no surface
+    /// may cost a caller awake time it already holds" rule).
+    @Test func distinctOwnersNeverShareAClaimId() {
+        let owners = [
+            // The pair that was actually reproduced against the built binary.
+            "agent:a/b", "agent:a_b",
+            // Every separator a real caller reaches for.
+            "agent:a b", "agent:a\tb", "agent:a|b", "agent:a\\b", "agent:a,b",
+            // Non-ASCII: all of these flattened to the same underscores.
+            "agent:über", "agent:öber", "agent:ober", "agent:发布", "agent:тест",
+            // Traversal, which must stay neutralised AND stay distinguishable.
+            "../../../../tmp/pwned", ".._.._.._.._tmp_pwned",
+            // Safe names, to prove the two kinds cannot meet either.
+            "terminal", "menubar", "agent:evals", "run:1", "run:2",
+            // Longer than a filename may be: truncation must not merge them.
+            String(repeating: "x", count: 400) + "/one",
+            String(repeating: "x", count: 400) + "/two",
+        ]
+        var seen: [String: String] = [:]
+        for owner in owners {
+            let id = Claim.sanitizedId(owner)
+            #expect(seen[id] == nil,
+                    "owners \(seen[id] ?? "?") and \(owner) share the claim id \(id)")
+            seen[id] = owner
+        }
+        #expect(seen.count == owners.count)
+    }
+
+    /// An id has to survive as a filename on APFS, whatever the owner was —
+    /// and the budget it has to fit is the one the temp-file rename leaves,
+    /// not `NAME_MAX` itself (`Claim.idBudget`).
+    @Test func aClaimIdIsAlwaysAUsableFilename() {
+        for owner in ["agent:evals", "agent:a/b", String(repeating: "ü", count: 500),
+                      String(repeating: "x", count: 500)] {
+            let id = Claim.sanitizedId(owner)
+            #expect(!id.isEmpty)
+            #expect(id.utf8.count <= Claim.idBudget, "\(id.utf8.count) bytes")
+            #expect(!id.contains("/"))
+            #expect(id != "." && id != "..")
+        }
+    }
+
+    /// The fingerprint must not move between processes — `Hasher` is seeded
+    /// per process and would have made an id unaddressable by its own writer.
+    /// Asserted as a literal, which is the only way this test can fail if
+    /// someone swaps the implementation for a seeded one.
+    @Test func theFingerprintIsStableAcrossProcesses() {
+        #expect(Claim.fingerprint("") == "811c9dc5")          // FNV-1a offset basis
+        #expect(Claim.fingerprint("a") == "e40c292c")
+        #expect(Claim.fingerprint("foobar") == "bf9cf968")
     }
 
     @Test func spikeWrittenClaimWithCaffeinatePidParses() {

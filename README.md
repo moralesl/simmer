@@ -47,7 +47,7 @@ cap                ⛔  nothing past     23:00        ──── unless you sa
 The glyph is the door the claim came through — ⌨️ a prompt, 🖥️ the menu bar, 🚀 a launcher, ⚙️ a wrapped command, 🤖 an agent, 📜 something that never named itself.
 With four claims live, "which of these is mine" is the question actually being asked.
 
-A claim's id **is** its owner, which is the whole ownership model: "extend mine", "release mine" and "replace mine" need no registry and cannot be ambiguous, because one actor physically cannot address another's file.
+A claim's id **is** its owner, which is the whole ownership model: "extend mine", "release mine" and "replace mine" need no registry and cannot be ambiguous, because an actor that names itself is not naming anybody else's file.
 There is no `--force` — the conflict it existed to resolve cannot occur.
 
 And you have the final say, mechanically: a person can end any claim, an agent only its own, and the **cap** is a human instrument alone.
