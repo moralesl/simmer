@@ -3,6 +3,28 @@
 For agents (and humans) changing THIS repository.
 For *using* simmer from an agent on some machine, read `docs/FOR-AGENTS.md` instead.
 
+## The shape of it
+
+**One Swift package, three products** — `SimmerCore` (the logic, no AppKit, no printing), `simmer` (the CLI), and `Simmer.app` (menu bar + event-driven guard + notification identity, one bundle).
+The guard runs both ways over one idempotent `tick()`: IOKit events in the app for instant response, and a LaunchAgent every 30 seconds as the backstop nobody can quit.
+
+```
+Sources/SimmerCore/  claims · ledger · cap · aggregate · settle · tick ·
+                     budget · render · the power seam · the clock seam
+Sources/SimmerCLI/   argv in, exit code out. Thin on purpose.
+Sources/SimmerApp/   NSStatusItem · IOKit callbacks · UNUserNotificationCenter
+Tests/               unit suite + an acceptance suite that drives the BUILT
+                     binary under the seam variables (honours SIMMER_BIN)
+
+AGENTS.md            this page: read order, commands, iron rules.
+docs/FOR-AGENTS.md   USING simmer from an agent: budget, owners, obligations.
+docs/CONTRACTS.md    the law, in prose: surface, exit codes, machine output,
+                     and the reasoning behind every choice.
+docs/PLATFORM-FACTS.md  what macOS actually does, verified — and the traps a
+                     test cannot carry. Read this first.
+docs/ROADMAP.md      decided but not built. docs/FAQ.md — short answers.
+```
+
 ## Read first, in this order
 
 1. `docs/CONTRACTS.md` — the law: surface, exit codes, machine output, and the reasoning behind every choice.
