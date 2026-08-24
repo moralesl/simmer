@@ -119,12 +119,14 @@ Reporting something sensitive: [SECURITY.md](SECURITY.md).
 ## Uninstall
 
 ```bash
-make -C ~/.local/share/simmer uninstall   # the app, the CLI symlink, the guard
-sudo rm /etc/sudoers.d/simmer             # the sudo rule — needs root, so it is yours
+simmer uninstall   # what is installed, and the exact commands that remove it
 ```
 
-`~/.local/share/simmer` is where the one-paste installer puts the checkout.
-The uninstall removes exactly what the install wrote and nothing else; it leaves the sudo rule alone deliberately, because removing it needs root and simmer only ever removes what simmer wrote.
+It shows the commands rather than running them — the same way it shows the sudo rule at install time instead of escalating to apply it.
+That also means you can read what is about to happen, and it cannot delete the bundle it is running from.
+The commands come out resolved, so nothing depends on remembering that the one-paste installer put a checkout in `~/.local/share/simmer`.
+
+The sudo rule is left out of them deliberately: removing it needs root, and simmer only ever removes what simmer wrote.
 State (`~/.local/state/simmer/`) is yours to keep or delete.
 
 ## For agents

@@ -216,7 +216,7 @@ epilogue() {
 
   The checkout lives at $DIR
   Update later with:  curl -fsSL ${REPO}/raw/main/bootstrap.sh | bash
-  Remove it with:     make -C $DIR uninstall
+  Remove it with:     simmer uninstall
 EOF
 }
 

@@ -35,7 +35,8 @@ struct SimmerRoot: ParsableCommand {
         abstract: "Keeps this Mac awake for a bounded time — lid closed — then lets it sleep again.",
         subcommands: [ClaimCLI.self, ExtendCLI.self, ReleaseCLI.self, CapCLI.self,
                       StatusCLI.self, BudgetCLI.self, RunCLI.self, GuardCLI.self,
-                      DoctorCLI.self, LogCLI.self, RenderCLI.self, NotifyTestCLI.self]
+                      DoctorCLI.self, LogCLI.self, RenderCLI.self, NotifyTestCLI.self,
+                      UninstallCLI.self]
     )
 }
 
