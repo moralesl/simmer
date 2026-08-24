@@ -30,6 +30,14 @@ struct RunCLI: ParsableCommand {
     var command: [String] = []
 
     func run() throws {
+        // `run` is the one verb whose stdout is not its own, so it has no
+        // machine answer it could deliver: a JSON object on stdout would land
+        // in the middle of the wrapped command's output, which is the thing
+        // this file exists to keep clean. Refused with the alternative named,
+        // exactly as `notify-test` and `render` are — CONTRACTS.md's --json
+        // list never included `run`; the flag was being accepted and dropped
+        // anyway, which a caller cannot tell from one that worked.
+        common.refuseJSON("run", insteadUse: "simmer status --json in another shell")
         let env = Runtime.environment()
         guard !command.isEmpty else {
             Runtime.deliver(.failure("run what? simmer run -- <command...>"))
@@ -62,7 +70,12 @@ struct RunCLI: ParsableCommand {
         let takeOutcome = Commands.claim(
             ClaimInput(durationText: "\(first)s", reason: reason, force: force),
             ctx: ctx)
-        Runtime.emit(takeOutcome)
+        // stderr, not stdout. `simmer run -- ./gen.sh > out.json` and
+        // `X=$(simmer run -- ./build)` must see exactly what the command
+        // wrote and nothing else — `caffeinate`, which this replaces, adds
+        // nothing to either stream. Everything simmer says about its own claim
+        // is commentary on the run, which is what stderr is for.
+        Runtime.emit(takeOutcome, human: .stderr)
         if takeOutcome.exit != 0 { throw ExitCode(takeOutcome.exit) }
 
         let coordinator = RunCoordinator(owner: owner, chunk: chunk,
@@ -129,14 +142,12 @@ final class RunCoordinator {
                     // --max reached: the claim lapses, the command does NOT.
                     ctx.ledger.log("run: --max budget exhausted, no longer renewing (\(claim.reason))",
                                    now: ctx.now)
-                    Runtime.emit({
-                        var outcome = Outcome()
-                        outcome.notifications.append(NotificationRequest(
-                            title: "☕ run budget exhausted",
-                            subtitle: "sleep re-allowed, command still running",
-                            body: claim.reason))
-                        return outcome
-                    }())
+                    var lapsed = Outcome()
+                    lapsed.notifications.append(NotificationRequest(
+                        title: "☕ run budget exhausted",
+                        subtitle: "sleep re-allowed, command still running",
+                        body: claim.reason))
+                    Runtime.emit(lapsed, human: .stderr)
                     return
                 }
                 var target = ctx.now + chunk
@@ -185,7 +196,7 @@ final class RunCoordinator {
         if let claim = ctx.ledger.claim(owner: owner) {
             ctx.ledger.retire(claim, why: "run finished", now: ctx.now)
             let (_, outcome) = Engine.settle(ctx: ctx, why: "run finished")
-            Runtime.emit(outcome)
+            Runtime.emit(outcome, human: .stderr)
         }
     }
 }

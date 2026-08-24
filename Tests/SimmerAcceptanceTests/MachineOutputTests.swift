@@ -221,6 +221,31 @@ import Testing
 }
 
 @Suite struct RunTests {
+    /// The wrapped command owns stdout, byte for byte.
+    ///
+    /// `simmer run` announced its claim on stdout, so it landed in the middle
+    /// of the command's output: `X=$(simmer run -- ./build)` and
+    /// `simmer run -- ./gen.sh > out.json` both silently captured three lines
+    /// of simmer prose. `caffeinate`, which this is a drop-in for, adds nothing
+    /// to either stream.
+    @Test func theWrappedCommandOwnsStdout() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let direct = sim.run(["run", "--", "sh", "-c", "printf 'a\\nb\\n'"])
+
+        #expect(direct.out == "a\nb\n", "stdout was \(direct.out.debugDescription)")
+        // The claim still has to be announced — on stderr, where commentary on
+        // the run belongs. Silence would be the other way to pass this test and
+        // the wrong one.
+        #expect(direct.err.contains("simmering"), "the claim went unannounced: \(direct.err)")
+    }
+
+    /// A command that writes nothing leaves stdout empty — the strictest form
+    /// of the same rule, and the one a redirect into a parser depends on.
+    @Test func aSilentCommandLeavesStdoutEmpty() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["run", "--", "true"]).out.isEmpty)
+    }
+
     @Test func exitCodesPassThroughUntouched() {
         let sim = Sim(); defer { sim.tearDown() }
         #expect(sim.run(["run", "--", "true"]).code == 0)
@@ -475,10 +500,20 @@ import Testing
         #expect(!error.contains("Usage:"), "\(args): usage text leaked into error")
     }
 
-    @Test func theTwoVerbsWithoutAMachineAnswerSaySo() {
+    /// `run` joined these two: its stdout belongs to the command it wraps, so
+    /// there is no stream left to put an object on. It had been accepting
+    /// `--json`, printing prose and exiting 0 — the one verb
+    /// `everyVerbHonoursJSON` skips, and therefore the one place the rule went
+    /// unenforced.
+    @Test func theVerbsWithoutAMachineAnswerSaySo() {
         let sim = Sim(); defer { sim.tearDown() }
-        for verb in [["notify-test"], ["render", "raycast"]] {
-            let result = sim.run(verb + ["--json"])
+        // Each row is the whole invocation: for `run` the flag has to sit
+        // BEFORE the terminator, because everything after `--` belongs to the
+        // command — which is itself the behaviour under test here.
+        for invocation in [["notify-test", "--json"],
+                           ["render", "raycast", "--json"],
+                           ["run", "--json", "--", "true"]] {
+            let result = sim.run(invocation)
             #expect(result.code == 1)
             #expect(result.err.contains("no JSON form"))
             // A refusal that names no fix is the one thing the surface forbids.

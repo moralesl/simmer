@@ -75,14 +75,23 @@ enum Runtime {
                        version: version, binPath: env.binPath)
     }
 
+    /// Where a command's human lines go. `stdout` for every subcommand except
+    /// `run`, whose stdout belongs to the command it wraps — see RunCLI.
+    enum HumanStream { case stdout, stderr }
+
     /// Print, post, exit. The single exit path for every subcommand.
-    static func deliver(_ outcome: Outcome) -> Never {
-        emit(outcome)
+    static func deliver(_ outcome: Outcome, human: HumanStream = .stdout) -> Never {
+        emit(outcome, human: human)
         exit(outcome.exit)
     }
 
-    static func emit(_ outcome: Outcome) {
-        for line in outcome.stdout { print(line) }
+    static func emit(_ outcome: Outcome, human: HumanStream = .stdout) {
+        for line in outcome.stdout {
+            switch human {
+            case .stdout: print(line)
+            case .stderr: FileHandle.standardError.write(Data((line + "\n").utf8))
+            }
+        }
         for line in outcome.stderr {
             FileHandle.standardError.write(Data((line + "\n").utf8))
         }
