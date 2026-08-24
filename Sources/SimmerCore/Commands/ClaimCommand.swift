@@ -183,6 +183,24 @@ public enum Commands {
             if input.requireAC {
                 outcome.stdout.append("   ends if the charger is unplugged")
             }
+            // Half a day or more from a bare duration. The founding story of
+            // this tool is a switch set before a flight and found as a flat
+            // battery, so a window this long gets a sentence — and `simmer
+            // 2000`, which is 33 h 20 min, is a far more likely typo for
+            // `--until 20:00` than a real intention.
+            //
+            // Never a refusal: overnight is a first-class case. And the
+            // sentence differs by power source, because the useful advice
+            // does. Recommending `--require-ac` to someone already on battery
+            // would be advice they cannot take — the claim above refuses that
+            // combination outright.
+            if untilEpoch - ctx.now >= Claim.longHaulSeconds {
+                if ctx.power.onBattery() {
+                    outcome.stdout.append("   note: on battery the \(input.minBattery)% floor ends this well before \(Formats.hhmmDated(untilEpoch, now: ctx.now)) — plug in for the whole window")
+                } else if !input.requireAC {
+                    outcome.stdout.append("   note: over \(Durations.human(Claim.longHaulSeconds)) — with --require-ac it ends when the charger goes, instead of draining to the floor")
+                }
+            }
             // simmer is the tool that turns a lax Lock Screen setting into a
             // running, unlocked laptop in a bag — so it says so.
             if let delay = ctx.power.lockDelaySeconds(), delay > 60 {
