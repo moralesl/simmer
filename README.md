@@ -35,7 +35,8 @@ It *borrows* it, with a deadline, and a background watchdog hands it back.
 ## The model
 
 Awake time is **counted, not owned**.
-You, an agent and a build can each hold a *claim*; the Mac stays awake until the last one ends, and nobody can take anybody else's away.
+You, an agent and a build can each hold a *claim*; the Mac stays awake until the last one ends, and no claim outranks another — there is nothing to negotiate and no `--force`.
+An owner is a name you state, not a login: acting under someone else's name is on the honor system, and the rules agents follow are in [docs/FOR-AGENTS.md](docs/FOR-AGENTS.md).
 
 ```
 claims/terminal    ⌨️  refactor         until 17:00  ─┐

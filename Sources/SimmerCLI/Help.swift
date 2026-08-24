@@ -28,9 +28,10 @@ HOW LONG
 
 EVERYONE GETS THEIR OWN CLAIM
   Awake time is counted, not owned. You, an agent and a build can each hold a
-  claim; the Mac stays awake until the last one ends, and nobody can take
-  anybody else's away. So there is no --force any more, and nothing to
-  negotiate.
+  claim; the Mac stays awake until the last one ends, and no claim outranks
+  another. So there is no --force any more, and nothing to negotiate. An
+  owner is a name you state, not a login — acting under someone else's name
+  is on the honor system, and the rules are in docs/FOR-AGENTS.md.
 
   simmer status              every live claim, and when the machine actually sleeps
   simmer down                hand back YOUR claim   (canonical: simmer release)

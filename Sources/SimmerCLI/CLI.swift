@@ -109,9 +109,9 @@ struct ClaimCLI: ParsableCommand {
 struct ExtendCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "extend",
-        abstract: "Move YOUR claim's deadline: +20m means 20 minutes from now.")
+        abstract: "Add to YOUR claim's deadline: +20m on a claim due 23:00 means 23:20.")
 
-    @Argument(help: "How much more, counted from now: 20m, +1h …")
+    @Argument(help: "How much more, added to your deadline: 20m, +1h …")
     var duration: String?
 
     @OptionGroup var common: CommonOptions

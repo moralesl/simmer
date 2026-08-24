@@ -53,6 +53,8 @@ $ simmer down --owner agent:evals --json
 - **Never** use the human owner names (`terminal`, `menubar`, `raycast`, `alfred`) and **never** set `SIMMER_HUMAN=1`.
   Nothing stops you technically — that is exactly why it is an obligation.
   Human primacy protects the person's time from your accidents; claiming their authority removes the protection.
+- If you run inside a pty, you are indistinguishable from a person and simmer will treat you as one: your default owner is the human `terminal`, and `down --all` and `cap` will work.
+  That is precisely why you must pass `--owner` — the gate cannot see you, so the name has to.
 
 ## Before starting long work
 
