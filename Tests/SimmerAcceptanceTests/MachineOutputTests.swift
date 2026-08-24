@@ -321,6 +321,33 @@ import Testing
         #expect(active.contains("param1=\"down\""))
     }
 
+    /// Every action a launcher surface emits must name a binary that exists.
+    ///
+    /// This is asserted through a PATH shim, because the bug it catches is only
+    /// reachable that way: found on PATH, `argv[0]` is the bare word "simmer",
+    /// and the old code joined that to the working directory. Every `bash=`
+    /// path in the SwiftBar surface pointed at `<cwd>/simmer` — nothing, on any
+    /// real machine. The rest of the suite execs an absolute path, which is the
+    /// one invocation shape that hid it.
+    @Test func swiftBarActionsPointAtABinaryThatExists() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.runThroughPATH(["45m", "-r", "brew", "--owner", "test"])
+        let out = sim.runThroughPATH(["render", "swiftbar"]).out
+
+        var checked = 0
+        for line in out.split(separator: "\n") {
+            guard let start = line.range(of: "bash=\"") else { continue }
+            guard let end = line[start.upperBound...].firstIndex(of: "\"") else { continue }
+            let path = String(line[start.upperBound..<end])
+            checked += 1
+            #expect(FileManager.default.isExecutableFile(atPath: path),
+                    "render swiftbar points at \(path), which is not executable")
+        }
+        // A surface that emitted no actions at all would pass the loop above
+        // vacuously — the assertion is that the actions exist AND resolve.
+        #expect(checked > 0, "render swiftbar emitted no bash= actions to check")
+    }
+
     @Test func raycastIsOneLine() {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["45m", "--owner", "test"])

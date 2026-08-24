@@ -82,9 +82,12 @@ struct Sim {
     }
 
     /// Run the binary. `now` defaults to the fixed epoch; `env` overrides win.
+    /// `launcher` and `cwd` exist for `runThroughPATH`; everything else execs
+    /// the binary directly from the products directory.
     @discardableResult
     func run(_ args: [String], now: Int = Sim.epoch,
-             env overrides: [String: String] = [:]) -> Result {
+             env overrides: [String: String] = [:],
+             launcher: String? = nil, cwd: URL? = nil) -> Result {
         var environment: [String: String] = [
             // A controlled PATH so the binary's own probes stay deterministic.
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
@@ -101,9 +104,10 @@ struct Sim {
         for (key, value) in overrides { environment[key] = value }
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: Sim.binary)
+        process.executableURL = URL(fileURLWithPath: launcher ?? Sim.binary)
         process.arguments = args
         process.environment = environment
+        if let cwd { process.currentDirectoryURL = cwd }
         let outPipe = Pipe(), errPipe = Pipe()
         process.standardOutput = outPipe
         process.standardError = errPipe
@@ -115,6 +119,32 @@ struct Sim {
         return Result(out: String(decoding: outData, as: UTF8.self),
                       err: String(decoding: errData, as: UTF8.self),
                       code: process.terminationStatus)
+    }
+
+    /// Run the binary the way an installed copy is actually run: found on PATH,
+    /// so `argv[0]` is the bare word "simmer" and the working directory is
+    /// somewhere else entirely.
+    ///
+    /// Every other method here execs an absolute path, which is the one shape
+    /// that made a cwd-relative `argv[0]` look correct. That is why a dead
+    /// `bash=` path in every `render` action survived a green suite: the seam
+    /// substitutes the machine, but nothing was substituting the *invocation*.
+    @discardableResult
+    func runThroughPATH(_ args: [String], now: Int = Sim.epoch,
+                        env overrides: [String: String] = [:]) -> Result {
+        let shim = root.appendingPathComponent("shim")
+        try? FileManager.default.createDirectory(at: shim, withIntermediateDirectories: true)
+        let link = shim.appendingPathComponent("simmer")
+        if !FileManager.default.fileExists(atPath: link.path) {
+            try? FileManager.default.createSymbolicLink(
+                at: link, withDestinationURL: URL(fileURLWithPath: Sim.binary))
+        }
+        var environment = overrides
+        environment["PATH"] = "\(shim.path):/usr/bin:/bin:/usr/sbin:/sbin"
+        // A working directory that deliberately does NOT hold the binary:
+        // resolving argv[0] against it must not produce a real file by luck.
+        return run(["simmer"] + args, now: now, env: environment,
+                   launcher: "/usr/bin/env", cwd: root)
     }
 
     // MARK: state inspection — reads only; all mutations go through the binary
