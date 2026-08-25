@@ -16,6 +16,11 @@ Sources/SimmerApp/   NSStatusItem · IOKit callbacks · UNUserNotificationCenter
 Tests/               unit suite + an acceptance suite that drives the BUILT
                      binary under the seam variables (honours SIMMER_BIN)
 
+integrations/raycast/ the Raycast extension: TypeScript, its own npm tree and
+                     tests. A fourth renderer over `status --json` — it must
+                     never read $STATE/claims itself, or it acquires its own
+                     opinion about what is held.
+
 AGENTS.md            this page: read order, commands, iron rules.
 docs/FOR-AGENTS.md   USING simmer from an agent: budget, owners, obligations.
 docs/CONTRACTS.md    the law, in prose: surface, exit codes, machine output,
@@ -59,6 +64,8 @@ Cite the contract, not them.
   Never let a test bundle ask for notification permission under a production id.
 - **SimmerCore stays pure**: no AppKit, no printing, no argv, no globals.
   The CLI and the app are renderers over it — that is what keeps them from disagreeing.
+- **Every surface consumes the contract, never the ledger.** A surface that parses `$STATE/claims/*` itself becomes a second implementation of the aggregate, and the two disagree the first time cap clipping changes.
+  The Raycast extension shells out to `status --json` for the list and `render raycast` for its one-line root-search subtitle, for exactly that reason.
 - **simmer never escalates its own privileges.** The sudoers rule is composed in `SudoRule`, shown in full, and run by a human — no `osascript … with administrator privileges`, no Authorization Services.
   Widening the rule's scope, letting the app run it, or letting the installer's copy drift from `SudoRule` all fail `SudoRuleTests`.
 - **Yes/no means a JSON boolean** on every surface except the flat `--machine` (and its `status --json` mirrors `on_battery`/`sleep_disabled`).
@@ -67,7 +74,7 @@ Cite the contract, not them.
   `everyDocumentedVerbResolves` is the gate.
 - **No surface may cost a caller awake time it already holds.** `extend` adds; a button or menu item saying "more" adds.
   Anything that *sets* a deadline says so in its label, because the one thing this tool exists to prevent is time quietly disappearing.
-  `extendingALongClaimByALittleNeverShortensIt` and `moreTimeExtendsTheMenuBarsOwnClaimRatherThanReplacingIt` are the gates; the app's banner button goes through the same branch.
+  `extendingALongClaimByALittleNeverShortensIt` and `moreTimeExtendsTheMenuBarsOwnClaimRatherThanReplacingIt` are the gates; the app's banner button goes through the same branch, and the Raycast extension's own gate is `integrations/raycast/tests/args.test.mts`.
 - **`--json` is honoured or refused, never accepted and dropped.** A silently ignored flag is indistinguishable from one that worked — that is how `--help` came to promise a surface four commands did not have.
   `everyVerbHonoursJSON` walks the whole verb list, so a new command cannot join the surface without answering the question.
 - **A flag's own validation belongs to simmer, not to ArgumentParser.** Parser diagnostics name internal subcommand spellings nobody typed and write nothing to stdout, so a `--json` caller gets an empty stream instead of the contracted refusal object.

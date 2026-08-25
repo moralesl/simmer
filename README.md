@@ -103,6 +103,20 @@ Never `down --all`, never a human owner name.
 
 The bash spike that preceded the Swift implementation lives in the maintainer's development archive — reference only.
 
+## In Raycast
+
+Type "simmer" and the countdown is already there, under the command title — `⏾ sleep allowed · 100% AC`, or `☕ 42m left · until 17:00 · plan review · 3 claims`.
+Behind it: the claims list with its actions, a duration, "longer", "down", and the evening ceiling.
+The list comes from `status --json` and the line from `render raycast`, so no surface can disagree with the CLI about what is held.
+
+```bash
+cd integrations/raycast && npm ci && npm run dev   # then ⌃C — it stays registered
+```
+
+Then press ↵ on **Simmer Status** once — Raycast keeps background refresh off until a command is opened, so the countdown is blank until you do.
+[integrations/raycast/README.md](integrations/raycast/README.md) has the rest.
+Alfred is on the [roadmap](docs/ROADMAP.md); a SwiftBar plugin is not — the app is the menu bar.
+
 ## Uninstall
 
 ```bash
