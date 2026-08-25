@@ -1,0 +1,180 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "simmer",
+  "title": "Simmer",
+  "description": "Hold this Mac awake with the lid closed, as counted claims with deadlines \u2014 and see who is holding it.",
+  "icon": "simmer.png",
+  "author": "moralesl",
+  "platforms": [
+    "macOS"
+  ],
+  "categories": [
+    "System",
+    "Developer Tools"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "commands": [
+    {
+      "name": "status",
+      "title": "Simmer Status",
+      "description": "The countdown in the root search itself, without opening anything",
+      "mode": "no-view",
+      "interval": "1m",
+      "keywords": [
+        "awake",
+        "sleep",
+        "countdown",
+        "claims",
+        "lid"
+      ],
+      "subtitle": "\u21b5 once to start the countdown"
+    },
+    {
+      "name": "claims",
+      "title": "Simmer Claims",
+      "description": "Who is holding this Mac awake, until when, and why \u2014 with the actions",
+      "mode": "view",
+      "keywords": [
+        "awake",
+        "sleep",
+        "caffeinate",
+        "claims",
+        "lid"
+      ]
+    },
+    {
+      "name": "claim",
+      "title": "Simmer for",
+      "description": "Hold this Mac awake for a bounded time, lid closed",
+      "mode": "no-view",
+      "keywords": [
+        "awake",
+        "caffeinate",
+        "stay",
+        "lid"
+      ],
+      "arguments": [
+        {
+          "name": "duration",
+          "type": "text",
+          "placeholder": "60m / 2h / 23:00 / forever",
+          "required": true
+        },
+        {
+          "name": "reason",
+          "type": "text",
+          "placeholder": "reason (optional)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "extend",
+      "title": "Simmer Longer",
+      "description": "Add time to your own deadline, counted from now",
+      "mode": "no-view",
+      "keywords": [
+        "extend",
+        "more",
+        "longer",
+        "awake"
+      ],
+      "arguments": [
+        {
+          "name": "duration",
+          "type": "text",
+          "placeholder": "15m",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "release",
+      "title": "Simmer Down",
+      "description": "Hand your claim back and allow sleep again",
+      "mode": "no-view",
+      "keywords": [
+        "release",
+        "down",
+        "sleep",
+        "stop"
+      ]
+    },
+    {
+      "name": "cap",
+      "title": "Nothing Past",
+      "description": "Set an evening ceiling no claim may cross",
+      "mode": "no-view",
+      "keywords": [
+        "cap",
+        "ceiling",
+        "bedtime",
+        "evening",
+        "limit"
+      ],
+      "arguments": [
+        {
+          "name": "until",
+          "type": "dropdown",
+          "placeholder": "ceiling",
+          "required": true,
+          "data": [
+            {
+              "title": "22:00",
+              "value": "22:00"
+            },
+            {
+              "title": "23:00",
+              "value": "23:00"
+            },
+            {
+              "title": "00:00",
+              "value": "00:00"
+            },
+            {
+              "title": "01:00",
+              "value": "01:00"
+            },
+            {
+              "title": "Lift the ceiling",
+              "value": "off"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "preferences": [
+    {
+      "name": "simmerPath",
+      "title": "simmer binary",
+      "description": "Only needed if simmer is not in one of the usual places. Raycast runs with a minimal PATH, so the extension looks in ~/.local/bin, the Simmer.app bundle, /usr/local/bin and /opt/homebrew/bin.",
+      "type": "textfield",
+      "required": false,
+      "placeholder": "~/.local/bin/simmer"
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^2.0.6",
+    "@raycast/utils": "^2.3.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^2.2.0",
+    "@types/node": "22.19.17",
+    "@types/react": "19.0.10",
+    "eslint": "^10.9.1",
+    "typescript": "^5.9.0"
+  },
+  "scripts": {
+    "build": "ray build -e dist",
+    "dev": "ray develop",
+    "lint": "ray lint",
+    "fix-lint": "ray lint --fix",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test 'tests/*.test.mts'"
+  },
+  "allowScripts": {
+    "esbuild": true
+  }
+}
