@@ -6,7 +6,7 @@ An entry leaves this page by landing **together with its tests** and a CONTRACTS
 | Next | What | Why it waits |
 |---|---|---|
 | The Alfred shim | A script filter over `simmer render alfred`, which is already in the core and tested | Alfred needs the paid Powerpack before any workflow runs at all, so it waits for someone who has one |
-| The Claude Code hook | The harness's own wakefulness becomes a claim like everybody else's (`SessionStart`/`SessionEnd`, owner `agent:claude-<session>`), plus budget context injected into prompts | The flagship integration; wants a stable CLI surface and `docs/FOR-AGENTS.md` adoption first |
+| The Claude Code hook | The harness's own wakefulness becomes a claim like everybody else's (`SessionStart`/`SessionEnd`, owner `agent:claude-<session>`), plus budget context injected into prompts | The flagship integration; wants a stable CLI surface and `AGENTS.md` adoption first |
 | Homebrew tap | `brew install moralesl/tap/simmer` — brew guarantees the CLT, so the formula compiles locally | After the one-paste path has survived a second machine |
 | `simmer watch` / `simmer why` | Consumers of `events.jsonl`, which is already written and contracted | Cheap once wanted; nothing may depend on them until contracted |
 | `--lock` (lock the screen on take) | Named so no implementation invents behaviour for it | Enters the surface only together with its tests |

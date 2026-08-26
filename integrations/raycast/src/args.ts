@@ -17,7 +17,7 @@
  * `raycast` is a human owner name in `SimmerEnvironment.isHumanOwnerName`, which
  * is what grants this surface human authority (`release --all`, moving the cap)
  * and the 🚀 glyph. It must never be spelled anything else, and an agent must
- * never borrow it — see docs/FOR-AGENTS.md.
+ * never borrow it — see AGENTS.md.
  */
 export const OWNER = "raycast";
 

@@ -164,7 +164,7 @@ They are settled, not open.
 
 Human primacy is enforced against honest actors, not as a security boundary: nothing stops a process passing `--owner terminal`, and on a single-user Mac nothing could.
 What it buys is that an agent following the protocol cannot take a human's time away by accident, which is the failure that actually happens.
-The agent protocol states the obligation not to claim human authority: `FOR-AGENTS.md`, in this directory.
+The agent protocol states the obligation not to claim human authority: `AGENTS.md`, in the repository root.
 
 ### Deltas from `format=1`, each deliberate
 

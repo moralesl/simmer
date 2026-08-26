@@ -41,7 +41,7 @@ Use `simmer down --all` to end everything; only a human may.
 **Why can an agent not use `down --all`?** Because ending work someone else started is not an agent's call.
 A human can release any claim; an agent only its own.
 It is enforced against honest actors, not as a security boundary — nothing stops a process passing `--owner terminal`, and on a single-user Mac nothing could.
-The agent protocol states it as an obligation — [FOR-AGENTS.md](FOR-AGENTS.md).
+The agent protocol states it as an obligation — [AGENTS.md](../AGENTS.md).
 
 **What is the difference between `simmer +30m` and `simmer 30m`?** `+30m` **adds** half an hour to your deadline; `30m` **sets** your deadline to half an hour from now.
 So on a claim running until 23:00, `+30m` gets you 23:30 and `30m` gets you 30 minutes.
@@ -82,8 +82,7 @@ Source fetched by `git` or `curl` and compiled locally runs with no warning, no 
 Verified against a trusted self-signed certificate: no difference.
 The recipe and its traps are in `PLATFORM-FACTS.md`.
 
-**Does simmer spawn background processes?** No.
-It holds its power assertion in-process, so there is nothing to orphan.
+**Does simmer spawn background processes?** No. It holds its power assertion in-process, so there is nothing to orphan.
 The bash spike used a detached `caffeinate` per claim and leaked 222 of them; see `PLATFORM-FACTS.md`.
 
 **Where is the state?** `$XDG_STATE_HOME/simmer/` (default `~/.local/state/simmer/`): one flat `key=value` file per claim under `claims/`, the `cap`, and the log.

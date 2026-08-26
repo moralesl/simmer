@@ -36,7 +36,7 @@ It *borrows* it, with a deadline, and a background watchdog hands it back.
 
 Awake time is **counted, not owned**.
 You, an agent and a build can each hold a *claim*; the Mac stays awake until the last one ends, and no claim outranks another — there is nothing to negotiate and no `--force`.
-An owner is a name you state, not a login: acting under someone else's name is on the honor system, and the rules agents follow are in [docs/FOR-AGENTS.md](docs/FOR-AGENTS.md).
+An owner is a name you state, not a login: acting under someone else's name is on the honor system, and the rules agents follow are in [AGENTS.md](AGENTS.md).
 
 ```
 claims/terminal    ⌨️  refactor         until 17:00  ─┐
@@ -79,7 +79,7 @@ The honest version, including where something else is the better answer.
 
 | | Holds a closed lid | Bounded by default | Several actors at once | Callable by an agent | Cost |
 |---|---|---|---|---|---|
-| **simmer** | yes — borrows `pmset -a disablesleep`, watchdog hands it back | yes; a deadline is required, and a human **cap** clips every claim | **yes** — counted claims, one per actor, nobody can end another's | exit codes + `--json` on every verb, and a written protocol ([FOR-AGENTS.md](docs/FOR-AGENTS.md)) | free, MIT |
+| **simmer** | yes — borrows `pmset -a disablesleep`, watchdog hands it back | yes; a deadline is required, and a human **cap** clips every claim | **yes** — counted claims, one per actor, nobody can end another's | exit codes + `--json` on every verb, and a written protocol ([AGENTS.md](AGENTS.md)) | free, MIT |
 | `caffeinate` (Apple) | no — power assertions cannot hold the lid on Apple silicon | yes (`-t`) | no | yes, but it cannot do the thing | free, built in |
 | [KeepingYouAwake](https://github.com/newmarcel/KeepingYouAwake) | no — an assertion wrapper, same ceiling as `caffeinate` | timer | no | no | free, MIT |
 | [Amphetamine](https://apps.apple.com/app/amphetamine/id937984704) | yes, since 5.0 (a preference, off by default) | timers and triggers | no | no | free, App Store |
@@ -97,7 +97,7 @@ It also never asks for an account, a certificate, or a payment, and it compiles 
 ## For agents
 
 An agent doing long work on this Mac should hold its own claim — that is the point of the model.
-The protocol is one page: [docs/FOR-AGENTS.md](docs/FOR-AGENTS.md).
+The protocol is one page: [AGENTS.md](AGENTS.md).
 The two-line version: `simmer budget --need 30m` before starting (exit 3 means the lid can interrupt you at any moment), and `simmer 45m -r "why" --owner agent:<work> --json` to claim.
 Never `down --all`, never a human owner name.
 
@@ -148,7 +148,7 @@ The rest, in the order a reader usually wants it:
 | | |
 |---|---|
 | [docs/FAQ.md](docs/FAQ.md) | short answers |
-| [docs/FOR-AGENTS.md](docs/FOR-AGENTS.md) | the protocol for an agent using simmer |
+| [AGENTS.md](AGENTS.md) | one page for agents: the protocol for using simmer, and the rules for changing it |
 | [docs/CONTRACTS.md](docs/CONTRACTS.md) | the law: surface, exit codes, machine output, and the reasoning behind each choice |
 | [docs/PLATFORM-FACTS.md](docs/PLATFORM-FACTS.md) | what macOS actually does, each line bought with a failed attempt |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | decided but not built — and what is deliberately never coming |

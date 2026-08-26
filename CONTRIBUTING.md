@@ -18,7 +18,7 @@ Then read, in this order:
    Settled decisions are not relitigated; if you think one is wrong, say so in an issue before building on the alternative.
 2. [`docs/PLATFORM-FACTS.md`](docs/PLATFORM-FACTS.md) — what macOS actually does, each line bought with a failed attempt, plus the traps that no test can carry.
    If your plan trips one, the plan is wrong, and nothing there changes without re-running the experiment and recording the new result.
-3. [`AGENTS.md`](AGENTS.md) — the iron rules, in one page.
+3. [`AGENTS.md`](AGENTS.md) — the protocol agents follow, and the iron rules for changing this repository.
 
 ## The rules that will get a change sent back
 

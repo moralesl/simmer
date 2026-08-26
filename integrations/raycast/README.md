@@ -80,7 +80,7 @@ It does **not** run `ray lint` or `ray build`: the `ray` CLI is macOS-only and e
 - **Binary discovery.** Raycast runs with a minimal PATH, so `src/simmer.ts` looks in `~/.local/bin`, the `Simmer.app` bundle, `/usr/local/bin` and `/opt/homebrew/bin`, after the optional `simmerPath` preference and `SIMMER_BIN`.
   A machine without simmer gets a calm empty state, never a red error screen.
 - **Owner.** Every mutation is `--owner raycast`, which is a human owner name in `SimmerEnvironment.isHumanOwnerName` — that is what grants this surface the authority to release everything and to move the ceiling.
-  An agent must never borrow it (`docs/FOR-AGENTS.md`).
+  An agent must never borrow it (`AGENTS.md`).
 - **No polling.** The countdown ticks locally from `until`; the list re-reads only when `$STATE/claims` or `$STATE/cap` changes, which is the same watch `LedgerWatcher` arms.
 - **The icon** is `assets/simmer.png`, the 512px face out of the shared `assets/icon.icns`.
   To regenerate: `iconutil -c iconset ../../assets/icon.icns -o /tmp/simmer.iconset` and copy `icon_512x512.png`.
