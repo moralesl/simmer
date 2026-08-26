@@ -26,7 +26,6 @@ STAGED_APP    = .build/Simmer.app
 LSREGISTER    = /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 AGENT_PLIST   = $(HOME)/Library/LaunchAgents/$(GUARD_LABEL).plist
 BIN_DIR      ?= $(HOME)/.local/bin
-
 # A CLT-only toolchain ships Testing.framework outside the default search
 # paths; swift test finds nothing without these.
 #
@@ -54,13 +53,27 @@ TEST_FLAGS = -Xswiftc -F -Xswiftc $(CLT_FRAMEWORKS) \
 endif
 endif
 
-.PHONY: build test app install uninstall clean
+.PHONY: build test test-raycast app install uninstall clean
 
 build:
 	swift build -c release
 
 test:
 	swift test $(TEST_FLAGS)
+
+# `swift test` knows nothing about integrations/raycast, so a change to the
+# extension that runs only `make test` is untested and looks green — the
+# extension is a second toolchain with its own tree, and the one documented
+# test command could not reach it. This is CI's `raycast-lint` leg, locally.
+#
+# Deliberately NOT folded into `test`: that target is hermetic and finishes in
+# seconds, and making it depend on an npm install would cost every Swift change
+# the extension's setup. Two lanes, both named.
+test-raycast:
+	# `npm ci` deletes node_modules and reinstalls from the lockfile, which is
+	# right on a fresh checkout and pure waste on the fifth run of the day.
+	cd integrations/raycast && { [ -d node_modules ] || npm ci; } \
+	  && npm run typecheck && npx eslint src tests && npm test
 
 # Assemble the bundle: both binaries inside Contents/MacOS — the bundle IS the
 # notification identity, and the CLI posting from inside it is what lets a
@@ -122,7 +135,7 @@ uninstall:
 	-[ -d $(APP) ] && $(LSREGISTER) -u $(APP)
 	rm -rf $(APP)
 	rm -f $(BIN_DIR)/simmer
-	@echo "Removed the app, the CLI symlink and the guard."
+	@echo "Removed the app, the CLI symlink, the guard."
 	@echo "Left alone if present (needs root, and only if simmer wrote it):"
 	@echo "  /etc/sudoers.d/simmer — remove with: sudo rm /etc/sudoers.d/simmer"
 

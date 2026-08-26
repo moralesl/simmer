@@ -40,11 +40,15 @@ docs/ROADMAP.md      decided but not built. docs/FAQ.md — short answers.
 ## Commands
 
 ```bash
-make test        # BOTH suites, hermetic: no sudo, no real power state, fake clock
-make app         # assemble + ad-hoc sign Simmer.app (CLT only — never xcodebuild)
-make install     # ~/Applications/Simmer.app + ~/.local/bin/simmer + the guard
-make uninstall   # removes exactly what install wrote
+make test          # both SWIFT suites, hermetic: no sudo, no real power state
+make test-raycast  # the extension's lane: `make test` cannot see it
+make app           # assemble + ad-hoc sign Simmer.app (CLT only — never xcodebuild)
+make install       # ~/Applications/Simmer.app + ~/.local/bin/simmer + the guard
+make uninstall     # removes exactly what install wrote
 ```
+
+**`make test` does not test the extension.** `swift test` cannot see `integrations/raycast`, so a change to `src/*.tsx` followed by a green `make test` has verified nothing about it.
+Touching both sides means both commands.
 
 `BRIEF.md` and `DESIGN-NOTES.md` guided the Swift rewrite and are not in the tree; what they decided is in `docs/CONTRACTS.md`, and their text is in git history.
 Cite the contract, not them.
