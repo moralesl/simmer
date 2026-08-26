@@ -36,6 +36,38 @@ extension Sim {
         #expect(entries.first?["ts"] as? Int == Sim.epoch)
     }
 
+    /// The menu bar has no text channel — `AppState.perform` posts
+    /// notifications and throws stdout away — so "the ceiling is still there"
+    /// arrives inside the banner sleep-allowed was already posting. One click,
+    /// one banner: a second one competing with it is how banners get dismissed
+    /// unread.
+    @Test func handingTheMachineBackSaysTheCeilingSurvivedIt() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["cap", "3h", "--owner", "menubar"])
+        sim.run(["1h", "--owner", "menubar"])
+        let before = sim.spoolEntries().count
+
+        sim.run(["down", "--owner", "menubar"], env: Sim.notifying)
+        let posted = Array(sim.spoolEntries().dropFirst(before))
+        #expect(posted.count == 1)
+        #expect((posted.first?["title"] as? String)?.contains("Sleep allowed again") == true)
+        let body = posted.first?["body"] as? String ?? ""
+        #expect(body.contains("ceiling stays"))
+        #expect(body.contains("09:00"))   // and when it stops standing
+    }
+
+    /// ...and only when there is a ceiling to survive. A line on every release
+    /// would be the noise that teaches people to skim the banner.
+    @Test func handingItBackWithNoCapAddsNothing() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["1h", "--owner", "menubar"])
+        let before = sim.spoolEntries().count
+        sim.run(["down", "--owner", "menubar"], env: Sim.notifying)
+        let posted = Array(sim.spoolEntries().dropFirst(before))
+        #expect(posted.count == 1)
+        #expect((posted.first?["body"] as? String ?? "").isEmpty)
+    }
+
     @Test func aRepeatClickInsideTheSameMinuteIsNotNews() {
         let sim = Sim(); defer { sim.tearDown() }
         // The double-banner from the first live install: two clicks, seconds

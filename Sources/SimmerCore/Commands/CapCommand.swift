@@ -104,7 +104,6 @@ extension Commands {
                 var pairs: [(String, JSONValue)] = [
                     ("action", .string("cap_set")),
                     ("clipped", .int(clipped)),
-                    ("expires", .int(Cap.rollover(after: target))),
                 ]
                 pairs.append(contentsOf: Present.aggregateJSON(ctx.aggregate()))
                 outcome.stdout = [JSONValue.object(pairs).serialized()]

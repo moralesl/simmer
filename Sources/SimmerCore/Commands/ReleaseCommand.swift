@@ -15,6 +15,18 @@ extension Commands {
             if !ok { outcome.exit = 1 }
         }
 
+        /// A release ends claims and never the ceiling. "Release everything"
+        /// is the most clearing-looking action simmer offers, so the surfaces
+        /// that show text say what it did not touch.
+        ///
+        /// Only stdout here. The menu bar throws stdout away, but it also
+        /// always lands in `Engine.settle` — which carries the same sentence
+        /// in the banner it was already posting, instead of a second one
+        /// competing with it.
+        func noteTheCeiling() {
+            outcome.stdout.append(contentsOf: Present.capNote(ctx: ctx, afterRelease: true))
+        }
+
         func releasedJSON(_ owners: [String]) {
             guard json else { return }
             var pairs: [(String, JSONValue)] = [
@@ -53,6 +65,7 @@ extension Commands {
                 ("released", .array(claims.map { .string($0.owner) })),
             ])
             outcome.stdout.append("⏾ released all \(claims.count) claim(s)")
+            noteTheCeiling()
             settleAndReport("released by hand")
             releasedJSON(claims.map(\.owner))
             return outcome
@@ -71,6 +84,7 @@ extension Commands {
                 let untilText = after.until == 0 ? "further notice" : Formats.hhmm(after.until)
                 outcome.stdout.append("⏾ your claim is released · \(after.count) still live, awake until \(untilText)")
             }
+            noteTheCeiling()
             settleAndReport("released by hand")
             releasedJSON([mine.owner])
             return outcome

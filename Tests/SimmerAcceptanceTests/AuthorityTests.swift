@@ -157,6 +157,42 @@ import Testing
         #expect(status["cap"] as? Int == 0)
     }
 
+    /// Releasing claims never lifts the ceiling — correct, and invisible until
+    /// it refuses you hours later. Every release path says so, because a rule
+    /// that holds for "release everything" and not for "release mine" is one
+    /// nobody can predict.
+    @Test func everyReleaseSaysTheCeilingStays() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["cap", "3h", "--owner", "terminal"])
+        sim.run(["1h", "--owner", "terminal"])
+        sim.run(["1h", "--owner", "agent:evals"])
+
+        let mine = sim.run(["down", "--owner", "terminal"])
+        #expect(mine.out.contains("ceiling stays"))
+        #expect(mine.out.contains("09:00"))   // and when it stops standing
+
+        let all = sim.run(["down", "--all", "--owner", "terminal"])
+        #expect(all.out.contains("ceiling stays"))
+
+        // No cap, no note: this must not become a line on every release.
+        sim.run(["cap", "off", "--owner", "terminal"])
+        sim.run(["1h", "--owner", "terminal"])
+        #expect(!sim.run(["down", "--owner", "terminal"]).out.contains("ceiling"))
+    }
+
+    /// Machine callers get the same fact as a number, so a surface composing
+    /// its own sentence never hardcodes the rollover hour.
+    @Test func theAggregateTailCarriesWhenTheCapLifts() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["cap", "3h", "--owner", "terminal"])
+        let claimed = sim.json(sim.run(["30m", "--owner", "terminal", "--json"]))
+        #expect(claimed["cap_expires"] as? Int == Sim.epoch + 86_400)
+
+        sim.run(["cap", "off", "--owner", "terminal"])
+        let uncapped = sim.json(sim.run(["extend", "+10m", "--owner", "terminal", "--json"]))
+        #expect(uncapped["cap_expires"] as? Int == 0)
+    }
+
     /// The read path retires an expired cap, but the file would sit in the
     /// state directory looking live. The guard sweeps it, on an idle Mac too —
     /// which is exactly where a spent ceiling waits.

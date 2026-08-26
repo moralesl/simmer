@@ -1,4 +1,5 @@
 import { showHUD } from "@raycast/api";
+import { hhmm } from "./format.ts";
 import { releaseArgs } from "./args.ts";
 import { run, SimmerMutation } from "./simmer.ts";
 import { binary } from "./preference.ts";
@@ -15,10 +16,15 @@ export default async function Command() {
       return;
     }
     const others = mutation.claim_count ?? 0;
-    await showHUD(
+    const head =
       others > 0
         ? `⏾ Released — ${others} other ${others === 1 ? "claim" : "claims"} still holding`
-        : "⏾ Released — sleep allowed again",
-    );
+        : "⏾ Released — sleep allowed again";
+    // A release ends claims and never the ceiling. This surface builds its own
+    // sentence from JSON instead of echoing simmer's, so the note it would
+    // otherwise have inherited has to be said here as well.
+    const cap = mutation.cap ?? 0;
+    const tail = cap > 0 ? ` · ⛔ ${hhmm(cap)} ceiling stays` : "";
+    await showHUD(`${head}${tail}`);
   });
 }

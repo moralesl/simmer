@@ -20,6 +20,8 @@ public struct Aggregate: Sendable {
     public var since: Int = 0
     /// Epoch of the human cap; 0 = none.
     public var cap: Int = 0
+    /// Epoch at which that cap lifts itself; 0 = no cap.
+    public var capExpires: Int = 0
     /// True when the deadline reported IS the cap.
     public var capped: Bool = false
     public var count: Int = 0
@@ -33,6 +35,7 @@ public struct Aggregate: Sendable {
                                sleepDisabled: Bool) -> Aggregate {
         var aggregate = Aggregate()
         aggregate.cap = cap?.until ?? 0
+        aggregate.capExpires = cap?.expires ?? 0
 
         var bestUntil = 0
         var bestClaim: Claim?
