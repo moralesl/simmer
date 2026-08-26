@@ -26,6 +26,14 @@ STAGED_APP    = .build/Simmer.app
 LSREGISTER    = /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 AGENT_PLIST   = $(HOME)/Library/LaunchAgents/$(GUARD_LABEL).plist
 BIN_DIR      ?= $(HOME)/.local/bin
+# Where a Claude Code agent looks for skills. The protocol an agent needs is the
+# first half of AGENTS.md, so the skill is GENERATED from it rather than kept as
+# a second copy: a copy drifts, and the only person who would notice is the
+# agent reading the stale one. AGENTS.md is already a fixture (AgentDocTests),
+# so the skill inherits that check for free.
+SKILL_DIR    ?= $(HOME)/.claude/skills/simmer
+SKILL_DESC    = Claim awake time before long unattended work on this Mac, so the lid closing cannot interrupt it. Use before any batch, build, eval, migration or agent run measured in tens of minutes, and whenever `simmer` is on PATH.
+
 # A CLT-only toolchain ships Testing.framework outside the default search
 # paths; swift test finds nothing without these.
 #
@@ -53,7 +61,7 @@ TEST_FLAGS = -Xswiftc -F -Xswiftc $(CLT_FRAMEWORKS) \
 endif
 endif
 
-.PHONY: build test test-raycast app install uninstall clean
+.PHONY: build test test-raycast skill app install uninstall clean
 
 build:
 	swift build -c release
@@ -83,6 +91,30 @@ test-raycast:
 ifndef V
 .SILENT:
 endif
+
+# Render the agent protocol as a Claude Code skill. Extracted between the two
+# top-level headings, so the contributor half of AGENTS.md never reaches an
+# agent that has no checkout and no use for iron rules.
+#
+# The `---` filter drops the page's section separators; markdown tables start
+# with `|`, so no table rule is caught by it.
+skill:
+	mkdir -p $(SKILL_DIR)
+	{ \
+	  echo '---'; \
+	  echo 'name: simmer'; \
+	  printf 'description: "%s"\n' '$(SKILL_DESC)'; \
+	  echo '---'; \
+	  echo ''; \
+	  awk '/^# Using simmer$$/{f=1} /^# Changing simmer$$/{f=0} f' AGENTS.md \
+	    | grep -v '^---$$'; \
+	} > $(SKILL_DIR)/.SKILL.md.tmp
+	# Written aside and moved into place: a redirect onto the destination
+	# truncates it the moment any stage of the pipeline fails, and a half-written
+	# protocol is worse than a stale one — it is a stale one that also lies about
+	# being complete. The ledger takes the same care, for the same reason.
+	mv $(SKILL_DIR)/.SKILL.md.tmp $(SKILL_DIR)/SKILL.md
+	echo "skill:     $(SKILL_DIR)/SKILL.md  (generated from AGENTS.md)"
 
 app: build
 	rm -rf $(STAGED_APP)
@@ -119,6 +151,15 @@ install: app
 	echo "installed: $(APP)  (bundle id $(BUNDLE_ID))"
 	echo "CLI:       $(BIN_DIR)/simmer  — make sure $(BIN_DIR) is on PATH"
 	echo "guard:     $(GUARD_LABEL), every 30s and at login"
+	# The protocol has to reach the agents that use simmer, and they are never
+	# in this checkout — they are in some other repository on this Mac. A page
+	# nobody installs is a page nobody reads, so install it where an agent
+	# already looks. Only where Claude Code is already set up: creating
+	# ~/.claude on a machine that does not use it would be litter.
+	# `|| true` here would absorb a real generator failure along with the
+	# absent-directory case, so the test gets its own branch and a broken
+	# `make skill` still fails the install.
+	if [ -d $(HOME)/.claude ]; then $(MAKE) --no-print-directory skill; fi
 	# NOTES=0 (bootstrap.sh passes it) suppresses the what-remains epilogue —
 	# bootstrap performs both steps itself right after this, and telling a
 	# person to do what the next paragraph is about to do reads as a bug.
@@ -135,7 +176,8 @@ uninstall:
 	-[ -d $(APP) ] && $(LSREGISTER) -u $(APP)
 	rm -rf $(APP)
 	rm -f $(BIN_DIR)/simmer
-	@echo "Removed the app, the CLI symlink, the guard."
+	rm -rf $(SKILL_DIR)
+	@echo "Removed the app, the CLI symlink, the guard and the agent skill."
 	@echo "Left alone if present (needs root, and only if simmer wrote it):"
 	@echo "  /etc/sudoers.d/simmer — remove with: sudo rm /etc/sudoers.d/simmer"
 

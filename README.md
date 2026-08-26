@@ -135,7 +135,8 @@ State (`~/.local/state/simmer/`) is yours to keep or delete.
 ```bash
 make test     # both suites, hermetic: no sudo, no real power state, fake clock
 make app      # assemble and ad-hoc sign Simmer.app (Command Line Tools only)
-make install  # ~/Applications/Simmer.app + ~/.local/bin/simmer + the guard
+make install  # ~/Applications/Simmer.app + ~/.local/bin/simmer + the guard,
+              # plus the agent skill where ~/.claude already exists
 ```
 
 Requires macOS 14+ and Swift 6 (Xcode or Command Line Tools 16 and newer).

@@ -148,9 +148,14 @@ docs/ROADMAP.md       decided but not built. docs/FAQ.md — short answers.
 make test          # both Swift suites, hermetic: no sudo, no real power state
 make test-raycast  # the extension's lane — `make test` cannot see it
 make app           # assemble + ad-hoc sign Simmer.app (CLT only — never xcodebuild)
-make install       # ~/Applications/Simmer.app + ~/.local/bin/simmer + the guard
+make skill         # render the protocol above into ~/.claude/skills/simmer
+make install       # the app, the CLI, the guard — and the skill, where ~/.claude exists
 make uninstall     # removes exactly what install wrote
 ```
+
+The skill is **generated** from this page's `# Using simmer` half, so it cannot drift from it.
+That is how the protocol reaches agents that have no checkout — which is all of them.
+`SkillTests` asserts the extraction, since a renamed heading would still exit 0 and still write a file.
 
 Touching both sides means both commands.
 And do not run the commands these documents quote: `PLATFORM-FACTS.md` contains `pmset -a disablesleep`, and `SudoRule` renders a real sudoers edit that a human applies.
