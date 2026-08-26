@@ -23,10 +23,19 @@ enum Present {
         }
     }
 
-    static func capNote(ctx: Context) -> [String] {
-        guard let cap = ctx.ledger.readCap() else { return [] }
+    /// The ceiling as a note under something else.
+    ///
+    /// `afterRelease` exists because "Release everything" is the most
+    /// clearing-looking action simmer offers and it does not touch the cap.
+    /// Saying so costs a line here; not saying it costs a belief that is only
+    /// contradicted hours later, by a refusal.
+    static func capNote(ctx: Context, afterRelease: Bool = false) -> [String] {
+        guard let cap = ctx.ledger.readCap(now: ctx.now) else { return [] }
         if cap.until <= ctx.now {
-            return ["   ⛔ cap \(Formats.hhmm(cap.until)) has passed — nothing new can be claimed ('simmer cap off')"]
+            return ["   ⛔ cap \(Formats.hhmm(cap.until)) has passed — nothing new until \(Formats.hhmm(cap.expires))"]
+        }
+        if afterRelease {
+            return ["   ⛔ the \(Formats.hhmm(cap.until)) ceiling stays · lifts itself at \(Formats.hhmm(cap.expires))"]
         }
         let setBy = cap.setBy.isEmpty ? "" : " · set by \(cap.setBy)"
         return ["   ⛔ nothing past \(Formats.hhmm(cap.until))\(setBy)"]
@@ -81,6 +90,7 @@ enum Present {
             ("claim_count", .int(aggregate.count)),
             ("cap", .int(aggregate.cap)),
             ("capped", .bool(aggregate.capped)),
+            ("cap_expires", .int(aggregate.capExpires)),
             ("claims", .array(claims)),
             ("version", .string(ctx.version)),
         ])
@@ -97,6 +107,11 @@ enum Present {
             ("claim_count", .int(aggregate.count)),
             ("cap", .int(aggregate.cap)),
             ("capped", .bool(aggregate.capped)),
+            // When the ceiling lifts itself, 0 when there is none. Named
+            // `cap_expires` here and `expires` inside bare `cap --json`,
+            // where every field is already about the cap — one spelling per
+            // object, never two spellings inside one.
+            ("cap_expires", .int(aggregate.capExpires)),
         ]
     }
 }

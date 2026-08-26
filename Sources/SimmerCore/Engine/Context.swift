@@ -31,7 +31,7 @@ public struct Context {
     }
 
     public func aggregate() -> Aggregate {
-        Aggregate.compute(claims: ledger.claims(), cap: ledger.readCap(),
+        Aggregate.compute(claims: ledger.claims(), cap: ledger.readCap(now: now),
                           now: now, sleepDisabled: power.sleepDisabled())
     }
 }

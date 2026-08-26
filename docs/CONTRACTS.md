@@ -50,8 +50,8 @@ Callers that conflate them keep working while the machine sleeps.
 
 ## Machine-readable output
 
-`status --machine`: `key=value` lines — `state` (active·forever·idle·orphan), `until` (epoch, 0=none), `left`, `left_short`, `reason`, `owner`, `min_battery`, `battery`, `on_battery`, `sleep_disabled`, `since`, `claim_count`, `cap` (epoch, 0=none).
-`status --json` / `budget --json`: the same data as one JSON object; numbers are numbers, `fits` is `true|false|null`, `seconds_left` is a number, `-1` for no deadline, or `null` when nothing is claimed (see below), `capped` is `true` when the deadline reported IS the cap, and `claims` is an array with one object per live claim (`id`, `owner`, `until`, `left`, `reason`, `min_battery`, `require_ac`, `since`, `human`).
+`status --machine`: `key=value` lines — `state` (active·forever·idle·orphan), `until` (epoch, 0=none), `left`, `left_short`, `reason`, `owner`, `min_battery`, `battery`, `on_battery`, `sleep_disabled`, `since`, `claim_count`, `cap` (epoch, 0=none), `cap_expires` (epoch the cap lifts itself, 0=none).
+`status --json` / `budget --json`: the same data as one JSON object; numbers are numbers, `fits` is `true|false|null`, `seconds_left` is a number, `-1` for no deadline, or `null` when nothing is claimed (see below), `capped` is `true` when the deadline reported IS the cap, `cap_expires` is when the cap lifts itself, and `claims` is an array with one object per live claim (`id`, `owner`, `until`, `left`, `reason`, `min_battery`, `require_ac`, `since`, `human`).
 
 **"No deadline" is spelled two ways, deliberately, and here is which.** `until` is `0`; a per-claim `left` and `budget`'s `seconds_left` are `-1`; the *aggregate* `left` is `0`, because it is a countdown and there is nothing to count.
 
@@ -121,6 +121,7 @@ Any implementation MUST honour these, or it cannot be tested without root and wi
 | `SIMMER_NOTIFY=<transport\|none>` | `none` silences. There is exactly one transport: the CLI enqueues into `$STATE/notify-spool.jsonl` and the app — the only executable holding a notification grant — posts. The spool is the assertable surface |
 | `SIMMER_NOTIFIER_APP=<path>` | **retired in the rewrite** (was: notifier bundle override). The spool lives under `XDG_STATE_HOME`, so notification routing is seam-isolated by construction; see PLATFORM-FACTS.md on per-executable grants |
 | `SIMMER_BIN=<path>` | which binary integrations exec |
+| `SIMMER_SKILL_DIR=<dir>` | where the generated agent protocol lives, for `doctor`'s staleness row. Needed because `homeDirectoryForCurrentUser` reads the passwd entry and ignores `HOME`, so this one read would otherwise reach the tester's real `~/.claude` |
 | `XDG_STATE_HOME=<dir>` | state isolation |
 | `SIMMER_RUN_CHUNK` / `SIMMER_RUN_INTERVAL` | run's renewal clocks |
 
@@ -160,11 +161,12 @@ They are settled, not open.
 | What is a claim's identity? | **The owner.** One live claim per owner, id = owner sanitised into a filename, **fingerprinted when sanitising changed it** (§ State). | "Extend/release/replace *mine*" needs no registry and cannot be ambiguous, and an actor naming only itself cannot name another's file. The sanitising must stay one-to-one for that to hold at all — it did not, and a one-minute claim ate a two-hour one. Actors that are genuinely several things make their identity unique (`run:<pid>`); concurrent agents should too (`--owner agent:funnel`). |
 | "floor/thermal end all of them" | Claims retire on **their own** floor; the last one out flips the switch. Thermal ends everything, unconditionally. | With the default floor everywhere — the normal case — the floor *does* end all of them. Per-claim means an agent asking `--min-battery 60` cannot drag a human's claim down with it, which the all-at-once reading would allow. Heat is a fact about the machine, not about anyone's plan for it, so it has no per-claim setting. |
 | Which claim's `reason`/`owner`/`floor` does `--machine` report? | The claim that **defines the aggregate deadline**. | One coherent rule, and identical to the single-lease answer whenever there is one claim — so every existing reader keeps working. |
-| A cap whose time has passed | **Refuses new claims**, in every surface, until a human moves or lifts it. | Letting it expire quietly would discard a decision a person made on purpose. Failing toward *sleep* is simmer's bias, and the refusal names the fix (`simmer cap off`) so it is a visible gate rather than a trap. |
+| A cap whose time has passed | **Refuses new claims**, in every surface, until it **lifts itself at the next 09:00** — or a human moves or lifts it sooner. | A cap answers a question about *tonight*, so it must hold for the whole of tonight: failing toward sleep is simmer's bias, and quietly lapsing at 23:01 would throw away the decision at the moment it mattered. But the same ceiling still standing at 11:00 the next morning is a lockout nobody chose, whose fix was explained in a notification eleven hours ago. The rollover is what makes the gate real *and* survivable. The refusal names both exits, so neither is a surprise. |
+| When exactly does a cap lift itself? | The **first 09:00 strictly after the cap's own time**, recorded as `expires` when the cap is written. Not configurable. | One rule, no special cases. It does mean a *daytime* ceiling (`simmer cap 2h` at 11:00) stays a gate until the following morning — rare, deliberate, and it still ends by itself; a second rule to shave that would cost more legibility than it buys. A knob for the rollover hour would be one more thing to hold in your head, which is the problem this solves. |
 
 Human primacy is enforced against honest actors, not as a security boundary: nothing stops a process passing `--owner terminal`, and on a single-user Mac nothing could.
 What it buys is that an agent following the protocol cannot take a human's time away by accident, which is the failure that actually happens.
-The agent protocol states the obligation not to claim human authority: `FOR-AGENTS.md`, in this directory.
+The agent protocol states the obligation not to claim human authority: `AGENTS.md`, in the repository root.
 
 ### Deltas from `format=1`, each deliberate
 
@@ -202,7 +204,8 @@ All additive to the surface above:
   A claim already past its deadline but not yet retired extends from **now**, never from the stale deadline — otherwise the addition lands in the past.
   The alias set is exactly the surface above.
 - **`--json` on every command that has a machine answer**: `claim`, `extend`, `release`, `cap`, `status`, `budget`, `log`, `doctor`.
-  A mutating command returns one object: what changed plus the resulting aggregate — `{"action":"claimed|extended|released|cap_set|cap_lifted|refused", "claim": {…}, "clipped_by_cap":bool, "state", "until", "left", "claim_count", "cap", "capped"}`.
+  A mutating command returns one object: what changed plus the resulting aggregate — `{"action":"claimed|extended|released|cap_set|cap_lifted|refused", "claim": {…}, "clipped_by_cap":bool, "state", "until", "left", "claim_count", "cap", "capped", "cap_expires"}`, where `cap_expires` says when the ceiling lifts itself (0 = no cap).
+  Bare `cap --json` spells the same field `expires`, because every field in that object is already about the cap.
   `notify-test` and `render` have none and **refuse** the flag rather than accepting and ignoring it: a flag that is silently dropped is indistinguishable, to the caller, from one that worked.
   (`render`'s surfaces *are* its machine output; `--json` there would be a fourth surface nobody asked for.)
   `everyVerbHonoursJSON` is the gate — it walks the whole verb list, so a new command cannot join the surface without answering this question one way or the other.
@@ -211,7 +214,7 @@ All additive to the surface above:
   Parse errors are 1, never an ArgumentParser 64.
 - **The anonymous-claimer nudge.** A non-tty caller taking a claim without naming itself gets one stderr line — not an error, not repeated, invisible to humans in a terminal.
 - **`events.jsonl` is contracted** as append-only state (§ State above): one object per transition with `v`, `ts`, `ts_human`, `event`, and the event's details (`owner`, `reason`, `until`, `why`, …).
-  Events observed: `claim`, `extend`, `release`, `release_all`, `retire`, `cap_set`, `cap_lifted`, `switch_on`, `switch_off`, `orphan_heal`, `thermal_release`, `warn`, `prefloor_warn`, `remind`, `migrate`.
+  Events observed: `claim`, `extend`, `release`, `release_all`, `retire`, `cap_set`, `cap_lifted`, `cap_expired`, `switch_on`, `switch_off`, `orphan_heal`, `thermal_release`, `warn`, `prefloor_warn`, `remind`, `migrate`.
   Order is chronological — the switch flips before the claim file lands, and the stream says so.
   Fields are append-only.
   Nothing reads it yet; `watch`/`why` stay uncontracted.

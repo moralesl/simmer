@@ -170,7 +170,7 @@ import Testing
 
 @Suite struct CapMath {
     @Test func cappedUntilRules() {
-        let cap = CapRecord(until: 100, setBy: "terminal", setAt: 0)
+        let cap = CapRecord(until: 100, setBy: "terminal", setAt: 0, expires: Cap.rollover(after: 100))
         #expect(cappedUntil(0, cap: cap) == 100)     // forever under a cap = the cap
         #expect(cappedUntil(200, cap: cap) == 100)   // past the cap = the cap
         #expect(cappedUntil(50, cap: cap) == 50)     // inside the cap = untouched
@@ -214,7 +214,7 @@ import Testing
 
         aggregate = Aggregate.compute(
             claims: [claim("a", until: 0), claim("b", until: 200)],
-            cap: CapRecord(until: 300, setBy: "t", setAt: 0),
+            cap: CapRecord(until: 300, setBy: "t", setAt: 0, expires: Cap.rollover(after: 300)),
             now: 50, sleepDisabled: true)
         #expect(aggregate.state == .active)
         #expect(aggregate.until == 300)
@@ -316,7 +316,7 @@ import Testing
         #expect(ledger.write(Claim(owner: "test", until: 2000, started: 900)) == true)
         #expect(ledger.writeCap(until: 3000, setBy: "terminal", now: 1000) == true)
         #expect(ledger.claims().count == 1)
-        #expect(ledger.readCap()?.until == 3000)
+        #expect(ledger.readCap(now: 1000)?.until == 3000)
     }
 
     /// No leftovers next to real state when a write fails.

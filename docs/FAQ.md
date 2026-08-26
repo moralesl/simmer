@@ -41,7 +41,7 @@ Use `simmer down --all` to end everything; only a human may.
 **Why can an agent not use `down --all`?** Because ending work someone else started is not an agent's call.
 A human can release any claim; an agent only its own.
 It is enforced against honest actors, not as a security boundary — nothing stops a process passing `--owner terminal`, and on a single-user Mac nothing could.
-The agent protocol states it as an obligation — [FOR-AGENTS.md](FOR-AGENTS.md).
+The agent protocol states it as an obligation — [AGENTS.md](../AGENTS.md).
 
 **What is the difference between `simmer +30m` and `simmer 30m`?** `+30m` **adds** half an hour to your deadline; `30m` **sets** your deadline to half an hour from now.
 So on a claim running until 23:00, `+30m` gets you 23:30 and `30m` gets you 30 minutes.
@@ -51,9 +51,15 @@ In the spike both meant the second thing, which meant `+15m` on a four-hour clai
 It clips every claim, the ones already held and the ones taken later.
 It is a human instrument: an agent can read it and gets a truthful `budget` answer when it hits it, but cannot move it.
 
-**The cap time has passed and now nothing can be claimed.** That is deliberate.
-Letting it lapse quietly would throw away a decision you made on purpose.
-`simmer cap off` lifts it, `simmer cap <time>` moves it, and every surface says which.
+**The cap time has passed and now nothing can be claimed.** That is deliberate, and temporary.
+Between the cap and the next morning it refuses on purpose — a ceiling that lapsed at 23:01 would be no ceiling at all.
+**At 09:00 it lifts itself**, so an evening's decision never becomes the next day's lockout.
+`simmer cap off` lifts it sooner, `simmer cap <time>` moves it, and every surface names both.
+
+**Why 09:00, and can I change it?** It is the hour a cap stops meaning anything: "nothing past 23:00" was about last night.
+It is not configurable — a knob here is one more thing to remember, which is what the rollover exists to remove.
+The rule is the first 09:00 *strictly after* the cap itself, so `simmer cap 01:00` still covers the small hours.
+The one rough edge: a daytime ceiling (`simmer cap 2h` at 11:00) holds until the next morning rather than the next afternoon.
 
 **Why did my two-hour claim end at 40%?** The battery floor, which defaults to 20% and only applies on battery power.
 Each claim carries its own, so `--min-battery 60` gets you exactly that without dragging anybody else's claim down.
@@ -82,8 +88,7 @@ Source fetched by `git` or `curl` and compiled locally runs with no warning, no 
 Verified against a trusted self-signed certificate: no difference.
 The recipe and its traps are in `PLATFORM-FACTS.md`.
 
-**Does simmer spawn background processes?** No.
-It holds its power assertion in-process, so there is nothing to orphan.
+**Does simmer spawn background processes?** No. It holds its power assertion in-process, so there is nothing to orphan.
 The bash spike used a detached `caffeinate` per claim and leaked 222 of them; see `PLATFORM-FACTS.md`.
 
 **Where is the state?** `$XDG_STATE_HOME/simmer/` (default `~/.local/state/simmer/`): one flat `key=value` file per claim under `claims/`, the `cap`, and the log.
@@ -94,8 +99,10 @@ Written temp-file-then-rename, never edited in place.
 Human sentences may be reworded at any time.
 `budget` answers the decision question in its exit code: `0` there is room, `1` not enough, `3` **nothing is holding the Mac awake** — which is an absent guarantee, not a small budget, and code that conflates the two keeps working while the machine sleeps under it.
 
-**Where did the Raycast and Alfred commands go?** On the roadmap ([ROADMAP.md](ROADMAP.md)).
-`simmer render raycast|alfred` is already in the core and tested; the launcher shims wait for first-release feedback.
+**Is there a Raycast extension?** Yes — [`integrations/raycast/`](../integrations/raycast/), six commands, install in one `npm ci && npm run dev`.
+It shows the claims list, which is the thing a one-line launcher cannot: who holds the lid, until when, and why.
+It reads `status --json` for the list, so it can never disagree with the CLI about what is held, and `simmer render raycast` for the countdown it shows under the command title in the root search — the same one-line surface a script command would use.
+Alfred is still on the roadmap ([ROADMAP.md](ROADMAP.md)) — `simmer render alfred` is in the core and tested, waiting on someone with the paid Powerpack.
 A SwiftBar plugin is deliberately never coming — the app is the menu bar.
 
 **Where is the bash version?** In the maintainer's development archive, at its `v0.1` tag — a complete, tested implementation of the same contract that proved the model and bought the platform facts.

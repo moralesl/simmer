@@ -36,7 +36,7 @@ It *borrows* it, with a deadline, and a background watchdog hands it back.
 
 Awake time is **counted, not owned**.
 You, an agent and a build can each hold a *claim*; the Mac stays awake until the last one ends, and no claim outranks another — there is nothing to negotiate and no `--force`.
-An owner is a name you state, not a login: acting under someone else's name is on the honor system, and the rules agents follow are in [docs/FOR-AGENTS.md](docs/FOR-AGENTS.md).
+An owner is a name you state, not a login: acting under someone else's name is on the honor system, and the rules agents follow are in [AGENTS.md](AGENTS.md).
 
 ```
 claims/terminal    ⌨️  refactor         until 17:00  ─┐
@@ -53,6 +53,7 @@ There is no `--force` — the conflict it existed to resolve cannot occur.
 
 And you have the final say, mechanically: a person can end any claim, an agent only its own, and the **cap** is a human instrument alone.
 Claims request from below; the cap rules from above.
+A cap holds for the night it was set for and lifts itself at 09:00, so tonight's ceiling is never tomorrow's lockout.
 
 The full contract, including the reasoning behind each of those choices, is [docs/CONTRACTS.md](docs/CONTRACTS.md).
 
@@ -79,7 +80,7 @@ The honest version, including where something else is the better answer.
 
 | | Holds a closed lid | Bounded by default | Several actors at once | Callable by an agent | Cost |
 |---|---|---|---|---|---|
-| **simmer** | yes — borrows `pmset -a disablesleep`, watchdog hands it back | yes; a deadline is required, and a human **cap** clips every claim | **yes** — counted claims, one per actor, nobody can end another's | exit codes + `--json` on every verb, and a written protocol ([FOR-AGENTS.md](docs/FOR-AGENTS.md)) | free, MIT |
+| **simmer** | yes — borrows `pmset -a disablesleep`, watchdog hands it back | yes; a deadline is required, and a human **cap** clips every claim | **yes** — counted claims, one per actor, nobody can end another's | exit codes + `--json` on every verb, and a written protocol ([AGENTS.md](AGENTS.md)) | free, MIT |
 | `caffeinate` (Apple) | no — power assertions cannot hold the lid on Apple silicon | yes (`-t`) | no | yes, but it cannot do the thing | free, built in |
 | [KeepingYouAwake](https://github.com/newmarcel/KeepingYouAwake) | no — an assertion wrapper, same ceiling as `caffeinate` | timer | no | no | free, MIT |
 | [Amphetamine](https://apps.apple.com/app/amphetamine/id937984704) | yes, since 5.0 (a preference, off by default) | timers and triggers | no | no | free, App Store |
@@ -97,11 +98,25 @@ It also never asks for an account, a certificate, or a payment, and it compiles 
 ## For agents
 
 An agent doing long work on this Mac should hold its own claim — that is the point of the model.
-The protocol is one page: [docs/FOR-AGENTS.md](docs/FOR-AGENTS.md).
+The protocol is one page: [AGENTS.md](AGENTS.md).
 The two-line version: `simmer budget --need 30m` before starting (exit 3 means the lid can interrupt you at any moment), and `simmer 45m -r "why" --owner agent:<work> --json` to claim.
 Never `down --all`, never a human owner name.
 
 The bash spike that preceded the Swift implementation lives in the maintainer's development archive — reference only.
+
+## In Raycast
+
+Type "simmer" and the countdown is already there, under the command title — `⏾ sleep allowed · 100% AC`, or `☕ 42m left · until 17:00 · plan review · 3 claims`.
+Behind it: the claims list with its actions, a duration, "longer", "down", and the evening ceiling.
+The list comes from `status --json` and the line from `render raycast`, so no surface can disagree with the CLI about what is held.
+
+```bash
+cd integrations/raycast && npm ci && npm run dev   # then ⌃C — it stays registered
+```
+
+Then press ↵ on **Simmer Status** once — Raycast keeps background refresh off until a command is opened, so the countdown is blank until you do.
+[integrations/raycast/README.md](integrations/raycast/README.md) has the rest.
+Alfred is on the [roadmap](docs/ROADMAP.md); a SwiftBar plugin is not — the app is the menu bar.
 
 ## Uninstall
 
@@ -121,7 +136,8 @@ State (`~/.local/state/simmer/`) is yours to keep or delete.
 ```bash
 make test     # both suites, hermetic: no sudo, no real power state, fake clock
 make app      # assemble and ad-hoc sign Simmer.app (Command Line Tools only)
-make install  # ~/Applications/Simmer.app + ~/.local/bin/simmer + the guard
+make install  # ~/Applications/Simmer.app + ~/.local/bin/simmer + the guard,
+              # plus the agent skill where ~/.claude already exists
 ```
 
 Requires macOS 14+ and Swift 6 (Xcode or Command Line Tools 16 and newer).
@@ -134,7 +150,7 @@ The rest, in the order a reader usually wants it:
 | | |
 |---|---|
 | [docs/FAQ.md](docs/FAQ.md) | short answers |
-| [docs/FOR-AGENTS.md](docs/FOR-AGENTS.md) | the protocol for an agent using simmer |
+| [AGENTS.md](AGENTS.md) | one page for agents: the protocol for using simmer, and the rules for changing it |
 | [docs/CONTRACTS.md](docs/CONTRACTS.md) | the law: surface, exit codes, machine output, and the reasoning behind each choice |
 | [docs/PLATFORM-FACTS.md](docs/PLATFORM-FACTS.md) | what macOS actually does, each line bought with a failed attempt |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | decided but not built — and what is deliberately never coming |

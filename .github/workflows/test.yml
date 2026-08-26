@@ -65,6 +65,84 @@ jobs:
           plutil -lint launchd/guard.plist.template app/Info.plist.template
           bash -n bootstrap.sh
 
+  # The Raycast extension is the one part of this repository that is not Swift,
+  # so it gets its own leg rather than a step inside a macOS one.
+  #
+  # Ubuntu on purpose, and it decides what this leg can honestly claim. The `ray`
+  # CLI is macOS-only and talks to a locally installed Raycast, so `ray lint` and
+  # `ray build` cannot run here at all — they are local steps, documented in
+  # integrations/raycast/README.md. What DOES run is platform-independent and is
+  # the part that breaks silently: the typecheck, ESLint, and the two test
+  # suites.
+  #
+  # The contract suite (tests/bridge.test.mts) needs the built binary and skips
+  # itself without one, so on this leg it is the pure units that run. That is
+  # deliberate rather than an oversight: the same file runs for real on macOS in
+  # the `raycast-contract` leg below, where a binary exists.
+  raycast-lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integrations/raycast
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: integrations/raycast/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: ESLint
+        run: npx eslint src tests
+
+      - name: Pure units
+        run: npm test
+
+  # The half of the extension's suite that is worth running against a real
+  # binary: `tests/bridge.test.mts` drives the BUILT simmer through its own seam,
+  # so a renamed JSON field or a changed exit code fails here rather than showing
+  # up as an empty list in Raycast. It is the acceptance suite's idea, from the
+  # other side of the pipe.
+  #
+  # It skips itself when simmer is absent, so the build step below is what makes
+  # this leg mean anything — an absent binary must fail here, not silently pass.
+  raycast-contract:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: integrations/raycast/package-lock.json
+
+      - name: Toolchain
+        run: |
+          newest="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$newest" ]; then sudo xcode-select -s "$newest"; fi
+          swift --version
+
+      - name: Build simmer
+        run: swift build -c release
+
+      - name: Contract suite against the built binary
+        working-directory: integrations/raycast
+        run: |
+          npm ci
+          # Absent binary must fail, not skip: the suite skips itself politely on
+          # a user's machine, and that politeness would make this leg a no-op.
+          bin="$GITHUB_WORKSPACE/.build/release/simmer"
+          [ -x "$bin" ] || { echo "::error::$bin was not built"; exit 1; }
+          SIMMER_BIN="$bin" npm test
+
   # `bootstrap.sh` is the highest-consequence file in the repository: it is
   # piped from curl into bash and it writes to /etc/sudoers.d. It was also the
   # only one with no static analysis — `bash -n` above answers "does this

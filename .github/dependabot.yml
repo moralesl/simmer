@@ -25,3 +25,15 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     labels: [dependencies]
+
+  # The Raycast extension's npm tree — the only non-Swift dependencies here, and
+  # the ones most likely to move. `@raycast/api` is pinned to the installed
+  # Raycast's own version, so a bump is a real decision and not noise: the app
+  # and the API version have to agree.
+  - package-ecosystem: npm
+    directory: /integrations/raycast
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies]

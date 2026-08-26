@@ -160,7 +160,7 @@ import Testing
         #expect(unset?.children.contains { $0.action == .capSet("23:00") } == true)
 
         items = build(claims: [claim("terminal", until: 4000)],
-                      cap: CapRecord(until: 3000, setBy: "terminal", setAt: 0))
+                      cap: CapRecord(until: 3000, setBy: "terminal", setAt: 0, expires: Cap.rollover(after: 3000)))
         let set = items.first { $0.title.hasPrefix("Nothing past ") }
         #expect(set?.children.first?.action == .capLift)
     }

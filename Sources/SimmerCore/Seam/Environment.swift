@@ -41,6 +41,31 @@ public struct SimmerEnvironment: Sendable {
         return base.appendingPathComponent("simmer")
     }
 
+    // MARK: the agent protocol — SIMMER_SKILL_DIR
+
+    /// Where `make skill` renders the agent protocol, so `doctor` can notice a
+    /// stale one. Seamed like everything else: `homeDirectoryForCurrentUser`
+    /// reads the passwd entry and ignores `HOME`, so without this variable a
+    /// hermetic test would inspect the developer's own installed skill and pass
+    /// or fail on machine state.
+    ///
+    /// `HOME` is consulted before the passwd entry for the same reason.
+    public var skillDir: URL {
+        if let override = env["SIMMER_SKILL_DIR"], !override.isEmpty {
+            return URL(fileURLWithPath: override)
+        }
+        let home = env["HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent(".claude/skills/simmer")
+    }
+
+    /// The parent that must already exist for the protocol to be installable.
+    /// `make install` writes the skill only where this is present — creating it
+    /// on a Mac that does not use Claude Code would be litter.
+    public var claudeHome: URL {
+        skillDir.deletingLastPathComponent().deletingLastPathComponent()
+    }
+
     // MARK: who is asking, and whether they are a person
 
     /// SIMMER_OWNER, else a terminal is a terminal, else a script — which is

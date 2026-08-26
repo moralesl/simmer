@@ -86,7 +86,7 @@ import Testing
 @Suite struct StatusOutputTests {
     static let machineKeys = ["state", "until", "left", "left_short", "reason",
                               "min_battery", "battery", "on_battery", "sleep_disabled",
-                              "since", "owner", "claim_count", "cap"]
+                              "since", "owner", "claim_count", "cap", "cap_expires"]
 
     @Test func machineEmitsEveryFieldEveryTime() {
         let sim = Sim(); defer { sim.tearDown() }

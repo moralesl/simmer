@@ -77,9 +77,24 @@ public struct Ledger: Sendable {
 
     // MARK: the cap
 
-    public func readCap() -> CapRecord? {
+    /// The cap **as it is in force right now**, which is the only form any
+    /// caller should ever see. Past its rollover it reports as no cap at all:
+    /// a ceiling is a decision about one night, and once the night is over
+    /// that decision has been served, not forgotten.
+    ///
+    /// Taking `now` is deliberate. An argument-less read would let a new
+    /// caller reintroduce yesterday's ceiling by accident, which is exactly
+    /// the trap this replaced.
+    public func readCap(now: Int) -> CapRecord? {
+        guard let cap = storedCap(), now < cap.expires else { return nil }
+        return cap
+    }
+
+    /// What is on disk, expired or not — for the guard's sweep alone. Every
+    /// other caller wants `readCap(now:)`.
+    public func storedCap() -> CapRecord? {
         guard let text = try? String(contentsOf: capFile, encoding: .utf8) else { return nil }
-        var until = 0, setAt = 0
+        var until = 0, setAt = 0, expires = 0
         var setBy = ""
         for line in text.split(separator: "\n") {
             guard let eq = line.firstIndex(of: "=") else { continue }
@@ -88,18 +103,32 @@ public struct Ledger: Sendable {
             case "until": until = Int(value) ?? 0
             case "set_by": setBy = value
             case "set_at": setAt = Int(value) ?? 0
+            case "expires": expires = Int(value) ?? 0
             default: break
             }
         }
         guard until != 0 else { return nil }
-        return CapRecord(until: until, setBy: setBy, setAt: setAt)
+        // A file written before caps expired carries no `expires`. Deriving it
+        // here is what retires those caps on first read rather than stranding
+        // them — the migration is the default, not a step anyone runs.
+        return CapRecord(until: until, setBy: setBy, setAt: setAt,
+                         expires: expires != 0 ? expires : Cap.rollover(after: until))
     }
 
     /// False when the cap did not reach disk — same argument as `write`: a
     /// ceiling that was announced but not recorded is worse than a refusal.
+    /// The rollover is recorded rather than recomputed on every read, so a cap
+    /// keeps the expiry it was set with even if the constant later moves.
     @discardableResult
     public func writeCap(until: Int, setBy: String, now: Int) -> Bool {
-        let text = "format=\(Claim.format)\nuntil=\(until)\nset_by=\(setBy)\nset_at=\(now)\n"
+        let text = """
+            format=\(Claim.format)
+            until=\(until)
+            set_by=\(setBy)
+            set_at=\(now)
+            expires=\(Cap.rollover(after: until))
+
+            """
         return atomicWrite(text, to: capFile)
     }
 
@@ -296,11 +325,39 @@ public struct CapRecord: Sendable, Equatable {
     public var until: Int
     public var setBy: String
     public var setAt: Int
+    /// When the ceiling stops applying on its own. Always strictly after
+    /// `until`, so the gate is real for the whole night it was set for.
+    public var expires: Int
 
-    public init(until: Int, setBy: String, setAt: Int) {
+    public init(until: Int, setBy: String, setAt: Int, expires: Int) {
         self.until = until
         self.setBy = setBy
         self.setAt = setAt
+        self.expires = expires
+    }
+}
+
+/// Where the cap's self-lifting rule lives.
+///
+/// A cap answers "nothing past 23:00" — a statement about tonight. Leaving it
+/// standing the next morning turns one evening's decision into a lockout the
+/// person who set it has to remember to undo, and the surface that told them
+/// how is a notification they saw eleven hours ago. So the ceiling lifts
+/// itself at the next rollover, and the refusal in between says when.
+public enum Cap {
+    /// The morning the night is over. Not configurable on purpose: a knob
+    /// here is one more thing to hold in your head, which is the problem.
+    public static let rolloverTime = "09:00"
+
+    /// The first rollover strictly after `until`. One rule, no special cases —
+    /// which does mean a *daytime* cap (`simmer cap 2h` at 11:00) stays a gate
+    /// until the following morning. That is rare, deliberate, and still ends
+    /// by itself; splitting the rule to shave it would cost more than it buys.
+    public static func rollover(after until: Int) -> Int {
+        // parseUntil already rolls to the next occurrence and goes through
+        // Calendar, so this inherits its DST correctness rather than adding a
+        // second, worse date calculation.
+        Durations.parseUntil(rolloverTime, now: until) ?? until + 86_400
     }
 }
 

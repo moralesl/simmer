@@ -120,16 +120,110 @@ import Testing
         #expect(result.err.contains("already at the cap"))
     }
 
-    @Test func aPassedCapKeepsRefusingAndNamesTheFix() {
+    @Test func aPassedCapKeepsRefusingAndNamesBothWaysOut() {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["cap", "10m", "--owner", "terminal"])
         let claim = sim.run(["30m", "--owner", "terminal"], now: Sim.epoch + 700)
         #expect(claim.code == 1)
+        // Two exits, and the refusal must name both: the one that costs a
+        // command, and the one that costs nothing.
         #expect(claim.err.contains("cap off"))
-        // ...in every surface: extend hits the same wall.
+        #expect(claim.err.contains("09:00"))
         sim.run(["cap", "off", "--owner", "terminal"], now: Sim.epoch + 700)
         let afterLift = sim.run(["30m", "--owner", "terminal"], now: Sim.epoch + 700)
         #expect(afterLift.code == 0)
+    }
+
+    /// The morning-after rule. A ceiling set on Tuesday evening answered a
+    /// question about Tuesday night; on Wednesday it is a lockout nobody chose,
+    /// and the surface explaining how to undo it was a toast seen hours ago.
+    /// So it stops applying on its own — no command, nothing to remember.
+    @Test func aCapLiftsItselfAtTheNextRollover() {
+        let sim = Sim(); defer { sim.tearDown() }
+        // Sim.epoch is 09:00 Berlin, so a 10-minute cap expires at the FOLLOWING
+        // 09:00 — the first rollover strictly after the ceiling itself.
+        sim.run(["cap", "10m", "--owner", "terminal"])
+        let rollover = Sim.epoch + 86_400
+
+        // The whole night in between is still a real gate: that is the half of
+        // the bargain the person who set the cap was actually buying.
+        #expect(sim.run(["30m", "--owner", "agent"], now: rollover - 60).code == 1)
+
+        // And at the rollover it is simply gone — for claiming...
+        #expect(sim.run(["30m", "--owner", "agent"], now: rollover).code == 0)
+        // ...and for every surface that reports it.
+        #expect(sim.run(["cap"], now: rollover).out.contains("no cap"))
+        let status = sim.json(sim.run(["status", "--json"], now: rollover))
+        #expect(status["cap"] as? Int == 0)
+    }
+
+    /// Releasing claims never lifts the ceiling — correct, and invisible until
+    /// it refuses you hours later. Every release path says so, because a rule
+    /// that holds for "release everything" and not for "release mine" is one
+    /// nobody can predict.
+    @Test func everyReleaseSaysTheCeilingStays() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["cap", "3h", "--owner", "terminal"])
+        sim.run(["1h", "--owner", "terminal"])
+        sim.run(["1h", "--owner", "agent:evals"])
+
+        let mine = sim.run(["down", "--owner", "terminal"])
+        #expect(mine.out.contains("ceiling stays"))
+        #expect(mine.out.contains("09:00"))   // and when it stops standing
+
+        let all = sim.run(["down", "--all", "--owner", "terminal"])
+        #expect(all.out.contains("ceiling stays"))
+
+        // No cap, no note: this must not become a line on every release.
+        sim.run(["cap", "off", "--owner", "terminal"])
+        sim.run(["1h", "--owner", "terminal"])
+        #expect(!sim.run(["down", "--owner", "terminal"]).out.contains("ceiling"))
+    }
+
+    /// Machine callers get the same fact as a number, so a surface composing
+    /// its own sentence never hardcodes the rollover hour.
+    @Test func theAggregateTailCarriesWhenTheCapLifts() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["cap", "3h", "--owner", "terminal"])
+        let claimed = sim.json(sim.run(["30m", "--owner", "terminal", "--json"]))
+        #expect(claimed["cap_expires"] as? Int == Sim.epoch + 86_400)
+
+        sim.run(["cap", "off", "--owner", "terminal"])
+        let uncapped = sim.json(sim.run(["extend", "+10m", "--owner", "terminal", "--json"]))
+        #expect(uncapped["cap_expires"] as? Int == 0)
+    }
+
+    /// The read path retires an expired cap, but the file would sit in the
+    /// state directory looking live. The guard sweeps it, on an idle Mac too —
+    /// which is exactly where a spent ceiling waits.
+    @Test func theGuardSweepsAnExpiredCapAndSaysSo() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["cap", "10m", "--owner", "terminal"])
+        #expect(sim.capUntil != nil)
+
+        sim.run(["guard"], now: Sim.epoch + 3600)
+        #expect(sim.capUntil != nil)   // the night is not over yet
+
+        sim.run(["guard"], now: Sim.epoch + 86_400)
+        #expect(sim.capUntil == nil)
+        #expect(sim.events().contains { $0["event"] as? String == "cap_expired" })
+    }
+
+    /// A cap written before caps expired carries no `expires` key. It must
+    /// retire on the same rule as any other, or the upgrade would strand
+    /// precisely the ceiling this change exists to release.
+    @Test func aCapFileFromBeforeExpiryStillRetires() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["cap", "10m", "--owner", "terminal"])
+        let file = sim.stateDir.appendingPathComponent("cap")
+        let legacy = (try? String(contentsOf: file, encoding: .utf8))!
+            .split(separator: "\n").filter { !$0.hasPrefix("expires=") }
+            .joined(separator: "\n") + "\n"
+        try! legacy.write(to: file, atomically: true, encoding: .utf8)
+        #expect(!legacy.contains("expires="))
+
+        #expect(sim.run(["30m", "--owner", "agent"], now: Sim.epoch + 700).code == 1)
+        #expect(sim.run(["30m", "--owner", "agent"], now: Sim.epoch + 86_400).code == 0)
     }
 
     @Test func foreverUnderACapIsADeadlineNotALie() {

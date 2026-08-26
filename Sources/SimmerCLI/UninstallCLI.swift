@@ -54,6 +54,15 @@ struct UninstallCLI: ParsableCommand {
         let plist = home.appendingPathComponent(
             "Library/LaunchAgents/\(Runtime.guardLabel).plist").path
         outcome.stdout.append("   \(plist)  — \(mark(plist))")
+
+        // The agent skill, listed only where it exists. It is written by
+        // `make install` ONLY on a Mac that already has ~/.claude, so naming it
+        // as "not there" everywhere else would imply simmer tried and failed.
+        let skill = home.appendingPathComponent(".claude/skills/simmer").path
+        let skillInstalled = fm.fileExists(atPath: skill)
+        if skillInstalled {
+            outcome.stdout.append("   \(skill)  — present (the agent protocol, generated from AGENTS.md)")
+        }
         outcome.stdout.append("")
 
         if fm.fileExists(atPath: checkout + "/Makefile") {
@@ -62,15 +71,15 @@ struct UninstallCLI: ParsableCommand {
             outcome.stdout.append("   make -C \(checkout) uninstall")
         } else {
             // The checkout is how `make uninstall` knows what to remove. Gone
-            // (or installed some other way), the three paths above are still
-            // the whole footprint, so name them rather than a target that
-            // cannot run.
+            // (or installed some other way), the paths above are still the
+            // whole footprint, so name them rather than a target that cannot
+            // run.
             outcome.stdout.append("The checkout that carries the uninstall target is not at \(checkout).")
-            outcome.stdout.append("These three lines do the same thing:")
+            outcome.stdout.append("These lines do the same thing:")
             outcome.stdout.append("")
             outcome.stdout.append("   launchctl bootout gui/$(id -u)/\(Runtime.guardLabel)")
             outcome.stdout.append("   rm -f \(plist) \(home.appendingPathComponent(".local/bin/simmer").path)")
-            outcome.stdout.append("   rm -rf \(app)")
+            outcome.stdout.append("   rm -rf \(app)\(skillInstalled ? " \(skill)" : "")")
         }
         outcome.stdout.append("")
 

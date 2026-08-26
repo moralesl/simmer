@@ -40,6 +40,7 @@ extension Commands {
                 "owner=\(aggregate.owner)",
                 "claim_count=\(aggregate.count)",
                 "cap=\(aggregate.cap)",
+                "cap_expires=\(aggregate.capExpires)",
             ]
 
         case .json:

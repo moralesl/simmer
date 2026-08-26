@@ -6,7 +6,8 @@ That is the whole product, so the bar for changes is less "does it work" and mor
 ## Before you write code
 
 ```bash
-make test        # both suites, hermetic: no sudo, no real power state, fake clock
+make test          # both Swift suites, hermetic: no sudo, no real power state, fake clock
+make test-raycast  # only if you are touching integrations/raycast — see Tests, below
 ```
 
 If that is not green on a clean checkout, stop and open an issue — nothing else is worth diagnosing first.
@@ -17,7 +18,7 @@ Then read, in this order:
    Settled decisions are not relitigated; if you think one is wrong, say so in an issue before building on the alternative.
 2. [`docs/PLATFORM-FACTS.md`](docs/PLATFORM-FACTS.md) — what macOS actually does, each line bought with a failed attempt, plus the traps that no test can carry.
    If your plan trips one, the plan is wrong, and nothing there changes without re-running the experiment and recording the new result.
-3. [`AGENTS.md`](AGENTS.md) — the iron rules, in one page.
+3. [`AGENTS.md`](AGENTS.md) — the protocol agents follow, and the iron rules for changing this repository.
 
 ## The rules that will get a change sent back
 
@@ -36,14 +37,20 @@ Then read, in this order:
 
 ## Tests
 
-Two suites, two questions:
+Three lanes, three questions:
 
-| Suite | Question it answers |
-|---|---|
-| `Tests/SimmerCoreTests` | do the mechanics work — parsing, the codec, aggregate ties, settle |
-| `Tests/SimmerAcceptanceTests` | does the **built binary** honour the contract |
+| Suite | Command | Question it answers |
+|---|---|---|
+| `Tests/SimmerCoreTests` | `make test` | do the mechanics work — parsing, the codec, aggregate ties, settle |
+| `Tests/SimmerAcceptanceTests` | `make test` | does the **built binary** honour the contract |
+| `integrations/raycast/tests` | `make test-raycast` | does the extension still read the contract the binary emits |
 
 The acceptance suite honours `SIMMER_BIN`, so it can be pointed at any implementation of `CONTRACTS.md` — that is what makes it the executable form of the contract rather than a description of this code.
+`bridge.test.mts` is the same idea from the other side of the pipe.
+
+`make test` cannot see `integrations/raycast`, so a change to the extension with only `make test` green is a change nothing checked.
+Touching both sides means both commands; CI runs all three either way.
+And `AgentDocTests` replays the session in `AGENTS.md` against the built binary — editing that session is editing a test.
 
 A behaviour change without a test that would have caught the old behaviour is not finished.
 Where a rule can be a test instead of a sentence in a document, make it a test: several already are (the sudo rule's scope, the absence of self-escalation, that every documented verb resolves).
@@ -52,7 +59,7 @@ Where a rule can be a test instead of a sentence in a document, make it a test: 
 
 - One concern per PR, and say which contract row it touches, if any.
 - Note anything you did that is not the obvious approach, and why, at the point where you did it.
-- CI runs both suites on macOS 14 and 15, assembles the bundle, and lints the templates and the installer.
+- CI runs the Swift suites on macOS 14 and 15, assembles the bundle, lints the templates and the installer, and runs the extension's lane twice — once as pure units on Linux, once against the built binary on macOS.
   All of it must be green.
 
 ## What is deliberately not wanted
