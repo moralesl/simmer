@@ -10,7 +10,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { capArgs, claimArgs, extendArgs, releaseArgs, statusArgs } from "../src/args.ts";
@@ -161,7 +161,44 @@ test("discovery prefers the configured path, then SIMMER_BIN", { skip }, () => {
     bin,
     "an unusable preference falls through rather than failing",
   );
-  assert.equal(resolveBinary("/nowhere/simmer", {}), bin, "and the usual places still resolve");
+});
+
+/**
+ * The hardcoded install locations, exercised against a FIXTURE home rather than
+ * the machine's.
+ *
+ * The obvious version of this test — assert that dropping SIMMER_BIN still
+ * resolves the same binary — passes only where simmer happens to be installed,
+ * and asserts the filesystem rather than the function. On CI the binary comes
+ * from SIMMER_BIN and none of the usual places exist, so it returned null.
+ *
+ * `os.homedir()` honours $HOME on POSIX, which is the seam that makes the real
+ * property checkable anywhere: `~/.local/bin/simmer` is consulted even with an
+ * empty environment. No built binary needed, so this runs on the lint leg too.
+ */
+test("the usual install locations are consulted, with no PATH and no SIMMER_BIN", () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), "simmer-home-"));
+  const installed = join(fakeHome, ".local/bin/simmer");
+  mkdirSync(join(fakeHome, ".local/bin"), { recursive: true });
+  writeFileSync(installed, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+  const realHome = process.env.HOME;
+  try {
+    process.env.HOME = fakeHome;
+    assert.equal(
+      resolveBinary(undefined, {}),
+      installed,
+      "~/.local/bin/simmer is the symlink make install writes",
+    );
+    assert.equal(
+      resolveBinary("/nowhere/simmer", {}),
+      installed,
+      "an unusable preference falls through to the usual places",
+    );
+  } finally {
+    if (realHome === undefined) delete process.env.HOME;
+    else process.env.HOME = realHome;
+  }
 });
 
 /**
