@@ -63,6 +63,8 @@ export interface SimmerMutation {
   claim_count?: number;
   cap?: number;
   capped?: boolean;
+  /** When a cap lifts itself, epoch seconds. Only on `cap_set`. */
+  expires?: number;
 }
 
 /**

@@ -51,9 +51,15 @@ In the spike both meant the second thing, which meant `+15m` on a four-hour clai
 It clips every claim, the ones already held and the ones taken later.
 It is a human instrument: an agent can read it and gets a truthful `budget` answer when it hits it, but cannot move it.
 
-**The cap time has passed and now nothing can be claimed.** That is deliberate.
-Letting it lapse quietly would throw away a decision you made on purpose.
-`simmer cap off` lifts it, `simmer cap <time>` moves it, and every surface says which.
+**The cap time has passed and now nothing can be claimed.** That is deliberate, and temporary.
+Between the cap and the next morning it refuses on purpose — a ceiling that lapsed at 23:01 would be no ceiling at all.
+**At 09:00 it lifts itself**, so an evening's decision never becomes the next day's lockout.
+`simmer cap off` lifts it sooner, `simmer cap <time>` moves it, and every surface names both.
+
+**Why 09:00, and can I change it?** It is the hour a cap stops meaning anything: "nothing past 23:00" was about last night.
+It is not configurable — a knob here is one more thing to remember, which is what the rollover exists to remove.
+The rule is the first 09:00 *strictly after* the cap itself, so `simmer cap 01:00` still covers the small hours.
+The one rough edge: a daytime ceiling (`simmer cap 2h` at 11:00) holds until the next morning rather than the next afternoon.
 
 **Why did my two-hour claim end at 40%?** The battery floor, which defaults to 20% and only applies on battery power.
 Each claim carries its own, so `--min-battery 60` gets you exactly that without dragging anybody else's claim down.

@@ -16,7 +16,23 @@ public enum Tick {
     public static func run(ctx: Context) -> Outcome {
         var outcome = Outcome()
         let ledger = ctx.ledger
-        let cap = ledger.readCap()
+
+        // A cap is a decision about one night, and the night ends at the
+        // rollover. `readCap(now:)` already reports an expired one as absent,
+        // so this sweep is not what makes claims work again — it is what stops
+        // a spent ceiling from sitting in the state directory looking live.
+        // Before the empty-claims return, because an idle Mac is exactly where
+        // yesterday's cap would otherwise wait.
+        if let stale = ledger.storedCap(), ctx.now >= stale.expires {
+            ledger.clearCap()
+            ledger.log("cap \(Formats.hhmm(stale.until)) expired at its \(Formats.hhmm(stale.expires)) rollover",
+                       now: ctx.now)
+            ledger.event("cap_expired", now: ctx.now, [
+                ("until", .int(stale.until)),
+                ("set_by", .string(stale.setBy)),
+            ])
+        }
+        let cap = ledger.readCap(now: ctx.now)
 
         if ledger.claims().isEmpty {
             // Nothing claimed but the switch on: set by hand, or a crash

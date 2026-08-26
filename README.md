@@ -53,6 +53,7 @@ There is no `--force` — the conflict it existed to resolve cannot occur.
 
 And you have the final say, mechanically: a person can end any claim, an agent only its own, and the **cap** is a human instrument alone.
 Claims request from below; the cap rules from above.
+A cap holds for the night it was set for and lifts itself at 09:00, so tonight's ceiling is never tomorrow's lockout.
 
 The full contract, including the reasoning behind each of those choices, is [docs/CONTRACTS.md](docs/CONTRACTS.md).
 

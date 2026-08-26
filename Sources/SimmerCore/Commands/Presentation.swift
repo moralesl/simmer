@@ -24,9 +24,9 @@ enum Present {
     }
 
     static func capNote(ctx: Context) -> [String] {
-        guard let cap = ctx.ledger.readCap() else { return [] }
+        guard let cap = ctx.ledger.readCap(now: ctx.now) else { return [] }
         if cap.until <= ctx.now {
-            return ["   ⛔ cap \(Formats.hhmm(cap.until)) has passed — nothing new can be claimed ('simmer cap off')"]
+            return ["   ⛔ cap \(Formats.hhmm(cap.until)) has passed — nothing new until \(Formats.hhmm(cap.expires))"]
         }
         let setBy = cap.setBy.isEmpty ? "" : " · set by \(cap.setBy)"
         return ["   ⛔ nothing past \(Formats.hhmm(cap.until))\(setBy)"]

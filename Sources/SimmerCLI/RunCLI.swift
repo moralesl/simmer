@@ -172,7 +172,7 @@ final class RunCoordinator {
                 var target = ctx.now + chunk
                 if budgetEpoch != 0 && target > budgetEpoch { target = budgetEpoch }
                 // The human cap outranks a renewal just as it outranks a claim.
-                if let cap = ctx.ledger.readCap(), target > cap.until { target = cap.until }
+                if let cap = ctx.ledger.readCap(now: ctx.now), target > cap.until { target = cap.until }
                 if target > claim.until {
                     claim.until = target
                     // A renewal inside the warning window means --max or the

@@ -91,11 +91,11 @@ public enum Commands {
         // toward sleep is simmer's bias, and the refusal is a visible gate.
         var clippedByCap = false
         var capUntil = 0
-        if let cap = ctx.ledger.readCap() {
+        if let cap = ctx.ledger.readCap(now: ctx.now) {
             capUntil = cap.until
             if cap.until <= ctx.now {
                 outcome.merge(.failure(
-                    "the cap is \(Formats.hhmm(cap.until)), which has passed. A human lifts it with 'simmer cap off'.",
+                    "the cap is \(Formats.hhmm(cap.until)), which has passed. Nothing new until \(Formats.hhmm(cap.expires)), when it lifts itself — 'simmer cap off' is sooner.",
                     json: input.json))
                 return outcome
             }
@@ -231,7 +231,7 @@ public enum Commands {
         }
 
         if input.json {
-            let effective = cappedUntil(claim.until, cap: ctx.ledger.readCap())
+            let effective = cappedUntil(claim.until, cap: ctx.ledger.readCap(now: ctx.now))
             var pairs: [(String, JSONValue)] = [
                 ("action", .string("claimed")),
                 ("claim", Present.claimJSON(claim, effectiveUntil: effective, now: ctx.now)),
@@ -286,11 +286,11 @@ public enum Commands {
         var target = base + seconds
         var clippedByCap = false
         var capUntil = 0
-        if let cap = ctx.ledger.readCap() {
+        if let cap = ctx.ledger.readCap(now: ctx.now) {
             capUntil = cap.until
             if cap.until <= ctx.now {
                 outcome.merge(.failure(
-                    "the cap is \(Formats.hhmm(cap.until)), which has passed. A human lifts it with 'simmer cap off'.",
+                    "the cap is \(Formats.hhmm(cap.until)), which has passed. Nothing new until \(Formats.hhmm(cap.expires)), when it lifts itself — 'simmer cap off' is sooner.",
                     json: json))
                 return outcome
             }
@@ -366,7 +366,7 @@ public enum Commands {
         }
 
         if json {
-            let effective = cappedUntil(claim.until, cap: ctx.ledger.readCap())
+            let effective = cappedUntil(claim.until, cap: ctx.ledger.readCap(now: ctx.now))
             var pairs: [(String, JSONValue)] = [
                 ("action", .string("extended")),
                 ("claim", Present.claimJSON(claim, effectiveUntil: effective, now: ctx.now)),

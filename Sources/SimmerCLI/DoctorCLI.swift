@@ -144,11 +144,11 @@ struct DoctorCLI: ParsableCommand {
 
         // Informational, never red: a passed cap is a human decision working
         // as intended, and a permanently red line teaches people to skim.
-        if let cap = ctx.ledger.readCap() {
+        if let cap = ctx.ledger.readCap(now: ctx.now) {
             rows.append(Row(
                 id: "cap",
                 label: cap.until <= ctx.now
-                    ? "the cap (\(Formats.hhmm(cap.until))) has passed — nothing new can be claimed until 'simmer cap off'"
+                    ? "the cap (\(Formats.hhmm(cap.until))) has passed — nothing new until it lifts itself at \(Formats.hhmm(cap.expires))"
                     : "cap in force: nothing past \(Formats.hhmm(cap.until))",
                 ok: nil))
         }

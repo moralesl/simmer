@@ -86,6 +86,7 @@ Exit 1 means finish the current unit and write the handoff rather than starting 
 - `simmer cap …` — the cap is the ceiling a person set.
   When a claim is clipped or refused by it, report that and stop.
   Never retry with a bigger number and never route around it.
+  A passed cap lifts itself at the next 09:00 and the refusal says so — that is information for the human in your report, **not** an instruction to sleep until then and try again.
 - Suppressing notifications — they are the human's window into what you hold.
 - Installing simmer, or setting `pmset -a disablesleep` yourself.
   That switch has no expiry, nothing on screen indicates it, and it survives reboots — leaving it on is the exact failure simmer exists to prevent.

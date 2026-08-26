@@ -25,6 +25,12 @@ export default async function Command(
       clipped > 0
         ? ` — ${clipped} ${clipped === 1 ? "claim" : "claims"} shortened`
         : "";
-    await showHUD(`🖐 Nothing past ${cap > 0 ? hhmm(cap) : value}${tail}`);
+    // Setting the ceiling is the one moment the self-lift is worth saying: it
+    // is what makes leaving it set overnight safe. The epoch comes from simmer
+    // so the rollover is never a second constant living out here.
+    const lifts = mutation.expires ? `, lifts ${hhmm(mutation.expires)}` : "";
+    await showHUD(
+      `🖐 Nothing past ${cap > 0 ? hhmm(cap) : value}${lifts}${tail}`,
+    );
   });
 }

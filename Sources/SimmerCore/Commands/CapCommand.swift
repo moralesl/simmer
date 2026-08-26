@@ -11,20 +11,22 @@ extension Commands {
 
         switch argument {
         case nil:
-            if let cap = ctx.ledger.readCap() {
+            if let cap = ctx.ledger.readCap(now: ctx.now) {
                 if json {
                     outcome.stdout = [JSONValue.object([
                         ("cap", .int(cap.until)),
                         ("passed", .bool(cap.until <= ctx.now)),
+                        ("expires", .int(cap.expires)),
                         ("set_by", .string(cap.setBy)),
                         ("set_at", .int(cap.setAt)),
                     ]).serialized()]
                 } else if cap.until <= ctx.now {
                     outcome.stdout.append("⛔ cap \(Formats.hhmm(cap.until)) — passed, so nothing new can be claimed.")
-                    outcome.stdout.append("   'simmer cap off' lifts it, 'simmer cap <HH:MM>' moves it.")
+                    outcome.stdout.append("   it lifts itself at \(Formats.hhmm(cap.expires)) (\(Durations.human(cap.expires - ctx.now)) from now) · 'simmer cap off' is sooner.")
                 } else {
                     let setBy = cap.setBy.isEmpty ? "" : " · set by \(cap.setBy)"
                     outcome.stdout.append("⛔ nothing past \(Formats.hhmm(cap.until)) (\(Durations.human(cap.until - ctx.now)) from now)\(setBy)")
+                    outcome.stdout.append("   lifts itself at \(Formats.hhmm(cap.expires)) the next morning")
                 }
             } else if json {
                 outcome.stdout = [JSONValue.object([("cap", .int(0))]).serialized()]
@@ -38,7 +40,7 @@ extension Commands {
                 outcome.merge(.failure("only a person can lift the cap", json: json))
                 return outcome
             }
-            if ctx.ledger.readCap() != nil {
+            if ctx.ledger.storedCap() != nil {
                 ctx.ledger.clearCap()
                 ctx.ledger.log("cap lifted by \(ctx.owner)", now: ctx.now)
                 ctx.ledger.event("cap_lifted", now: ctx.now, [("by", .string(ctx.owner))])
@@ -102,11 +104,13 @@ extension Commands {
                 var pairs: [(String, JSONValue)] = [
                     ("action", .string("cap_set")),
                     ("clipped", .int(clipped)),
+                    ("expires", .int(Cap.rollover(after: target))),
                 ]
                 pairs.append(contentsOf: Present.aggregateJSON(ctx.aggregate()))
                 outcome.stdout = [JSONValue.object(pairs).serialized()]
             } else {
                 outcome.stdout.append("⛔ nothing past \(Formats.hhmm(target)) (\(Durations.human(target - ctx.now)) from now)")
+                outcome.stdout.append("   lifts itself at \(Formats.hhmm(Cap.rollover(after: target))) the next morning")
                 if clipped > 0 {
                     outcome.stdout.append("   clipped \(clipped) claim(s) back to it")
                 }
