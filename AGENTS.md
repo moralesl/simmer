@@ -158,6 +158,10 @@ The skill is **generated** from this page's `# Using simmer` half, so it cannot 
 That is how the protocol reaches agents that have no checkout — which is all of them.
 `SkillTests` asserts the extraction, since a renamed heading would still exit 0 and still write a file.
 
+It carries the version that generated it, and `doctor` reports skew — an installed protocol going stale is otherwise completely silent, because agents keep reading it and nothing goes red.
+Informational, never red: a stale document is not a broken install.
+`SIMMER_SKILL_DIR` is that read's seam, because `homeDirectoryForCurrentUser` ignores `HOME`.
+
 Touching both sides means both commands.
 And do not run the commands these documents quote: `PLATFORM-FACTS.md` contains `pmset -a disablesleep`, and `SudoRule` renders a real sudoers edit that a human applies.
 
