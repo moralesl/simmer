@@ -50,6 +50,7 @@ The acceptance suite honours `SIMMER_BIN`, so it can be pointed at any implement
 
 `make test` cannot see `integrations/raycast`, so a change to the extension with only `make test` green is a change nothing checked.
 Touching both sides means both commands; CI runs all three either way.
+And `AgentDocTests` replays the session in `AGENTS.md` against the built binary — editing that session is editing a test.
 
 A behaviour change without a test that would have caught the old behaviour is not finished.
 Where a rule can be a test instead of a sentence in a document, make it a test: several already are (the sudo rule's scope, the absence of self-escalation, that every documented verb resolves).

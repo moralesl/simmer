@@ -14,7 +14,7 @@ You can never take time away from anyone else — and the same protection is owe
 
 ## A whole session
 
-Every response below is real output.
+Every response below is real output — the test suite replays it against the binary.
 
 ```bash
 # 1. Is there room to start? Nothing is claimed, so there is no guarantee at all.
@@ -183,6 +183,8 @@ And do not run the commands these documents quote: `PLATFORM-FACTS.md` contains 
   `everyVerbHonoursJSON` walks the whole verb list.
 - **A flag's own validation belongs to simmer, not to ArgumentParser.** Parser diagnostics name internal subcommand spellings nobody typed and write nothing to stdout, so a `--json` caller gets an empty stream instead of the contracted refusal object.
   Take the value as `String`, validate it, and refuse through `Outcome.failure`.
+- **The session above is a fixture.** `AgentDocTests` replays it against the built binary, so a renamed field or a changed exit code fails there too.
+  Editing it is editing a test.
 
 The bash spike that preceded this implementation lives in the maintainer's development archive, at its `v0.1` tag — reference material only; nothing imports from it, and it is not in this repository's history.
 `BRIEF.md` and `DESIGN-NOTES.md` guided the Swift rewrite; what they decided is in `docs/CONTRACTS.md`, and their text is in git history.
