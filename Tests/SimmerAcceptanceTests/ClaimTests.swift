@@ -22,6 +22,29 @@ import Testing
         #expect(result.code == 1)
         #expect(result.combined.contains("did not understand"))
     }
+
+    /// Swift's arithmetic traps on overflow rather than wrapping, so these
+    /// killed the process with SIGTRAP and exit 133 — a code outside the
+    /// contract's published table, from a release build. The ones below the
+    /// trap were worse: accepted at exit 0, with a deadline billions of years
+    /// out and no bound anywhere to stop it.
+    @Test(arguments: ["106751991167300d", "153722867280912930s",
+                      "9223372036854775807", "1h9223372036854775807m",
+                      "99999999999999999999999s"])
+    func aDurationTooLargeToBeRealIsRefusedAndNeverTraps(_ text: String) {
+        let sim = Sim(); defer { sim.tearDown() }
+        let claim = sim.run([text, "--owner", "test"])
+        #expect(claim.code == 1, "exit \(claim.code) for \(text)")
+        #expect(sim.switchValue == "0")
+        #expect(sim.run(["budget", "--need", text]).code == 1)
+    }
+
+    /// The ceiling is far past anything real, so nothing a person types moves.
+    @Test func aYearIsStillTooLongAndEverythingBelowItStillWorks() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["budget", "--need", "364d"]).code == 3)
+        #expect(sim.run(["budget", "--need", "366d"]).code == 1)
+    }
 }
 
 @Suite struct ClaimTests {
@@ -76,6 +99,25 @@ import Testing
         sim.unfreezeClaims()
         #expect(sim.run(["down", "--owner", "test"]).code == 0)
         #expect(sim.switchValue == "0")
+    }
+
+    /// "Tomorrow at 23:00" is a wall clock, not 86,400 seconds. Rolling with
+    /// the constant put `--until 23:00` at 00:00 the day AFTER tomorrow on the
+    /// night the clocks go forward, and at 22:00 — an hour short of the ask —
+    /// on the night they go back. Twice a year, on the two nights an overnight
+    /// run is least likely to be watched.
+    ///
+    /// The harness pins TZ=Europe/Berlin, so these epochs are fixed points.
+    @Test(arguments: [
+        // 2027-03-27 23:30 CET, the evening the clocks go forward.
+        (1_806_186_600, 1_806_267_600),   // → Sun 2027-03-28 23:00 CEST
+        // 2027-10-30 23:30 CEST, the evening they go back.
+        (1_824_931_800, 1_825_020_000),   // → Sun 2027-10-31 23:00 CET
+    ])
+    func anAbsoluteTimeKeepsItsWallClockAcrossADSTChange(_ eve: Int, _ expected: Int) {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["--until", "23:00", "--owner", "test"], now: eve).code == 0)
+        #expect(sim.run(["status", "--json"], now: eve).out.contains("\"until\":\(expected)"))
     }
 
     @Test func takeSetsSwitchAndDownClearsIt() {

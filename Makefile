@@ -173,7 +173,31 @@ install: app
 	    echo "       simmer doctor   # says whether it is in place, and prints the command"; \
 	    echo "  2. open -a Simmer, then click Allow on the notification banner."; }
 
+# Hand the machine back BEFORE removing anything, and refuse to go on if that
+# did not work.
+#
+# This recipe deletes the guard, the app, and the CLI binary the ~/.local/bin
+# symlink points at — every mechanism on the Mac that can put the sleep switch
+# back. Run with a claim live it used to leave `pmset -a disablesleep 1` on,
+# which per PLATFORM-FACTS.md has no expiry, shows no indicator and survives
+# reboots; SECURITY.md names that exact state as the vulnerability, and the
+# recovery command appeared in neither the README nor the FAQ.
+#
+# SIMMER_HUMAN=1 because a person typed this. `down --all` is a human's
+# authority and make has no tty for simmer to notice one.
 uninstall:
+	@if [ -x $(BIN_DIR)/simmer ]; then SIMMER_HUMAN=1 $(BIN_DIR)/simmer down --all || true; fi
+	@if [ -x $(BIN_DIR)/simmer ] && \
+	    ! $(BIN_DIR)/simmer status --machine | grep -q '^sleep_disabled=0'; then \
+	  echo "simmer: this Mac is still being held awake, and uninstalling removes"; \
+	  echo "        the only thing here that can stop that. Put it back first:"; \
+	  echo ""; \
+	  echo "            sudo pmset -a disablesleep 0"; \
+	  echo ""; \
+	  echo "        then run 'make uninstall' again, or 'make uninstall FORCE=1'"; \
+	  echo "        to remove simmer anyway and revert the switch by hand."; \
+	  [ -n "$(FORCE)" ] || exit 1; \
+	fi
 	-launchctl bootout gui/$$(id -u)/$(GUARD_LABEL) 2>/dev/null
 	rm -f $(AGENT_PLIST)
 	-[ -d $(APP) ] && $(LSREGISTER) -u $(APP)
@@ -183,6 +207,8 @@ uninstall:
 	@echo "Removed the app, the CLI symlink, the guard and the agent skill."
 	@echo "Left alone if present (needs root, and only if simmer wrote it):"
 	@echo "  /etc/sudoers.d/simmer — remove with: sudo rm /etc/sudoers.d/simmer"
+	@echo "If sleep still does not work, the switch is the last thing to revert:"
+	@echo "  sudo pmset -a disablesleep 0"
 
 clean:
 	swift package clean

@@ -29,6 +29,7 @@ struct UninstallCLI: ParsableCommand {
         common.refuseJSON("uninstall", insteadUse: "simmer doctor --json")
 
         let env = Runtime.environment()
+        let ctx = Runtime.context(ownerFlag: common.owner)
         let home = FileManager.default.homeDirectoryForCurrentUser
         let fm = FileManager.default
         var outcome = Outcome()
@@ -102,6 +103,23 @@ struct UninstallCLI: ParsableCommand {
         outcome.stdout.append("")
         outcome.stdout.append("Your state stays put — delete it too if you want the log and the claims gone:")
         outcome.stdout.append("   rm -rf \(env.stateDir.path)")
+
+        // Removing simmer removes every mechanism on this Mac that can put the
+        // sleep switch back, and the switch has no expiry, no indicator, and
+        // survives reboots (PLATFORM-FACTS.md). `make uninstall` hands the
+        // machine back first and refuses to continue if it could not — but
+        // someone following the raw commands above skips that, so the last
+        // word here is the one that gets them out of it either way.
+        outcome.stdout.append("")
+        if ctx.power.sleepDisabled() {
+            outcome.stdout.append("⚠️  Right now this Mac is being held awake. Hand it back BEFORE removing")
+            outcome.stdout.append("   simmer, or nothing here will be able to afterwards:")
+            outcome.stdout.append("")
+            outcome.stdout.append("   simmer down --all")
+        } else {
+            outcome.stdout.append("Nothing is holding the Mac awake, so it is a safe moment to remove it.")
+        }
+        outcome.stdout.append("   If sleep ever stops working after this: sudo pmset -a disablesleep 0")
 
         Runtime.deliver(outcome)
     }

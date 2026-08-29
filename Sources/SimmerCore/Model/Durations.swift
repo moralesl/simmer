@@ -5,12 +5,39 @@ import Foundation
 /// Days exist because overnight is a first-class case — `--require-ac` was
 /// added for exactly it — and "1d" is how a person spells it.
 public enum Durations {
+    /// The longest a claim may be asked for. Not a policy about how long
+    /// anyone should hold the machine — the cap and the battery floor are
+    /// that — but the line past which a number stops being a duration
+    /// somebody meant.
+    ///
+    /// It exists because the arithmetic below is Swift's, which TRAPS on
+    /// overflow rather than wrapping: `simmer 106751991167300d` killed the
+    /// process with SIGTRAP and exit 133, against a contract whose exit-code
+    /// table is published as complete, from ten entry points, in release
+    /// builds. And below the trap there was no bound at all — `simmer
+    /// 153722867280912930s` was accepted at exit 0 and recorded a deadline
+    /// four billion years out.
+    ///
+    /// A year is far past any real use and still nowhere near the range where
+    /// `now + seconds` can overflow, so one constant closes both.
+    public static let maxSeconds = 365 * 86_400
+
     public static func parse(_ text: String) -> Int? {
         let t = text.lowercased()
         guard !t.isEmpty else { return nil }
+
+        /// Every multiply and add in one place, and neither may trap.
+        func add(_ total: Int, _ n: Int, times unit: Int) -> Int? {
+            let (scaled, scaleOverflowed) = n.multipliedReportingOverflow(by: unit)
+            guard !scaleOverflowed else { return nil }
+            let (sum, sumOverflowed) = total.addingReportingOverflow(scaled)
+            guard !sumOverflowed, sum <= maxSeconds else { return nil }
+            return sum
+        }
+
         if t.allSatisfy(\.isNumber) {
-            guard let n = Int(t) else { return nil }
-            return n > 0 ? n * 60 : nil
+            guard let n = Int(t), n > 0 else { return nil }
+            return add(0, n, times: 60)
         }
         var total = 0
         var matchedUnit = false
@@ -18,24 +45,29 @@ public enum Durations {
         while i < t.endIndex {
             var j = i
             while j < t.endIndex, t[j].isNumber { j = t.index(after: j) }
+            // `Int(…)` is nil for a run of digits too long to be an Int, which
+            // is a refusal rather than a trap and so needs no separate case.
             guard j > i, let n = Int(t[i..<j]) else { return nil }
             var k = j
             while k < t.endIndex, t[k].isLetter { k = t.index(after: k) }
             let unit = String(t[j..<k])
+            let scale: Int
             if unit.isEmpty {
                 // "2h15" — a trailing bare number means minutes, and only at the end.
                 guard k == t.endIndex else { return nil }
-                total += n * 60
+                scale = 60
             } else {
                 switch unit {
-                case "d", "day", "days": total += n * 86_400
-                case "h", "hour", "hours": total += n * 3600
-                case "m", "min", "minute", "minutes": total += n * 60
-                case "s", "sec", "second", "seconds": total += n
+                case "d", "day", "days": scale = 86_400
+                case "h", "hour", "hours": scale = 3600
+                case "m", "min", "minute", "minutes": scale = 60
+                case "s", "sec", "second", "seconds": scale = 1
                 default: return nil
                 }
                 matchedUnit = true
             }
+            guard let next = add(total, n, times: scale) else { return nil }
+            total = next
             i = k
         }
         return (matchedUnit && total > 0) ? total : nil
@@ -59,9 +91,21 @@ public enum Durations {
         components.minute = m
         components.second = 0
         guard let target = calendar.date(from: components) else { return nil }
-        var epoch = Int(target.timeIntervalSince1970)
-        if epoch <= now { epoch += 86_400 }
-        return epoch
+        // Tomorrow is the same wall clock on the next calendar day, which is
+        // not always 86,400 seconds later. Adding the constant meant that on
+        // the evening the clocks go forward, `--until 23:00` landed at 00:00
+        // the day AFTER tomorrow; on the evening they go back, it landed at
+        // 22:00 — an hour less awake time than was asked for, silently, which
+        // CONTRACTS.md calls the one failure this tool exists to prevent.
+        //
+        // Twice a year, on the two nights of the year when an overnight run is
+        // least likely to be watched.
+        if Int(target.timeIntervalSince1970) <= now {
+            guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: target)
+            else { return nil }
+            return Int(tomorrow.timeIntervalSince1970)
+        }
+        return Int(target.timeIntervalSince1970)
     }
 
     /// "1 h 20 min" · "45 min" · "under 1 min"

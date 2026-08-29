@@ -66,4 +66,37 @@ import Testing
         // Case-insensitively distinct: the two names must not collide.
         #expect("simmer-app".lowercased() != "simmer".lowercased())
     }
+
+    /// Uninstalling deletes the guard, the app, and the CLI binary the
+    /// `~/.local/bin` symlink points at — every mechanism on the Mac that can
+    /// put the sleep switch back. Run with a claim live, the old recipe left
+    /// `pmset -a disablesleep 1` on: no expiry, no indicator, survives reboots
+    /// (PLATFORM-FACTS.md), named as the vulnerability in SECURITY.md, and the
+    /// recovery command written down nowhere.
+    ///
+    /// So the recipe hands the machine back first and stops if it could not,
+    /// and every path out of here names the manual revert. Asserted because a
+    /// Makefile has no type system and this is one line away from being true
+    /// again.
+    @Test func uninstallHandsTheMachineBackBeforeRemovingTheMeansToDoIt() throws {
+        let makefile = try Self.read("Makefile")
+        let recipe = makefile.components(separatedBy: "\nuninstall:").last ?? ""
+        let body = recipe.components(separatedBy: "\nclean:").first ?? ""
+        #expect(body.contains("down --all"))
+        #expect(body.contains("sleep_disabled=0"))
+        #expect(body.contains("pmset -a disablesleep 0"))
+        // The release has to come before the first removal, or it is decoration.
+        let release = body.range(of: "down --all")
+        let firstRemoval = body.range(of: "launchctl bootout")
+        #expect(release != nil && firstRemoval != nil)
+        if let release, let firstRemoval {
+            #expect(release.lowerBound < firstRemoval.lowerBound)
+        }
+
+        // And the CLI's own account of what to remove says the same, for
+        // anyone following its printed commands instead of the target.
+        let cli = try Self.read("Sources/SimmerCLI/UninstallCLI.swift")
+        #expect(cli.contains("pmset -a disablesleep 0"))
+        #expect(cli.contains("simmer down --all"))
+    }
 }
