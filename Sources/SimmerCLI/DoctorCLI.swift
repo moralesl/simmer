@@ -41,6 +41,28 @@ struct DoctorCLI: ParsableCommand {
         return nil
     }
 
+    /// The state directory the installed LaunchAgent will actually use: its
+    /// own `EnvironmentVariables`, or the default it would fall back to.
+    ///
+    /// nil when no guard is installed — there is then nothing to disagree
+    /// with, and a row about it would be a row about nothing. Uses
+    /// `homeDirectoryForCurrentUser` for both the plist path and the fallback
+    /// because launchd resolves the agent's `~` from the passwd entry, not
+    /// from anybody's exported HOME.
+    static func guardLedger() -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let plist = home.appendingPathComponent(
+            "Library/LaunchAgents/\(Runtime.guardLabel).plist")
+        guard let data = FileManager.default.contents(atPath: plist.path),
+              let root = try? PropertyListSerialization.propertyList(
+                  from: data, options: [], format: nil) as? [String: Any]
+        else { return nil }
+        let declared = (root["EnvironmentVariables"] as? [String: String])?["XDG_STATE_HOME"]
+        let base = declared.flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+            ?? home.appendingPathComponent(".local/state")
+        return base.appendingPathComponent("simmer").path
+    }
+
     func run() throws {
         let env = Runtime.environment()
         let ctx = Runtime.context(ownerFlag: common.owner)
@@ -51,10 +73,37 @@ struct DoctorCLI: ParsableCommand {
         let seamed = env.env["SIMMER_FAKE_PMSET"] != nil
         var rows: [Row] = []
 
-        let guardLoaded = Shell.run("/bin/launchctl",
-                                    ["print", "gui/\(getuid())/\(Runtime.guardLabel)"]).status == 0
-        rows.append(Row(id: "guard_loaded",
-                        label: "guard loaded (\(Runtime.guardLabel))", ok: guardLoaded))
+        // Both of these are facts about the LaunchAgent installed on THIS Mac,
+        // so they are seam-gated the way `app_running` is. Reporting
+        // "✅ guard loaded" from the real launchctl during a fully seamed run
+        // is an answer about a different machine than the one the rest of the
+        // report describes.
+        if seamed {
+            rows.append(Row(id: "guard_loaded",
+                            label: "SIMMER_FAKE_PMSET is set — the guard is not being checked",
+                            ok: nil))
+        } else {
+            let guardLoaded = Shell.run("/bin/launchctl",
+                                        ["print", "gui/\(getuid())/\(Runtime.guardLabel)"]).status == 0
+            rows.append(Row(id: "guard_loaded",
+                            label: "guard loaded (\(Runtime.guardLabel))", ok: guardLoaded))
+
+            // A LaunchAgent inherits nothing from the shell that installed it,
+            // so the ledger it reads is whatever its own plist says. When that
+            // disagrees with the one this process is using, the two settle the
+            // same global switch against each other every thirty seconds and
+            // never converge — `down` says "sleep allowed again" and the next
+            // tick turns it back on — while every other row here stays green.
+            if let theirs = Self.guardLedger() {
+                let ours = env.stateDir.path
+                rows.append(Row(
+                    id: "guard_ledger",
+                    label: theirs == ours
+                        ? "guard reads the same ledger as this shell"
+                        : "guard reads a DIFFERENT ledger — it has \(theirs), this shell has \(ours). Re-run 'make install' from this shell, or unset XDG_STATE_HOME",
+                    ok: theirs == ours))
+            }
+        }
 
         // The sudoers check looks for simmer's OWN file AND the capability,
         // and reports the difference. Checking only the capability is how the
@@ -65,15 +114,56 @@ struct DoctorCLI: ParsableCommand {
                             label: "SIMMER_FAKE_PMSET is set — the sudo rule is not being checked",
                             ok: nil))
         } else {
-            let ownFile = FileManager.default.fileExists(atPath: "/etc/sudoers.d/simmer")
-            // -nl asks whether the command is *allowed*, without running it
-            // and without ever prompting.
-            let capability = Shell.run("/usr/bin/sudo",
-                                       ["-nl", "/usr/bin/pmset", "-a", "disablesleep", "0"]).status == 0
+            let ownFile = SudoRule.installedPath() != nil
+            // The LISTING, not `-nl <command>`. The latter answers whether the
+            // command is permitted, not whether it is permitted without a
+            // password, so on any admin Mac it returns 0 through the stock
+            // `(ALL) ALL` entry — which is how this check reported a grant on
+            // a machine that granted nothing. The listing enumerates the rules
+            // themselves and needs no password.
+            let listing = Shell.run("/usr/bin/sudo", ["-nl"])
+            let readable = listing.status == 0
+            let grants = SudoRule.grants(inListing: listing.stdout)
+            let capability = readable && grants.hasSimmersOwn
+
+            // What the user asked simmer to promise: the grant is the two
+            // invocations and nothing else. Informational, never a failure —
+            // another tool's passwordless rule is not simmer's to fix, and a
+            // permanently red line teaches people to skim the whole report.
+            let extra = grants.beyondWhatSimmerNeeds
+            if !readable {
+                rows.append(Row(
+                    id: "sudo_width",
+                    label: "could not read what sudo grants ('sudo -nl' failed) — not guessing.",
+                    ok: nil,
+                    detail: ["Check it by hand: sudo -l"]))
+            } else if grants.hasBlanketGrant {
+                rows.append(Row(
+                    id: "sudo_width",
+                    label: "this account can run ANY command as root without a password.",
+                    ok: nil,
+                    detail: [
+                        "That is far wider than the two invocations simmer asks for, and not simmer's doing.",
+                        "Find the rule: sudo grep -rn NOPASSWD /etc/sudoers /etc/sudoers.d/",
+                    ]))
+            } else if !extra.isEmpty {
+                rows.append(Row(
+                    id: "sudo_width",
+                    label: "\(extra.count) passwordless grant(s) beyond the two simmer asks for.",
+                    ok: nil,
+                    detail: extra.map { "  \($0)" }
+                        + ["Find them: sudo grep -rn NOPASSWD /etc/sudoers /etc/sudoers.d/"]))
+            } else if capability {
+                rows.append(Row(id: "sudo_width",
+                                label: "the passwordless grant is exactly the two simmer asks for",
+                                ok: true))
+            }
+
             switch (ownFile, capability) {
             case (true, true):
                 rows.append(Row(id: "sudo_rule",
-                                label: "passwordless pmset rule (/etc/sudoers.d/simmer)", ok: true))
+                                label: "passwordless pmset rule (\(SudoRule.installedPath() ?? SudoRule.intendedPath()))",
+                                ok: true))
             case (false, true):
                 rows.append(Row(
                     id: "sudo_rule",
@@ -83,10 +173,15 @@ struct DoctorCLI: ParsableCommand {
                         "Something else grants it — find it: sudo grep -rn disablesleep /etc/sudoers.d/",
                         "Not adopting it. Install simmer's own rule: see the README's install step.",
                     ]))
+            case (true, false) where !readable:
+                rows.append(Row(
+                    id: "sudo_rule",
+                    label: "\(SudoRule.installedPath() ?? SudoRule.intendedPath()) exists; whether sudo honours it could not be read.",
+                    ok: nil))
             case (true, false):
                 rows.append(Row(
                     id: "sudo_rule",
-                    label: "passwordless pmset rule (/etc/sudoers.d/simmer exists but sudo refuses — run 'sudo visudo -c')",
+                    label: "passwordless pmset rule (\(SudoRule.installedPath() ?? SudoRule.intendedPath()) exists but sudo refuses — run 'sudo visudo -c')",
                     ok: false))
             case (false, false):
                 rows.append(Row(
@@ -100,8 +195,12 @@ struct DoctorCLI: ParsableCommand {
         // executable would be told about its own never-granted state
         // (PLATFORM-FACTS.md — that misread cost a wrong diagnosis once already).
         let appStatus = ctx.ledger.readAppStatus()
+        // Both halves: the pid is still a process, AND the heartbeat behind it
+        // is recent. The pid alone vouches for whatever holds that pid now
+        // (Ledger.AppStatus.heartbeatIsFresh).
         let appRunning = appStatus.map {
             Shell.run("/bin/ps", ["-p", String($0.pid)]).status == 0
+                && $0.heartbeatIsFresh(now: ctx.now)
         } ?? false
         // Under the seam there is no app and there is not meant to be one: a
         // hermetic sandbox and CI would otherwise report a permanent failure
@@ -145,8 +244,40 @@ struct DoctorCLI: ParsableCommand {
             }
         }
 
+        // Created 0700/0600, and nothing re-tightens a directory that already
+        // existed — so the mode is worth reporting rather than assuming. A
+        // reason carries customer and project names and the log keeps every
+        // one of them, dated. Informational: a wider mode is the user's to
+        // decide about, and a permanently red row teaches people to skim.
+        if let mode = (try? FileManager.default.attributesOfItem(
+            atPath: ctx.ledger.stateDir.path))?[.posixPermissions] as? Int, mode & 0o077 != 0 {
+            rows.append(Row(
+                id: "state_mode",
+                label: String(format: "state directory is mode %03o — readable beyond you.", mode),
+                ok: nil,
+                detail: ["Tighten it: chmod -R go-rwx \(ctx.ledger.stateDir.path)"]))
+        }
+
         rows.append(Row(id: "claims_writable", label: "claims directory writable",
                         ok: FileManager.default.isWritableFile(atPath: ctx.ledger.claimsDir.path)))
+
+        // Writable was the only thing asked about what is IN there, and both
+        // defects that held a Mac awake indefinitely were shapes in this
+        // directory — one of them for ten simulated days under a green report.
+        // A file nothing can act on is a failure: it is the exact state where
+        // every other surface still says fine.
+        let unsound = ctx.ledger.unsoundClaimFiles()
+        if unsound.isEmpty {
+            rows.append(Row(id: "claims_sound",
+                            label: "every claim file is one its owner can address", ok: true))
+        } else {
+            rows.append(Row(
+                id: "claims_sound",
+                label: "\(unsound.count) file(s) in the claims directory that no owner can release.",
+                ok: false,
+                detail: unsound.map { "  \($0.name) — \($0.why)" }
+                    + ["End them with: simmer down --all   (a person's command)"]))
+        }
 
         // The agent protocol, which is the one installed thing whose going
         // stale is completely silent: agents keep reading it and it keeps
@@ -269,7 +400,7 @@ struct DoctorCLI: ParsableCommand {
             // needs root, and simmer never escalates its own privileges. So
             // print the command in full rather than describing it — a rule
             // someone can read before running is the whole point (SudoRule).
-            if !seamed, !FileManager.default.fileExists(atPath: SudoRule.path) {
+            if !seamed, SudoRule.installedPath() == nil {
                 print("The sudo rule needs root, so it is yours to run. This exact rule:")
                 print("")
                 for line in SudoRule.text(user: NSUserName()).split(separator: "\n") {

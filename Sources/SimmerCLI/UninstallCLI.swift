@@ -29,6 +29,7 @@ struct UninstallCLI: ParsableCommand {
         common.refuseJSON("uninstall", insteadUse: "simmer doctor --json")
 
         let env = Runtime.environment()
+        let ctx = Runtime.context(ownerFlag: common.owner)
         let home = FileManager.default.homeDirectoryForCurrentUser
         let fm = FileManager.default
         var outcome = Outcome()
@@ -46,6 +47,19 @@ struct UninstallCLI: ParsableCommand {
 
         func mark(_ path: String) -> String {
             fm.fileExists(atPath: path) ? "present" : "not there"
+        }
+
+        // BEFORE the commands, not after them. This page is the surface for
+        // someone who has no checkout — the `make` path's ordering fix does
+        // not reach them — and the warning used to print at the bottom, under
+        // the `rm -rf` lines. Pasted top to bottom, that removes the means and
+        // then explains what to have run first, with no simmer left to run it.
+        if ctx.power.sleepDisabled() {
+            outcome.stdout.append("⚠️  This Mac is being held awake RIGHT NOW. Do this first, or nothing")
+            outcome.stdout.append("   below will be able to hand it back afterwards:")
+            outcome.stdout.append("")
+            outcome.stdout.append("   simmer down --all")
+            outcome.stdout.append("")
         }
 
         outcome.stdout.append("simmer installed these, and nothing else:")
@@ -77,6 +91,13 @@ struct UninstallCLI: ParsableCommand {
             outcome.stdout.append("The checkout that carries the uninstall target is not at \(checkout).")
             outcome.stdout.append("These lines do the same thing:")
             outcome.stdout.append("")
+            // The same order, and the same two steps, the Makefile target
+            // takes: unregister the login item while the bundle still exists
+            // (SMAppService is bundle-scoped, so only that binary can), and
+            // quit the app before deleting what it is running from. Leaving
+            // them out here closed the instance and not the class.
+            outcome.stdout.append("   \(app)/Contents/MacOS/simmer-app --uninstall   # hands back the login item")
+            outcome.stdout.append("   osascript -e 'tell application id \"\(Runtime.bundleIdentifier)\" to quit'")
             outcome.stdout.append("   launchctl bootout gui/$(id -u)/\(Runtime.guardLabel)")
             outcome.stdout.append("   rm -f \(plist) \(home.appendingPathComponent(".local/bin/simmer").path)")
             outcome.stdout.append("   rm -rf \(app)\(skillInstalled ? " \(skill)" : "")")
@@ -85,16 +106,23 @@ struct UninstallCLI: ParsableCommand {
 
         // Root, and therefore yours. simmer only ever removes what simmer
         // wrote, and it never escalates its own privileges (SECURITY.md).
-        if fm.fileExists(atPath: SudoRule.path) {
+        if let rulePath = SudoRule.installedPath() {
             outcome.stdout.append("Then the sudo rule, which needs root and so is yours to run:")
             outcome.stdout.append("")
-            outcome.stdout.append("   sudo rm \(SudoRule.path)")
+            outcome.stdout.append("   sudo rm \(rulePath)")
         } else {
-            outcome.stdout.append("There is no \(SudoRule.path) to remove.")
+            outcome.stdout.append("There is no \(SudoRule.intendedPath()) to remove.")
             // A capability with no file behind it belongs to something else,
             // and telling someone to delete a stranger's grant would be wrong.
-            if Shell.run("/usr/bin/sudo",
-                         ["-nl", "/usr/bin/pmset", "-a", "disablesleep", "0"]).status == 0 {
+            //
+            // Read from the LISTING. `sudo -nl <command>` answers whether the
+            // command is permitted, not whether it is permitted without a
+            // password, so through the stock `(ALL) ALL` entry it said yes on
+            // every admin Mac — and this sentence sent people hunting for a
+            // grant that was never there.
+            let listing = Shell.run("/usr/bin/sudo", ["-nl"])
+            if listing.status == 0,
+               SudoRule.grants(inListing: listing.stdout).hasSimmersOwn {
                 outcome.stdout.append("   Something else on this Mac still grants the pmset capability — not simmer's to remove.")
                 outcome.stdout.append("   Find it with: sudo grep -rn disablesleep /etc/sudoers /etc/sudoers.d/")
             }
@@ -102,6 +130,9 @@ struct UninstallCLI: ParsableCommand {
         outcome.stdout.append("")
         outcome.stdout.append("Your state stays put — delete it too if you want the log and the claims gone:")
         outcome.stdout.append("   rm -rf \(env.stateDir.path)")
+
+        outcome.stdout.append("")
+        outcome.stdout.append("   If sleep ever stops working after this: sudo pmset -a disablesleep 0")
 
         Runtime.deliver(outcome)
     }

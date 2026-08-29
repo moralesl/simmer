@@ -44,7 +44,9 @@ $ simmer down --owner agent:evals --json
 # exit 0
 ```
 
-`simmer run --max 2h -- npm test` sidesteps all five steps for anything expressible as one command: the claim lives exactly as long as the process, renews while it runs, and is released on any exit — even SIGKILL.
+`simmer run --max 2h -- npm test` sidesteps all five steps for anything expressible as one command: the claim lives as long as the process, renews while it runs, and is released when the command exits.
+
+A killed runner cannot release anything — nothing runs after `SIGKILL` — so the claim is instead **self-revoking**: it is written one chunk at a time and simply stops being renewed, and the guard retires it at that chunk's deadline. The switch always comes back; after a kill it comes back within a chunk rather than immediately.
 
 ## The exit codes are the contract
 
@@ -73,7 +75,7 @@ Exit 1 means finish the current unit and write the handoff rather than starting 
 - One live claim per owner: a second claim under the same name *replaces* yours.
   `simmer 2h` twice moves your deadline, it does not stack.
 - Concurrent agents each pick their own name, or they fight over one claim.
-- **Never** use a human owner name (`terminal`, `menubar`, `raycast`, `alfred`) and **never** set `SIMMER_HUMAN=1`.
+- **Never** use a human owner name (`terminal`, `menubar`, `raycast`) and **never** set `SIMMER_HUMAN=1`.
   Nothing stops you technically — that is exactly why it is an obligation.
   Human primacy protects the person's time from your accidents.
 - Inside a pty you are indistinguishable from a person, so simmer treats you as one and your default owner becomes the human `terminal`.
@@ -98,6 +100,8 @@ Asking for `8h` under a one-hour cap gives you one hour, and only that field say
 
 **`budget`'s `seconds_left`** is a number when there is a deadline, `-1` when there is none, and `null` when nothing is claimed at all.
 Switch on the exit code and the type never comes up.
+
+**And `-1` no longer means "anything fits".** `budget` answers about the earliest clock, which is the deadline *or* the battery floor the claim was taken with — so an open-ended claim on a draining battery can answer exit 1 with `seconds_left: -1`. `battery_seconds_left` is the other clock: seconds until the floor, `0` once it is reached, `null` on AC, while the estimate is calibrating, or when nothing is claimed. This is exactly the "ask again while you work" case arriving in a single call.
 
 ## When simmer is not installed
 

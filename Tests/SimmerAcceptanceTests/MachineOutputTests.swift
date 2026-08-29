@@ -86,7 +86,11 @@ import Testing
 @Suite struct StatusOutputTests {
     static let machineKeys = ["state", "until", "left", "left_short", "reason",
                               "min_battery", "battery", "on_battery", "sleep_disabled",
-                              "since", "owner", "claim_count", "cap", "cap_expires"]
+                              "since", "owner", "claim_count", "cap", "cap_expires",
+                              // Whether everything above describes this Mac or
+                              // a seam. The suite always runs seamed, so this
+                              // is 1 here and 0 on a real machine.
+                              "seamed"]
 
     @Test func machineEmitsEveryFieldEveryTime() {
         let sim = Sim(); defer { sim.tearDown() }
@@ -382,6 +386,38 @@ import Testing
 }
 
 @Suite struct RenderTests {
+    /// SwiftBar splits a row at the first `|` and reads what follows as
+    /// parameters — `bash=` among them. So a pipe in a reason or an owner did
+    /// not decorate the row, it replaced what the row DOES: a line that only
+    /// reported something became a menu item that runs a command when the
+    /// person clicks it, under a label that says something else.
+    ///
+    /// `simmer run` records the command it wraps as the reason, so an ordinary
+    /// `simmer run -- sh -c 'a | b'` reaches this without anybody meaning to.
+    @Test func aPipeInAReasonCannotTurnARowIntoAnAction() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let payload = #"build | bash="/bin/sh" param1="-c" param2="touch /tmp/pwned""#
+        sim.run(["45m", "-r", payload, "--owner", "test"])
+        sim.run(["45m", "-r", "second", "--owner", #"agent:b | color=red"#])
+
+        for line in sim.run(["render", "swiftbar"]).lines {
+            // At most one delimiter per row: the one simmer wrote. A second
+            // would let the text before it open a parameter list of its own.
+            #expect(line.filter { $0 == "|" }.count <= 1, "two delimiters in: \(line)")
+            // The payload may still READ as `bash=…` — it is inert label text
+            // now, which is the point. What matters is the parameter half,
+            // after the delimiter: nothing there may name a foreign binary.
+            guard let delimiter = line.firstIndex(of: "|") else { continue }
+            let parameters = String(line[line.index(after: delimiter)...])
+            if parameters.contains("bash=") {
+                #expect(parameters.contains("bash=\"\(Sim.binary)\""), "foreign bash= in: \(line)")
+            }
+        }
+    }
+
+    /// Raycast needs none of that — it emits one plain line. This
+    /// asserts the difference is real rather than assumed.
+    
     @Test func swiftBarShowsTheAggregateAndTheActions() {
         let sim = Sim(); defer { sim.tearDown() }
         let idle = sim.run(["render", "swiftbar"]).out
@@ -428,15 +464,7 @@ import Testing
         #expect(result.out.contains("☕"))
     }
 
-    @Test func alfredEmitsValidScriptFilterJSON() {
-        let sim = Sim(); defer { sim.tearDown() }
-        sim.run(["45m", "--owner", "test"])
-        let object = sim.json(sim.run(["render", "alfred", "+30m"]))
-        let items = object["items"] as? [[String: Any]]
-        #expect((items?.count ?? 0) > 1)
-        #expect(items?.first?["title"] is String)
     }
-}
 
 @Suite struct SurfaceTests {
     @Test func versionAndHelpExitZero() {
@@ -458,7 +486,7 @@ import Testing
     @Test func launcherTrailersAreToleratedEverywhere() {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["30m", "--owner", "test"])
-        // Alfred appends `-r <reason> --owner <name>` to whatever the filter
+        // A launcher action appends `-r <reason> --owner <name>` to whatever it
         // produced, whether the command has any use for them or not.
         #expect(sim.run(["down", "-r", "reason", "--owner", "test"]).code == 0)
         #expect(sim.run(["cap", "-r", "reason", "--owner", "terminal"]).code == 0)
@@ -659,5 +687,304 @@ import Testing
         let log = sim.run(["log", "10"]).out
         #expect(log.contains("claim test"))
         #expect(log.contains("released by hand"))
+    }
+}
+
+/// `budget` answers "is there room to start" — and a deadline is not the only
+/// way the room runs out. On battery it is rarely the first.
+@Suite struct BudgetAgainstTheFloorTests {
+    /// Four hours of deadline, one point above the floor that ends the claim.
+    /// `fits` still answers about the deadline, by contract; what changed is
+    /// that the other ending is on the surface instead of needing a second
+    /// call to `status`.
+    @Test func budgetShowsTheFloorThatWillEndTheClaimFirst() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let onBattery = ["SIMMER_FAKE_BATTERY": "21:1"]
+        sim.run(["4h", "-r", "long", "--owner", "agent:x", "--min-battery", "20"], env: onBattery)
+
+        let object = sim.json(sim.run(["budget", "--need", "3h", "--json"], env: onBattery))
+        #expect(object["fits"] as? Bool == true)
+        #expect(object["battery"] as? Int == 21)
+        #expect(object["on_battery"] as? Int == 1)
+        #expect(object["min_battery"] as? Int == 20)
+
+        let human = sim.run(["budget", "--need", "3h"], env: onBattery)
+        #expect(human.err.contains("floor of 20%"))
+    }
+
+    /// On AC, none of it applies and none of it is said.
+    @Test func budgetSaysNothingAboutAFloorItIsNotNear() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "long", "--owner", "agent:x"])
+        let human = sim.run(["budget", "--need", "3h"])
+        #expect(human.code == 0)
+        #expect(!human.err.contains("floor of"))
+    }
+
+    /// The seam is named on the surface an agent is told to trust, not only in
+    /// `doctor`: a leaked SIMMER_FAKE_* made `fits: true` a statement about a
+    /// file in /tmp.
+    @Test func budgetNamesTheSeamItIsAnsweringAbout() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "--owner", "agent:x"])
+        #expect(sim.json(sim.run(["budget", "--need", "1h", "--json"]))["seamed"] as? Bool == true)
+        #expect(sim.run(["budget", "--need", "1h"]).err.contains("test seam"))
+        // --bare-seconds is one number by contract, and stays one number.
+        #expect(sim.run(["budget", "--seconds"]).out.split(separator: "\n").count == 1)
+    }
+}
+
+/// The guarantee is the EARLIEST of the clocks, and a deadline is only one of
+/// them. On battery the floor is usually the first to arrive.
+///
+/// **The seam below was checked against real hardware**, unplugged, on
+/// 2026-08-28 — because a fake battery proving a battery feature is exactly
+/// the shape that passes while the real path is broken. What the Mac said,
+/// and what simmer made of it:
+///
+///     pmset: 100%; discharging; 8:46 remaining      → 31,560s to empty
+///     floor 20%  → battery_seconds_left  25,248s    (31,560 × 80/100)
+///     floor 90%  → battery_seconds_left   3,156s    (31,560 × 10/100)
+///
+/// and each of the four states the estimate can be in was observed live:
+/// `(no estimate)` for the first ~40s after unplugging (null, deadline answers
+/// alone), the estimate binding later than the deadline (nothing changes), the
+/// estimate binding FIRST (refused, naming the battery), and the same under an
+/// open-ended claim (refused, `seconds_left` still -1).
+@Suite struct BudgetAgainstTheBatteryClockTests {
+    /// 4h of deadline, and macOS says 40 minutes to empty from 60% with a
+    /// floor of 20% — so two thirds of that, ~27 min, is the real guarantee.
+    /// `fits` used to answer about the deadline alone and said yes to three
+    /// hours of work the guard would end in half an hour.
+    static let dying = ["SIMMER_FAKE_BATTERY": "60:1", "SIMMER_FAKE_BATTERY_TIME": "2400"]
+
+    @Test func aNeedBeyondTheBatteryFloorDoesNotFit() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "long", "--owner", "agent:x", "--min-battery", "20"], env: Self.dying)
+
+        let result = sim.run(["budget", "--need", "3h", "--json"], env: Self.dying)
+        #expect(result.code == 1)
+        let object = sim.json(result)
+        #expect(object["fits"] as? Bool == false)
+        // seconds_left keeps its contracted meaning: the DEADLINE clock.
+        #expect(object["seconds_left"] as? Int == 14400)
+        // The second clock is its own field. 2400 * (60-20)/60 = 1600.
+        #expect(object["battery_seconds_left"] as? Int == 1600)
+
+        // And the human line names the clock that runs out first, rather than
+        // reporting a shortfall against time the caller does have.
+        let human = sim.run(["budget", "--need", "3h"], env: Self.dying)
+        #expect(human.out.contains("battery reaches its floor"))
+        #expect(!human.out.contains("short"))
+    }
+
+    /// Inside the battery's own window it still fits — this must not become a
+    /// blanket refusal whenever the charger is out.
+    @Test func aNeedInsideTheBatteryWindowStillFits() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "long", "--owner", "agent:x", "--min-battery", "20"], env: Self.dying)
+        let result = sim.run(["budget", "--need", "20m", "--json"], env: Self.dying)
+        #expect(result.code == 0)
+        #expect(sim.json(result)["fits"] as? Bool == true)
+    }
+
+    /// An open-ended claim has no deadline at all, so the battery is the only
+    /// clock there is — and `fits` was unconditionally true.
+    @Test func anOpenEndedClaimIsStillBoundedByTheBattery() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["forever", "-r", "render", "--owner", "agent:x"], env: Self.dying)
+        let result = sim.run(["budget", "--need", "3h", "--json"], env: Self.dying)
+        #expect(result.code == 1)
+        #expect(sim.json(result)["fits"] as? Bool == false)
+        // -1 still means "no deadline". That contract did not move.
+        #expect(sim.json(result)["seconds_left"] as? Int == -1)
+    }
+
+    /// macOS has no estimate for minutes after every wake. Nothing is invented
+    /// to fill the gap: the deadline answers alone, as it always did.
+    @Test func noEstimateMeansTheDeadlineAnswersAlone() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let calibrating = ["SIMMER_FAKE_BATTERY": "60:1", "SIMMER_FAKE_BATTERY_TIME": "none"]
+        sim.run(["4h", "-r", "long", "--owner", "agent:x"], env: calibrating)
+        let result = sim.run(["budget", "--need", "3h", "--json"], env: calibrating)
+        #expect(result.code == 0)
+        #expect(sim.json(result)["battery_seconds_left"] is NSNull)
+    }
+
+    /// On AC there is no second clock and nothing changes.
+    @Test func onACTheAnswerIsTheDeadlineAndNothingElse() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "long", "--owner", "agent:x"])
+        let object = sim.json(sim.run(["budget", "--need", "3h", "--json"]))
+        #expect(object["fits"] as? Bool == true)
+        #expect(object["battery_seconds_left"] is NSNull)
+    }
+}
+
+/// `budget` answers about the earliest clock there is. The battery clock has
+/// to behave like a clock at both ends — including the end where it has
+/// already run out, which is where it used to disappear.
+@Suite struct BatteryClockEdgeTests {
+    /// The answer must not get BETTER as the battery gets worse. Dropping the
+    /// clock at or below the floor made 20% and 5% answer "fits" at exit 0
+    /// while 21% answered "does not fit" at exit 1.
+    @Test func theAnswerIsMonotonicAcrossTheFloor() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "--owner", "agent:evals", "-r", "long eval"])
+
+        for percent in [25, 21, 20, 12, 5] {
+            let result = sim.run(["budget", "--need", "3h", "--json"],
+                                 env: ["SIMMER_FAKE_BATTERY": "\(percent):1",
+                                       "SIMMER_FAKE_BATTERY_TIME": "900"])
+            let object = sim.json(result)
+            #expect(object["fits"] as? Bool == false,
+                    "at \(percent)% on battery with a 20% floor: \(result.out)")
+            #expect(result.code == 1, "at \(percent)%: exit \(result.code)")
+            #expect(object["battery_seconds_left"] != nil)
+        }
+    }
+
+    /// At or below the floor the clock has run out; that is `0`, not absent.
+    /// The floor is decided from the percentage alone, BEFORE any estimate is
+    /// read — because `pmset` has none for minutes after every wake, and the
+    /// zero-at-the-floor verdict used to sit behind that read. Below the floor
+    /// with no estimate therefore fell out as "no constraint", and `budget`
+    /// answered `fits: true` at exit 0 about a claim the next guard tick ends.
+    ///
+    /// `Tick` retires on `percent <= minBattery` and consults no clock to do
+    /// it. Neither does this.
+    @Test(arguments: ["15:1", "20:1", "1:1"])
+    func belowTheFloorIsZeroEvenWithNoEstimateAtAll(_ battery: String) {
+        let sim = Sim(); defer { sim.tearDown() }
+        // Claimed on AC, so the claim exists; the battery is what moved.
+        sim.run(["4h", "-r", "long run", "--owner", "agent:x", "--min-battery", "20"])
+
+        // No SIMMER_FAKE_BATTERY_TIME: exactly the state after a wake.
+        let drained = ["SIMMER_FAKE_BATTERY": battery]
+        let result = sim.run(["budget", "--need", "30m", "--json"], env: drained)
+        #expect(result.code == 1, "\(battery) answered exit \(result.code)")
+        let object = sim.json(result)
+        #expect(object["fits"] as? Bool == false)
+        #expect(object["battery_seconds_left"] as? Int == 0)
+        #expect(object["seconds_left"] as? Int == 14400)   // the deadline is untouched
+
+        // And the person is told which clock ran out.
+        let human = sim.run(["budget", "--need", "30m"], env: drained)
+        #expect(human.err.contains("at or under the floor"))
+        #expect(human.out.contains("already at its floor"))
+    }
+
+    /// 0% is the same verdict and not a division problem.
+    @Test func aFlatBatteryIsZeroAndNotAnError() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "long run", "--owner", "agent:x", "--min-battery", "20"])
+        let result = sim.run(["budget", "--need", "30m", "--json"],
+                             env: ["SIMMER_FAKE_BATTERY": "0:1"])
+        #expect(result.code == 1)
+        #expect(sim.json(result)["battery_seconds_left"] as? Int == 0)
+    }
+
+    @Test func atTheFloorTheBatteryClockIsZeroRatherThanMissing() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "--owner", "agent:evals"])
+        let object = sim.json(sim.run(["budget", "--need", "1m", "--json"],
+                                      env: ["SIMMER_FAKE_BATTERY": "20:1",
+                                            "SIMMER_FAKE_BATTERY_TIME": "900"]))
+        #expect(object["battery_seconds_left"] as? Int == 0)
+    }
+
+    /// With nothing claimed there is no floor to be a number of seconds from —
+    /// `min_battery` is the default, not a decision anybody made.
+    @Test func anIdleMacHasNoBatteryClock() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["budget", "--need", "10m", "--json"],
+                             env: ["SIMMER_FAKE_BATTERY": "60:1",
+                                   "SIMMER_FAKE_BATTERY_TIME": "3600"])
+        #expect(result.code == 3)
+        #expect(sim.json(result)["battery_seconds_left"] is NSNull)
+    }
+
+    /// The estimate arrives from outside the process, so the arithmetic on it
+    /// is checked. This trapped with SIGTRAP and exit 133 — a code outside the
+    /// published table — which is the class the duration ceiling closed.
+    @Test(arguments: ["9223372036854775807", "999999999999999999", "-3600"])
+    func aHostileBatteryEstimateNeverTrapsAndNeverGoesNegative(_ estimate: String) {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "--owner", "agent:evals"])
+        let result = sim.run(["budget", "--need", "1h", "--json"],
+                             env: ["SIMMER_FAKE_BATTERY": "60:1",
+                                   "SIMMER_FAKE_BATTERY_TIME": estimate])
+        #expect(result.code != 133, "exit 133 for \(estimate)")
+        #expect(result.code == 0 || result.code == 1, "exit \(result.code) for \(estimate)")
+        if let seconds = sim.json(result)["battery_seconds_left"] as? Int {
+            #expect(seconds >= 0, "\(seconds) seconds for \(estimate)")
+        }
+    }
+}
+
+/// `Tick` retires PER CLAIM — its own floor, its own `--require-ac`. `budget`
+/// measured each clock against a different set: the battery against
+/// `aggregate.minBattery`, which is the DEFINING claim's floor, and require-ac
+/// against the survivors' deadlines while ignoring the survivors' own floors.
+///
+/// Two claims were enough that no clock saw the binding one. Every existing
+/// battery test in this file has exactly one claim, which is why the invariant
+/// held everywhere the author was looking.
+@Suite struct BudgetAcrossSeveralClaimsTests {
+    /// The over-promise, and the dangerous direction: `fits: true` at exit 0
+    /// one tick before the guard hands the machine back.
+    @Test func aSurvivorsOwnFloorIsNotTheDefiningClaimsFloor() {
+        let sim = Sim(); defer { sim.tearDown() }
+        // Taken on AC. agent:a defines the aggregate and has the default floor.
+        sim.run(["8h", "-r", "overnight", "--owner", "agent:a", "--require-ac"])
+        sim.run(["6h", "-r", "batch", "--owner", "agent:b", "--min-battery", "55"])
+
+        // On battery at exactly agent:b's floor: agent:a dies of the charger,
+        // agent:b dies of its own floor. Neither is agent:a's floor of 20.
+        let drained = ["SIMMER_FAKE_BATTERY": "55:1", "SIMMER_FAKE_BATTERY_TIME": "36000"]
+        let result = sim.run(["budget", "--need", "2h", "--json"], env: drained)
+        #expect(result.code == 1)
+        #expect(sim.json(result)["fits"] as? Bool == false)
+        #expect(sim.json(result)["battery_seconds_left"] as? Int == 0)
+
+        // And the guard agrees, which is the only thing that makes it true.
+        #expect(sim.run(["guard"], env: drained).code == 0)
+        #expect(sim.run(["status", "--machine"], env: drained).out.contains("claim_count=0"))
+        #expect(sim.switchValue == "0")
+    }
+
+    /// The under-promise. Same defect, and it costs work rather than losing it:
+    /// refusing while a claim with a lower floor holds the machine for hours.
+    @Test func aDefiningClaimsFloorDoesNotCondemnTheOthers() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["8h", "-r", "overnight", "--owner", "agent:a", "--min-battery", "60"])
+        sim.run(["6h", "-r", "batch", "--owner", "agent:b"])          // floor 20
+
+        let drained = ["SIMMER_FAKE_BATTERY": "55:1", "SIMMER_FAKE_BATTERY_TIME": "36000"]
+        #expect(sim.run(["budget", "--need", "2h"], env: drained).code == 0)
+
+        // agent:a goes on the next tick; agent:b keeps the machine, and the
+        // answer before the tick has to be the same as the answer after it.
+        #expect(sim.run(["guard"], env: drained).code == 0)
+        #expect(sim.run(["status", "--machine"], env: drained).out.contains("claim_count=1"))
+        #expect(sim.run(["budget", "--need", "2h"], env: drained).code == 0)
+    }
+
+    /// The property behind both: what `budget` promises and what one guard
+    /// tick leaves must agree, whatever the mix of claims.
+    @Test(arguments: [
+        ["--require-ac"], ["--min-battery", "55"], ["--min-battery", "10"],
+    ])
+    func budgetAndTheGuardAgreeAboutTheSameState(_ flags: [String]) {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["8h", "-r", "a", "--owner", "agent:a"] + flags)
+        sim.run(["6h", "-r", "b", "--owner", "agent:b", "--min-battery", "40"])
+
+        let drained = ["SIMMER_FAKE_BATTERY": "45:1", "SIMMER_FAKE_BATTERY_TIME": "36000"]
+        let promised = sim.run(["budget", "--need", "1h"], env: drained).code == 0
+        sim.run(["guard"], env: drained)
+        let stillAwake = sim.switchValue == "1"
+        #expect(promised == stillAwake,
+                "budget said \(promised ? "fits" : "does not fit") and the guard left the switch \(sim.switchValue)")
     }
 }

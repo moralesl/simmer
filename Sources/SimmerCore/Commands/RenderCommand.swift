@@ -6,14 +6,13 @@ extension Commands {
     /// (the CLI is a renderer over the core), but the renderers stay here and
     /// stay tested — a fourth
     /// surface costs a case branch here and a one-line shim there.
-    public static func render(surface: String, query: String, ctx: Context) -> Outcome {
+    public static func render(surface: String, ctx: Context) -> Outcome {
         var outcome = Outcome()
         switch surface {
         case "swiftbar": outcome.stdout = renderSwiftBar(ctx: ctx)
         case "raycast": outcome.stdout = [renderRaycast(ctx: ctx)]
-        case "alfred": outcome.stdout = [renderAlfred(query: query, ctx: ctx)]
         default:
-            return .failure("usage: simmer render swiftbar|raycast|alfred [query]")
+            return .failure("usage: simmer render swiftbar|raycast")
         }
         return outcome
     }
@@ -42,7 +41,7 @@ extension Commands {
             lines.append("---")
             lines.append("Simmering until \(Formats.hhmm(aggregate.until)) | sfimage=clock")
             if aggregate.capped { lines.append("— that is your cap | sfimage=hand.raised.fill") }
-            if !aggregate.reason.isEmpty { lines.append("\(aggregate.reason) | sfimage=text.quote") }
+            if !aggregate.reason.isEmpty { lines.append("\(swiftBarText(aggregate.reason)) | sfimage=text.quote") }
             lines.append("\(power) · floor \(aggregate.minBattery)% | sfimage=battery.50")
             if !ctx.power.sleepDisabled() {
                 lines.append("⚠️ disablesleep is off — the lid will not hold | color=red")
@@ -62,7 +61,7 @@ extension Commands {
             lines.append("---")
             lines.append("Simmering with no deadline | sfimage=infinity")
             if aggregate.since != 0 { lines.append("since \(Formats.hhmm(aggregate.since)) | sfimage=clock") }
-            if !aggregate.reason.isEmpty { lines.append("\(aggregate.reason) | sfimage=text.quote") }
+            if !aggregate.reason.isEmpty { lines.append("\(swiftBarText(aggregate.reason)) | sfimage=text.quote") }
             lines.append("\(power) · floor \(aggregate.minBattery)% | sfimage=battery.50")
             lines.append(contentsOf: claimRowsSwiftBar(aggregate))
             lines.append("---")
@@ -114,14 +113,36 @@ extension Commands {
         return lines
     }
 
+    /// SwiftBar splits a row at the first `|`: everything after it is
+    /// parameters, and `bash=` is one of them. So a reason or an owner
+    /// containing a pipe does not decorate the row — it REPLACES the row's
+    /// behaviour, turning a line that only reports something into a menu item
+    /// that runs a command when the person clicks it.
+    ///
+    /// That is reachable without anybody meaning harm: `simmer run` records
+    /// the command it is wrapping as the reason, so `simmer run -- sh -c 'a |
+    /// b'` corrupts the menu on its own. And it inverts the one thing this
+    /// tool is built around — the human blessing what an agent proposed —
+    /// because the label they click says one thing and the parameters say
+    /// another.
+    ///
+    /// A broken bar reads the same at menu size and cannot open a parameter
+    /// list. This is the only surface that hand-assembles its own syntax —
+    /// Raycast emits one plain line — and so the only one that has to think
+    /// about it.
+    static func swiftBarText(_ text: String) -> String {
+        text.replacingOccurrences(of: "|", with: "\u{00A6}")
+    }
+
     private static func claimRowsSwiftBar(_ aggregate: Aggregate) -> [String] {
         guard aggregate.count > 1 else { return [] }
         var lines = ["---", "\(aggregate.count) claims"]
         for entry in aggregate.live {
-            let reasonPart = entry.claim.reason.isEmpty ? "" : " · \(entry.claim.reason)"
+            let reasonPart = entry.claim.reason.isEmpty
+                ? "" : " · \(swiftBarText(entry.claim.reason))"
             let deadline = entry.effectiveUntil == 0
                 ? "no deadline" : "until \(Formats.hhmm(entry.effectiveUntil))"
-            lines.append("\(Present.ownerGlyph(entry.claim.owner)) \(entry.claim.owner)\(reasonPart) · \(deadline)")
+            lines.append("\(Present.ownerGlyph(entry.claim.owner)) \(swiftBarText(entry.claim.owner))\(reasonPart) · \(deadline)")
         }
         return lines
     }
@@ -145,94 +166,5 @@ extension Commands {
         case .idle:
             return "⏾ sleep allowed · \(percent)%\(source)"
         }
-    }
-
-    // MARK: Alfred — a script filter's JSON
-
-    private static func renderAlfred(query: String, ctx: Context) -> String {
-        let aggregate = ctx.aggregate()
-        let percent = ctx.power.batteryPercent().map(String.init) ?? "?"
-        let power = "battery \(percent)%\(ctx.power.onBattery() ? ", on battery" : ", on AC")"
-        let iconOn = "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/AlertNoteIcon.icns"
-        let iconOff = "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/SleepFolderIcon.icns"
-        let iconWarn = "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/AlertCautionIcon.icns"
-
-        var items: [JSONValue] = []
-        func item(_ title: String, _ subtitle: String, _ arg: String, _ icon: String) {
-            items.append(.object([
-                ("title", .string(title)),
-                ("subtitle", .string(subtitle)),
-                ("arg", .string(arg)),
-                ("valid", .bool(!arg.isEmpty)),
-                ("icon", .object([("path", .string(icon))])),
-            ]))
-        }
-
-        // Does the query look like a duration or a time?
-        let durationQuery: String?
-        if query.range(of: #"^\+?[0-9]+[hms]?[a-z0-9]*$"#, options: .regularExpression) != nil
-            || query.range(of: #"^[0-9]{1,2}:[0-9]{2}$"#, options: .regularExpression) != nil {
-            durationQuery = query
-        } else {
-            durationQuery = nil
-        }
-
-        switch aggregate.state {
-        case .active:
-            let reason = aggregate.reason.isEmpty ? "no reason given" : aggregate.reason
-            let claims = aggregate.count > 1 ? ", \(aggregate.count) claims" : ""
-            item("Simmering until \(Formats.hhmm(aggregate.until)) · \(aggregate.leftShort) left",
-                 "\(reason) — \(power), floor \(aggregate.minBattery)%\(claims)", "", iconOn)
-            if !ctx.power.sleepDisabled() {
-                item("Warning: disablesleep is off", "The lid will not hold. Run simmer doctor.", "", iconWarn)
-            }
-            if let q = durationQuery {
-                if q.contains(":") {
-                    item("Move your deadline to \(q)", "Replaces your own claim", "--until \(q)", iconOn)
-                } else if q.hasPrefix("+") {
-                    item("Add \(q.dropFirst())", "Added to your current deadline", q, iconOn)
-                } else {
-                    item("Replace yours with \(q)", "Counted from now", q, iconOn)
-                }
-            }
-            item("Release mine", "Hand your own claim back", "down", iconOff)
-            item("Release everything", "Ends every claim — humans only", "down --all", iconOff)
-            item("15 more minutes", "Adds 15 minutes to your deadline", "+15m", iconOn)
-            item("1 more hour", "Adds 1 hour to your deadline", "+1h", iconOn)
-        case .forever:
-            let reason = aggregate.reason.isEmpty ? "no reason given" : aggregate.reason
-            item("Simmering with no deadline · since \(Formats.hhmm(aggregate.since))",
-                 "\(reason) — \(power), floor \(aggregate.minBattery)%", "", iconOn)
-            if let q = durationQuery {
-                item("Give it a deadline: \(q)", "Turns the open-ended claim into a timebox",
-                     String(q.drop(while: { $0 == "+" })), iconOn)
-            }
-            item("Release mine", "Hand your own claim back", "down", iconOff)
-            item("Release everything", "Ends every claim — humans only", "down --all", iconOff)
-        case .orphan:
-            item("Sleep is disabled with nothing claiming it",
-                 "Nobody is scheduled to hand it back — is the guard running?", "", iconWarn)
-            item("Revert now", "Allow sleep again immediately", "down", iconOff)
-            item("Turn it into a 1 hour claim", "Keeps it awake, with a deadline", "1h", iconOn)
-        case .idle:
-            item("Sleep allowed", "\(power) — nothing is holding this Mac awake", "", iconOff)
-            if let q = durationQuery {
-                if q.contains(":") {
-                    item("Stay awake until \(q)", "Lid may close until then", "--until \(q)", iconOn)
-                } else {
-                    item("Stay awake for \(q.drop(while: { $0 == "+" }))", "Lid may close until then",
-                         String(q.drop(while: { $0 == "+" })), iconOn)
-                }
-            }
-            item("30 minutes", "Lid may close until then", "30m", iconOn)
-            item("1 hour", "Lid may close until then", "1h", iconOn)
-            item("2 hours", "Lid may close until then", "2h", iconOn)
-            item("Until further notice", "No deadline — reminds every 30 minutes", "forever", iconOn)
-        }
-        if aggregate.cap != 0 {
-            item("Nothing past \(Formats.hhmm(aggregate.cap))",
-                 "The cap a human set — 'cap off' lifts it", "cap off", iconWarn)
-        }
-        return JSONValue.object([("items", .array(items))]).serialized()
     }
 }

@@ -58,8 +58,39 @@ extension Commands {
             return outcome
         }
 
+        /// A release that did not reach the disk may not be announced. The
+        /// claim file outliving `down` is the one shape where the Mac is held
+        /// awake against an explicit instruction to let go, and the sentence
+        /// saying otherwise is what stops anyone looking.
+        ///
+        /// `released` is not decoration: `down --all` retires every claim and
+        /// then collects the failures, so partial success is the ordinary
+        /// shape of this path rather than a race. Saying "nothing was
+        /// released" there contradicted the `retire` events and the log lines
+        /// the same command had just written, and told a reader to go looking
+        /// for claims that were already gone.
+        func couldNotRelease(_ stuck: [Claim], released: [Claim] = []) -> Outcome {
+            var failed = outcome
+            failed.stderr.append("simmer: \(stuck.count) claim(s) could not be removed from \(ctx.ledger.claimsDir.path):")
+            for claim in stuck { failed.stderr.append("   \(claim.id) · \(claim.owner)") }
+            failed.merge(.failure(
+                released.isEmpty
+                    ? "nothing was released and the Mac is still awake. Run 'simmer doctor'"
+                    : "released \(released.count) of \(released.count + stuck.count) · the Mac is still awake. Run 'simmer doctor'",
+                json: json))
+            return failed
+        }
+
         if all {
-            for claim in claims { ctx.ledger.retire(claim, why: "released by hand (all)", now: ctx.now) }
+            var released: [Claim] = [], stuck: [Claim] = []
+            for claim in claims {
+                if ctx.ledger.retire(claim, why: "released by hand (all)", now: ctx.now) {
+                    released.append(claim)
+                } else {
+                    stuck.append(claim)
+                }
+            }
+            guard stuck.isEmpty else { return couldNotRelease(stuck, released: released) }
             ctx.ledger.event("release_all", now: ctx.now, [
                 ("by", .string(ctx.owner)),
                 ("released", .array(claims.map { .string($0.owner) })),
@@ -72,7 +103,9 @@ extension Commands {
         }
 
         if let mine = ctx.ledger.claim(owner: ctx.owner) {
-            ctx.ledger.retire(mine, why: "released by hand", now: ctx.now)
+            guard ctx.ledger.retire(mine, why: "released by hand", now: ctx.now) else {
+                return couldNotRelease([mine])
+            }
             ctx.ledger.event("release", now: ctx.now, [("owner", .string(ctx.owner))])
             let after = ctx.aggregate()
             if after.count == 0 {

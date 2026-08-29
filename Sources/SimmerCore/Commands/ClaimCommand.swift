@@ -117,22 +117,42 @@ public enum Commands {
         // predecessor gets its recorded caffeinate child cleaned up.
         var started = ctx.now
         if let existing = ctx.ledger.claim(owner: ctx.owner) {
-            if existing.legacyCaffeinatePid > 0 { kill(pid_t(existing.legacyCaffeinatePid), SIGTERM) }
+            Ledger.endLegacyCaffeinate(existing)
             started = existing.started
+
+            // A replacement that ENDS SOONER costs whoever held it the
+            // difference, and said nothing about it.
+            //
+            // Under an explicit --owner that is a caller shortening its own
+            // deadline, which is allowed and worth one line. Under the
+            // anonymous default it is usually not the same caller at all: two
+            // agents that both forgot --owner are both "script", so a one-
+            // minute claim replaced a four-hour one and the only sign was a
+            // nudge about slots that gave no hint anything had been lost.
+            //
+            // AGENTS.md states the rule this broke — "no surface may cost a
+            // caller awake time it already holds" — and it broke it through
+            // the DOCUMENTED default rather than any unusual input.
+            let shortens = existing.until == 0
+                ? untilEpoch != 0
+                : (untilEpoch == 0 ? false : untilEpoch < existing.until)
+            if shortens {
+                let had = existing.until == 0
+                    ? "no deadline" : "until \(Formats.hhmm(existing.until))"
+                let reasonPart = existing.reason.isEmpty ? "" : " · \(existing.reason)"
+                if ctx.ownerExplicit {
+                    outcome.stderr.append(
+                        "simmer: this replaces your earlier claim (\(had)\(reasonPart)) with a shorter one.")
+                } else {
+                    outcome.stderr.append(
+                        "simmer: \"\(ctx.owner)\" already held a claim \(had)\(reasonPart) — this replaces it,")
+                    outcome.stderr.append(
+                        "        and ends sooner. If that was somebody else's work, both of you need --owner.")
+                }
+            }
         }
 
         let before = ctx.aggregate()
-
-        let switchWasOn = ctx.power.sleepDisabled()
-        guard ctx.power.setDisableSleep(true) else {
-            outcome.merge(.failure("could not set disablesleep (sudo?). Run 'simmer doctor'",
-                                   json: input.json))
-            return outcome
-        }
-        if !switchWasOn {
-            ctx.ledger.event("switch_on", now: ctx.now,
-                             [("why", .string("claim by \(ctx.owner)"))])
-        }
 
         // A deadline set from INSIDE the warning window needs no warning: the
         // act of asking for two minutes is the notification that two minutes
@@ -145,21 +165,56 @@ public enum Commands {
                           requireAC: input.requireAC, displayOn: input.displayOn,
                           warned: bornWarned,
                           reminded: ctx.now)
-        // The switch is already on. If the claim cannot be recorded, nothing
-        // holds it open and nothing schedules it back down — so settle here
-        // (which reverts it, the ledger being empty) and refuse, rather than
-        // print a deadline for a claim that does not exist.
+
+        // **The claim lands BEFORE the switch flips**, and the ordering is the
+        // whole point.
+        //
+        // The other way round leaves a window where the switch is on and the
+        // ledger is empty — which is exactly the orphan a tick is built to
+        // heal, so a guard running in that gap turned the switch back off
+        // under a caller who had just been told "lid may close" at exit 0. In
+        // production the restore is the next tick, up to thirty seconds away,
+        // and a lid closed inside that window sleeps the Mac with no guard
+        // running to notice.
+        //
+        // This order's window is the mirror: a claim on disk with the switch
+        // not yet on. A tick landing THERE turns the switch on, which is what
+        // was going to happen anyway. Both orders have a race; only one of
+        // them races toward the answer.
         guard ctx.ledger.write(claim) else {
             ctx.ledger.log("ERROR: could not record the claim for \(ctx.owner)", now: ctx.now)
             Engine.settle(ctx: ctx, why: "the claim could not be recorded")
+            // What settle actually left behind, not what it leaves behind when
+            // this is the only claim. Somebody else's claim keeps the switch
+            // on — correctly — and "nothing is holding the Mac awake" told a
+            // caller who then closed the lid the exact opposite of the truth.
+            let after = ctx.aggregate()
+            let machine = after.count > 0
+                ? "\(after.count) other claim(s) still hold it awake"
+                : "nothing is holding the Mac awake"
             outcome.merge(.failure(
-                "could not record the claim in \(ctx.ledger.claimsDir.path) — nothing is holding the Mac awake. Run 'simmer doctor'",
+                "could not record the claim in \(ctx.ledger.claimsDir.path) — \(machine). Run 'simmer doctor'",
                 json: input.json))
             return outcome
         }
+
+        let switchWasOn = ctx.power.sleepDisabled()
+        guard ctx.power.setDisableSleep(true) else {
+            // The claim is on disk and the switch would not move. Take the
+            // claim back rather than leave a promise nothing is keeping.
+            _ = ctx.ledger.removeClaim(id: claim.id, ifStillMatching: claim)
+            outcome.merge(.failure("could not set disablesleep (sudo?). Run 'simmer doctor'",
+                                   json: input.json))
+            return outcome
+        }
+        if !switchWasOn {
+            ctx.ledger.event("switch_on", now: ctx.now,
+                             [("why", .string("claim by \(ctx.owner)"))])
+        }
+
         ctx.ledger.event("claim", now: ctx.now, [
             ("owner", .string(ctx.owner)),
-            ("reason", .string(input.reason)),
+            ("reason", .string(claim.reason)),
             ("until", .int(untilEpoch)),
             ("min_battery", .int(input.minBattery)),
             ("require_ac", .bool(input.requireAC)),
@@ -167,14 +222,14 @@ public enum Commands {
         ])
 
         let after = ctx.aggregate()
-        let reasonPart = input.reason.isEmpty ? "" : " · \(input.reason)"
+        let reasonPart = claim.reason.isEmpty ? "" : " · \(claim.reason)"
 
         if untilEpoch == 0 {
-            ctx.ledger.log("claim \(ctx.owner): no deadline\(input.reason.isEmpty ? "" : " (\(input.reason))"), battery floor \(input.minBattery)%", now: ctx.now)
+            ctx.ledger.log("claim \(ctx.owner): no deadline\(claim.reason.isEmpty ? "" : " (\(claim.reason))"), battery floor \(input.minBattery)%", now: ctx.now)
             outcome.stdout.append("☕ simmering, no deadline\(reasonPart)")
             outcome.stdout.append("   reminder every 30 min · releases below \(input.minBattery)% battery · 'simmer down' ends it")
         } else {
-            ctx.ledger.log("claim \(ctx.owner): until \(Formats.hhmm(untilEpoch))\(input.reason.isEmpty ? "" : " (\(input.reason))"), battery floor \(input.minBattery)%", now: ctx.now)
+            ctx.ledger.log("claim \(ctx.owner): until \(Formats.hhmm(untilEpoch))\(claim.reason.isEmpty ? "" : " (\(claim.reason))"), battery floor \(input.minBattery)%", now: ctx.now)
             outcome.stdout.append("☕ simmering until \(Formats.hhmmDated(untilEpoch, now: ctx.now)) (\(Durations.human(untilEpoch - ctx.now)))\(reasonPart)")
             outcome.stdout.append("   lid may close · \(Present.batteryLine(ctx.power)) · releases below \(input.minBattery)%")
             if clippedByCap {
@@ -220,13 +275,13 @@ public enum Commands {
                 outcome.notifications.append(NotificationRequest(
                     title: "☕ Simmering, no deadline",
                     subtitle: "reminder every 30 min · floor \(input.minBattery)%",
-                    body: input.reason.isEmpty ? "Ends with simmer down." : input.reason,
+                    body: claim.reason.isEmpty ? "Ends with simmer down." : claim.reason,
                     actionable: true))
             } else {
                 outcome.notifications.append(NotificationRequest(
                     title: "☕ Simmering until \(Formats.hhmm(after.until))",
                     subtitle: "\(Durations.human(after.until - ctx.now)) · lid may close",
-                    body: input.reason, actionable: true))
+                    body: claim.reason, actionable: true))
             }
         }
 
@@ -284,6 +339,17 @@ public enum Commands {
         // extended nothing.
         let base = max(claim.until, ctx.now)
         var target = base + seconds
+        // The ledger re-checks the ranges and would fold an over-max deadline
+        // to expired — correctly, and silently. Refused here so the sentence
+        // the caller reads is the one the ledger holds: walking a claim past
+        // 2100 one extension at a time used to print "extended until …" at
+        // exit 0 and move the deadline BACKWARDS.
+        guard target <= Claim.maxEpoch else {
+            outcome.merge(.failure(
+                "that would extend past the year 2100, which is further than this tool will hold a deadline",
+                json: json))
+            return outcome
+        }
         var clippedByCap = false
         var capUntil = 0
         if let cap = ctx.ledger.readCap(now: ctx.now) {

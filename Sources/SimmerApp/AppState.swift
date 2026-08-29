@@ -15,7 +15,16 @@ final class AppState {
     let seamActive: Bool
 
     private init() {
-        let env = ProcessInfo.processInfo.environment
+        var env = ProcessInfo.processInfo.environment
+        // Launched from the Dock, an app inherits none of the shell's
+        // environment — so `make install` bakes the ledger's location into the
+        // bundle, the way it bakes it into the LaunchAgent. An explicit
+        // XDG_STATE_HOME still wins, which is what keeps the seam working.
+        if env["XDG_STATE_HOME"] == nil,
+           let baked = Bundle.main.object(forInfoDictionaryKey: "SimmerStateHome") as? String,
+           !baked.isEmpty, !baked.hasPrefix("@") {
+            env["XDG_STATE_HOME"] = baked
+        }
         // `binPath` is what a launcher would exec, and that is the CLI — never
         // this process. `Bundle.main.executablePath` reads CFBundleExecutable,
         // which is `simmer-app`: the one binary that cannot serve as the CLI.
@@ -32,13 +41,14 @@ final class AppState {
         let ledger = Ledger(stateDir: environment.stateDir)
         let now = environment.now()
         ledger.migrateLease(now: now)
+        ledger.migrateClaimIds(now: now)
         return Context(now: now,
                        power: SeamPowerSystem(env: environment.env, allowInteractiveSudo: false),
                        ledger: ledger,
                        owner: "menubar", ownerExplicit: true,
                        isHuman: true, isTTY: false,
                        version: AppState.version,
-                       binPath: environment.binPath)
+                       binPath: environment.binPath, isSeamed: environment.isSeamed)
     }
 
     func aggregate() -> Aggregate { context().aggregate() }

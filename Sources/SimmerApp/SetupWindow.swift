@@ -11,7 +11,7 @@ import UserNotifications
 /// privileges (`SudoRule` says why).
 final class SetupWindow: NSObject {
     static let shared = SetupWindow()
-    static var sudoersPath: String { SudoRule.path }
+    static var sudoersPath: String { SudoRule.installedPath() ?? SudoRule.intendedPath() }
 
     /// The exact two-line rule, shown in full — one source, shared with
     /// `simmer doctor` and the installer.
@@ -201,8 +201,8 @@ final class SetupWindow: NSObject {
     private func sudoState(_ completion: @escaping (_ ok: Bool, _ foreign: Bool) -> Void) {
         DispatchQueue.global().async {
             let ownFile = FileManager.default.fileExists(atPath: Self.sudoersPath)
-            let capability = Shell.run("/usr/bin/sudo",
-                                       ["-nl", "/usr/bin/pmset", "-a", "disablesleep", "0"]).status == 0
+            let capability = SudoRule.grants(inListing:
+                                       Shell.run("/usr/bin/sudo", ["-nl"]).stdout).hasSimmersOwn
             completion(ownFile && capability, !ownFile && capability)
         }
     }

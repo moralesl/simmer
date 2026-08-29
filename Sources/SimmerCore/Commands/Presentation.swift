@@ -92,6 +92,10 @@ enum Present {
             ("capped", .bool(aggregate.capped)),
             ("cap_expires", .int(aggregate.capExpires)),
             ("claims", .array(claims)),
+            // Mirrors `--machine`, and for the same reason it exists there: a
+            // reader must be able to tell an answer about this Mac from an
+            // answer about a seam.
+            ("seamed", .bool(ctx.isSeamed)),
             ("version", .string(ctx.version)),
         ])
     }

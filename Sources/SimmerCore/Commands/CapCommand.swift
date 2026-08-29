@@ -40,8 +40,18 @@ extension Commands {
                 outcome.merge(.failure("only a person can lift the cap", json: json))
                 return outcome
             }
-            if ctx.ledger.storedCap() != nil {
-                ctx.ledger.clearCap()
+            if let stored = ctx.ledger.storedCap() {
+                // An announced lift that did not reach disk is not a lift —
+                // the mirror of the guard on `writeCap`. Said otherwise, the
+                // ceiling would go on refusing claims while naming this
+                // command as the way out of it.
+                guard ctx.ledger.clearCap() else {
+                    ctx.ledger.log("ERROR: could not lift the cap", now: ctx.now)
+                    outcome.merge(.failure(
+                        "could not remove \(ctx.ledger.capFile.path) — the cap is still in force, and lifts itself at \(Formats.hhmm(stored.expires)). Run 'simmer doctor'",
+                        json: json))
+                    return outcome
+                }
                 ctx.ledger.log("cap lifted by \(ctx.owner)", now: ctx.now)
                 ctx.ledger.event("cap_lifted", now: ctx.now, [("by", .string(ctx.owner))])
                 outcome.stdout.append(json
@@ -60,8 +70,25 @@ extension Commands {
                 return outcome
             }
             let target: Int
-            if let parsed = Durations.parseUntil(argument, now: ctx.now) {
-                target = parsed
+            if let parsed = Durations.parseUntilRolling(argument, now: ctx.now) {
+                // A time that has already gone today rolls to tomorrow, which
+                // is right for a deadline and wrong for a ceiling: "nothing
+                // past 22:00" clicked at 22:30 — the menu offers exactly that
+                // button — set a cap twenty-three and a half hours out, at
+                // exit 0, with no hint. A cap is a decision about tonight.
+                //
+                // Refused rather than snapped to now: the caller asked for a
+                // time, and guessing which of the two they meant is how the
+                // menu got here. The duration form says it without ambiguity
+                // and the refusal names it.
+                if parsed.rolled, parsed.epoch - ctx.now > Durations.maxRolloverSeconds {
+                    let ago = Durations.human(ctx.now - (parsed.epoch - 86_400))
+                    outcome.merge(.failure(
+                        "\(argument) was \(ago) ago, so that would cap \(Durations.human(parsed.epoch - ctx.now)) from now — longer than a night. For tomorrow, say the duration: 'simmer cap \((parsed.epoch - ctx.now) / 3600)h'",
+                        json: json))
+                    return outcome
+                }
+                target = parsed.epoch
             } else if let seconds = Durations.parse(argument) {
                 target = ctx.now + seconds
             } else {
@@ -91,8 +118,16 @@ extension Commands {
                 // lands inside the window — where a person setting the cap has
                 // just been told, by the cap's own output, what it means.
                 claim.warned = target - ctx.now <= Tick.warnSeconds
-                ctx.ledger.write(claim)
-                clipped += 1
+                // The one unchecked write in a file whose every sibling checks,
+                // twelve lines under the comment saying why. A clip that did
+                // not reach disk was still counted, and `clipped` is on stdout,
+                // in `--json` and on the event stream: the human was told time
+                // had been taken off a claim that still had it. The ceiling
+                // holds either way, because `cappedUntil` applies it at read
+                // time — right up until the cap is lifted or rolls over at
+                // 09:00, when the claim springs back to the deadline the human
+                // was told was gone.
+                if ctx.ledger.write(claim) { clipped += 1 }
             }
             ctx.ledger.event("cap_set", now: ctx.now, [
                 ("by", .string(ctx.owner)),

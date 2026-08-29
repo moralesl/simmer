@@ -23,7 +23,7 @@ simmer                                          human status, listing every clai
 simmer status --machine | --json                machine status
 simmer budget [--need D] [--seconds] [--json]   room to start something?
 simmer log [n] · doctor · notify-test · --version · --help
-simmer render swiftbar|raycast|alfred [query]   surfaces, drawn by the core
+simmer render swiftbar|raycast                 surfaces, drawn by the core
 ```
 
 Durations: `90`, `90m`, `2h`, `1h30m`, `45min`, `30s`, `2H`, `1d`, `1d12h`.
@@ -34,13 +34,13 @@ Days exist because overnight is a first-class case — `--require-ac` was added 
 It used to mean "stamp over someone else's lease"; the claims model removed the conflict it resolved.
 It stays in the surface because launcher shims and other people's scripts pass it, and it prints a line saying it is inert rather than being silently ignored.
 
-Every command reachable from a launcher also tolerates a trailing `-r <reason> --owner <name>`, because the Alfred action appends both to whatever the filter produced whether the command has any use for a reason or not.
+Every command reachable from a launcher also tolerates a trailing `-r <reason> --owner <name>`, because a launcher action appends both to whatever it produced whether the command has any use for a reason or not.
 
 ## Exit codes are API
 
 | Command | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
-| `budget` | fits / no deadline | not enough time | — | **nothing claimed at all** |
+| `budget` | fits | not enough time on the earliest clock | — | **nothing claimed at all** |
 | `run -- cmd` | *(command's own exit code, passed through untouched)* ||||
 | take/extend/down/cap | ok | refused (floor, cap, authority, parse) | — | — |
 | `doctor` | healthy | something red | — | — |
@@ -48,15 +48,22 @@ Every command reachable from a launcher also tolerates a trailing `-r <reason> -
 `budget`'s 3-vs-1 split is load-bearing: 1 is a small budget, 3 is an absent guarantee.
 Callers that conflate them keep working while the machine sleeps.
 
+**"The earliest clock" is not always the deadline** — see § Two clocks.
+An open-ended claim can now answer `1`, which it could not before 0.2.
+
 ## Machine-readable output
 
-`status --machine`: `key=value` lines — `state` (active·forever·idle·orphan), `until` (epoch, 0=none), `left`, `left_short`, `reason`, `owner`, `min_battery`, `battery`, `on_battery`, `sleep_disabled`, `since`, `claim_count`, `cap` (epoch, 0=none), `cap_expires` (epoch the cap lifts itself, 0=none).
+`status --machine`: `key=value` lines — `state` (active·forever·idle·orphan), `until` (epoch, 0=none), `left`, `left_short`, `reason`, `owner`, `min_battery`, `battery`, `on_battery`, `sleep_disabled`, `since`, `claim_count`, `cap` (epoch, 0=none), `cap_expires` (epoch the cap lifts itself, 0=none), `seamed` (`1` when any `SIMMER_FAKE_*` is in force — see § The test seam).
 `status --json` / `budget --json`: the same data as one JSON object; numbers are numbers, `fits` is `true|false|null`, `seconds_left` is a number, `-1` for no deadline, or `null` when nothing is claimed (see below), `capped` is `true` when the deadline reported IS the cap, `cap_expires` is when the cap lifts itself, and `claims` is an array with one object per live claim (`id`, `owner`, `until`, `left`, `reason`, `min_battery`, `require_ac`, `since`, `human`).
+Both carry `seamed` (boolean).
+`status --json` also carries `version`.
+`budget --json` also carries `battery`, `on_battery`, `min_battery` and `battery_seconds_left` — see § Two clocks.
 
 **"No deadline" is spelled two ways, deliberately, and here is which.** `until` is `0`; a per-claim `left` and `budget`'s `seconds_left` are `-1`; the *aggregate* `left` is `0`, because it is a countdown and there is nothing to count.
 
 **`budget --json`'s `seconds_left` has a third value, and it is not a fourth spelling of "no deadline".** It is `null` when `state` is `idle` or `orphan` — nothing is claimed, so there is no clock to read at all, and an absent clock is not `-1` seconds on one any more than it is `0`.
-The three readings map exactly onto the three exit codes: a number with `0`/`1`, `-1` with `0` (`state: "forever"` — no deadline, so anything fits), `null` with `3`.
+The three readings map onto the exit codes: a number with `0`/`1`, `-1` with `0` or `1`, `null` with `3`.
+`-1` with `1` is the one combination that needs saying out loud, because it did not exist before 0.2: an open-ended claim has no deadline, and if the battery clock (below) runs out before the work does, "anything fits" is false about a claim with no `until`.
 A caller that switches on the exit code never has to inspect the type; one that reads the field must accept all three.
 `fits` is `null` on the same principle whenever no `--need` was given: no question was asked.
 Read `state == "forever"` — or `until == 0` — as the question "is there a deadline at all"; never infer it from a `left` of 0, which an active claim reaches legitimately in its final second.
@@ -71,6 +78,22 @@ The acceptance suite asserts this against the raw JSON text, because `JSONSerial
 **The top-level fields describe the AGGREGATE** — what the machine will actually do — and the descriptive ones (`reason`, `owner`, `min_battery`, `since`) come from the claim that *defines* the aggregate deadline.
 With one claim that is the same answer the single-lease shape gave, which is why every existing reader keeps working.
 Per-claim detail is in `claims`, never in `--machine`: that format stays flat so a menu bar can read it without `jq`.
+
+## Two clocks
+
+A claim ends at whichever comes first: its **deadline**, or the **battery floor** it was taken with.
+`budget` is the command that answers "is there room to start", so it answers about the earlier of the two.
+Reporting only the deadline meant `fits: true` with four hours of `seconds_left` about a claim sitting one point above a floor the guard would enforce within thirty seconds.
+
+`battery_seconds_left` is how long until the battery reaches this aggregate's floor: macOS's own time-to-empty estimate, scaled by the fraction of the charge sitting above the floor.
+Linear on purpose — that is the assumption the system's estimate already embodies, and a second discharge model would only disagree with the first.
+
+It is `null` where there is no clock to read: on AC, while the estimate is still calibrating, and when nothing is claimed at all — with no claim, `min_battery` is a default rather than anyone's decision, and a number there would describe a guarantee nobody asked for.
+It is `0`, never `null`, at or below the floor: the clock has run out, which is a reading and not an absence.
+That distinction is the whole point, and getting it wrong made the answer non-monotonic — 21% refusing while 20% agreed.
+
+`seconds_left` still means the deadline and nothing else, and is still `-1` for an open-ended claim.
+Neither field changed meaning when the second clock arrived; `fits` and the exit code are what widened, and they widened toward the question the caller was always asking.
 
 ## State
 
@@ -120,10 +143,18 @@ Any implementation MUST honour these, or it cannot be tested without root and wi
 | `SIMMER_HUMAN=1` | the caller carries human authority regardless of owner |
 | `SIMMER_NOTIFY=<transport\|none>` | `none` silences. There is exactly one transport: the CLI enqueues into `$STATE/notify-spool.jsonl` and the app — the only executable holding a notification grant — posts. The spool is the assertable surface |
 | `SIMMER_NOTIFIER_APP=<path>` | **retired in the rewrite** (was: notifier bundle override). The spool lives under `XDG_STATE_HOME`, so notification routing is seam-isolated by construction; see PLATFORM-FACTS.md on per-executable grants |
-| `SIMMER_BIN=<path>` | which binary integrations exec |
+| `SIMMER_FAKE_BATTERY_TIME=<seconds>` | macOS's own time-to-empty estimate, which `budget` scales into the battery clock — see § Two clocks |
+| `SIMMER_BIN=<path>` | which binary integrations exec, **honoured only while `SIMMER_FAKE_PMSET` is also set**. It decides what a menu-bar or launcher row executes, which is not a decision one unguarded environment variable may make on a real install; there it is redundant anyway, because the binary knows its own path |
 | `SIMMER_SKILL_DIR=<dir>` | where the generated agent protocol lives, for `doctor`'s staleness row. Needed because `homeDirectoryForCurrentUser` reads the passwd entry and ignores `HOME`, so this one read would otherwise reach the tester's real `~/.claude` |
 | `XDG_STATE_HOME=<dir>` | state isolation |
 | `SIMMER_RUN_CHUNK` / `SIMMER_RUN_INTERVAL` | run's renewal clocks |
+
+Two more are read but are not seams — they are ordinary configuration, listed here because a reader looking for "what does this binary read from the environment" should find all of it in one place:
+
+| Variable | Effect |
+|---|---|
+| `SIMMER_OWNER=<name>` | the default owner, when no `--owner` is given |
+| `SIMMER_NONINTERACTIVE=1` | never prompt for sudo, even on a tty |
 
 **Every side effect outside the process must be behind this seam, not merely the ones that are awkward to test.** A suite that called itself hermetic leaked 222 orphaned `caffeinate` processes exactly this way: ten seam variables, and none of them covering the one call that spawned a detached child holding a real power assertion (`PLATFORM-FACTS.md`).
 If an implementation shells out or spawns anything, that has a `SIMMER_FAKE_*` too.

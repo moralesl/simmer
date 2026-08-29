@@ -54,7 +54,6 @@ function ownerGlyph(owner: string): string {
     case "terminal":
       return "⌨️";
     case "raycast":
-    case "alfred":
       return "🚀";
     case "script":
       return "📜";

@@ -9,6 +9,10 @@ import SimmerCore
 enum Runtime {
     static let version = SimmerVersion.string
     static let guardLabel = "io.github.moralesl.simmer.guard"
+    /// The bundle id `make install` stamps into Info.plist. The guard label is
+    /// this plus `.guard`, and the two must not drift — a quit sent to the
+    /// wrong id is a quit that silently does nothing.
+    static let bundleIdentifier = "io.github.moralesl.simmer"
 
     static func environment() -> SimmerEnvironment {
         return SimmerEnvironment(env: ProcessInfo.processInfo.environment,
@@ -66,13 +70,14 @@ enum Runtime {
         let ledger = Ledger(stateDir: env.stateDir)
         let now = env.now()
         ledger.migrateLease(now: now)
+        ledger.migrateClaimIds(now: now)
         let power: PowerSystem = interactive
             ? env.makePowerSystem()
             : SeamPowerSystem(env: env.env, allowInteractiveSudo: false)
         return Context(now: now, power: power, ledger: ledger,
                        owner: owner, ownerExplicit: explicit,
                        isHuman: env.callerIsHuman(owner: owner), isTTY: env.isTTY,
-                       version: version, binPath: env.binPath)
+                       version: version, binPath: env.binPath, isSeamed: env.isSeamed)
     }
 
     /// Where a command's human lines go. `stdout` for every subcommand except

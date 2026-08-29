@@ -18,7 +18,7 @@ public enum Owners {
         switch owner {
         case "menubar": return "🖥️"
         case "terminal": return "⌨️"
-        case "raycast", "alfred": return "🚀"
+        case "raycast": return "🚀"
         // The anonymous non-tty fallback. Distinct from 🤖 on purpose: it is
         // precisely an actor that did NOT name itself, which is what the
         // claim-time nudge is about, and a robot face would hide that.

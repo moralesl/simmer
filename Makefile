@@ -25,6 +25,12 @@ BUILD         = .build/release
 STAGED_APP    = .build/Simmer.app
 LSREGISTER    = /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 AGENT_PLIST   = $(HOME)/Library/LaunchAgents/$(GUARD_LABEL).plist
+# The ledger's location, resolved HERE and baked into the LaunchAgent, because
+# launchd hands an agent none of the installing shell's environment. Someone
+# who exports XDG_STATE_HOME otherwise gets a guard reading a different ledger
+# than their CLI writes, and the two settle one switch against each other
+# forever. Same default as SimmerEnvironment.stateDir — keep them in step.
+STATE_HOME   ?= $(if $(XDG_STATE_HOME),$(XDG_STATE_HOME),$(HOME)/.local/state)
 BIN_DIR      ?= $(HOME)/.local/bin
 # Where a Claude Code agent looks for skills. The protocol an agent needs is the
 # first half of AGENTS.md, so the skill is GENERATED from it rather than kept as
@@ -122,7 +128,12 @@ skill:
 app: build
 	rm -rf $(STAGED_APP)
 	mkdir -p $(STAGED_APP)/Contents/MacOS $(STAGED_APP)/Contents/Resources
+	# @STATE_HOME@ for the same reason the LaunchAgent gets it: an app
+	# launched from the Dock inherits none of the shell's environment, so a
+	# shell exporting XDG_STATE_HOME put the app on one ledger and the CLI
+	# on another — the guard's bug, in the other half of the bundle.
 	sed -e 's/@BUNDLE_ID@/$(BUNDLE_ID)/g' -e 's/@VERSION@/$(VERSION)/g' \
+	    -e 's|@STATE_HOME@|$(STATE_HOME)|g' \
 	    app/Info.plist.template > $(STAGED_APP)/Contents/Info.plist
 	# The app executable is NOT named "Simmer": APFS is case-insensitive,
 	# so "Simmer" and the CLI "simmer" would silently be the same file.
@@ -145,6 +156,7 @@ install: app
 	mkdir -p $(HOME)/Library/LaunchAgents
 	sed -e 's|@CLI@|$(APP)/Contents/MacOS/simmer|g' \
 	    -e 's|@LABEL@|$(GUARD_LABEL)|g' \
+	    -e 's|@STATE_HOME@|$(STATE_HOME)|g' \
 	    launchd/guard.plist.template > $(AGENT_PLIST)
 	# bootout returns before the job is gone — poll until it is
 	launchctl bootout gui/$$(id -u)/$(GUARD_LABEL) 2>/dev/null || true
@@ -173,9 +185,80 @@ install: app
 	    echo "       simmer doctor   # says whether it is in place, and prints the command"; \
 	    echo "  2. open -a Simmer, then click Allow on the notification banner."; }
 
+# Hand the machine back BEFORE removing anything, and refuse to go on if that
+# did not work.
+#
+# This recipe deletes the guard, the app, and the CLI binary the ~/.local/bin
+# symlink points at — every mechanism on the Mac that can put the sleep switch
+# back. Run with a claim live it used to leave `pmset -a disablesleep 1` on,
+# which per PLATFORM-FACTS.md has no expiry, shows no indicator and survives
+# reboots; SECURITY.md names that exact state as the vulnerability, and the
+# recovery command appeared in neither the README nor the FAQ.
+#
+# SIMMER_HUMAN=1 because a person typed this. `down --all` is a human's
+# authority and make has no tty for simmer to notice one.
 uninstall:
+	@# WHICH simmer, and WHICH app — from the LaunchAgent, not from this
+	@# invocation's variables. The gates used to hang off $(BIN_DIR)/simmer, so
+	@# an install done with a different BIN_DIR or PREFIX made both of them
+	@# silently untrue while the removals below — which use fixed paths — ran
+	@# anyway. The plist sits at a fixed path and records what was actually
+	@# installed, so it is the thing that knows.
+	@# And the seam: `status` prints `seamed=1` when a SIMMER_FAKE_* variable
+	@# is in the environment, which is exactly the leaked-export case that
+	@# field exists for. A gate that reads `sleep_disabled` and ignores
+	@# `seamed` is reading a file in /tmp and calling it the machine.
+	@set -e; \
+	 CLI=$$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" $(AGENT_PLIST) 2>/dev/null || true); \
+	 [ -x "$$CLI" ] || CLI=$(BIN_DIR)/simmer; \
+	 if [ ! -x "$$CLI" ]; then \
+	   echo "simmer: no installed simmer binary found, so this cannot check whether"; \
+	   echo "        the Mac is still being held awake — and removing the guard"; \
+	   echo "        would take away the thing that would have handed it back."; \
+	   echo ""; \
+	   echo "            sudo pmset -a disablesleep 0     # revert it by hand"; \
+	   echo "            make uninstall FORCE=1           # remove anyway"; \
+	   [ -n "$(FORCE)" ] || exit 1; \
+	 else \
+	   SIMMER_HUMAN=1 env -u SIMMER_FAKE_PMSET -u SIMMER_FAKE_BATTERY \
+	     -u SIMMER_FAKE_BATTERY_TIME -u SIMMER_FAKE_NOW -u SIMMER_FAKE_THERMAL \
+	     -u SIMMER_FAKE_LOCKDELAY "$$CLI" down --all || true; \
+	   STATE=$$(env -u SIMMER_FAKE_PMSET -u SIMMER_FAKE_BATTERY \
+	     -u SIMMER_FAKE_BATTERY_TIME -u SIMMER_FAKE_NOW -u SIMMER_FAKE_THERMAL \
+	     -u SIMMER_FAKE_LOCKDELAY "$$CLI" status --machine || true); \
+	   if ! printf '%s\n' "$$STATE" | grep -q '^sleep_disabled=0' \
+	      || ! printf '%s\n' "$$STATE" | grep -q '^seamed=0'; then \
+	     echo "simmer: this Mac is still being held awake, and uninstalling removes"; \
+	     echo "        the only thing here that can stop that. Put it back first:"; \
+	     echo ""; \
+	     echo "            sudo pmset -a disablesleep 0"; \
+	     echo ""; \
+	     echo "        then run 'make uninstall' again, or 'make uninstall FORCE=1'"; \
+	     echo "        to remove simmer anyway and revert the switch by hand."; \
+	     [ -n "$(FORCE)" ] || exit 1; \
+	   fi; \
+	 fi
 	-launchctl bootout gui/$$(id -u)/$(GUARD_LABEL) 2>/dev/null
 	rm -f $(AGENT_PLIST)
+	@# Only the app can unregister its own login item (SMAppService is
+	@# bundle-scoped, like the notification grant), so ask it before the
+	@# bundle goes — otherwise System Settings keeps listing a login item
+	@# pointing at an app that no longer exists.
+	-[ -x $(APP)/Contents/MacOS/simmer-app ] && $(APP)/Contents/MacOS/simmer-app --uninstall
+	@# Quit it, and CHECK. A running Simmer.app outlives the files it was
+	@# launched from, keeps its menu bar, and one click on "Stay awake for…"
+	@# re-arms disablesleep with the guard already gone. The quit is an
+	@# AppleEvent, which TCC can refuse silently and which fails in any
+	@# non-interactive context — so `-osascript … 2>/dev/null` on its own was
+	@# a hope, not a step. Verified the way `install` verifies its bootout.
+	@-osascript -e 'tell application id "$(BUNDLE_ID)" to quit' 2>/dev/null || true
+	@for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -qx simmer-app || break; sleep 0.3; done; \
+	 if pgrep -qx simmer-app; then \
+	   echo "simmer: Simmer.app is still running and would outlive its own bundle —"; \
+	   echo "        its menu bar keeps working and one click re-arms the switch."; \
+	   echo "        Quit it from the menu bar, then run this again."; \
+	   [ -n "$(FORCE)" ] || exit 1; \
+	 fi
 	-[ -d $(APP) ] && $(LSREGISTER) -u $(APP)
 	rm -rf $(APP)
 	rm -f $(BIN_DIR)/simmer
@@ -183,6 +266,8 @@ uninstall:
 	@echo "Removed the app, the CLI symlink, the guard and the agent skill."
 	@echo "Left alone if present (needs root, and only if simmer wrote it):"
 	@echo "  /etc/sudoers.d/simmer — remove with: sudo rm /etc/sudoers.d/simmer"
+	@echo "If sleep still does not work, the switch is the last thing to revert:"
+	@echo "  sudo pmset -a disablesleep 0"
 
 clean:
 	swift package clean

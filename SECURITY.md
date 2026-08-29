@@ -34,7 +34,7 @@ The documented installation compiles from source on your machine (`bootstrap.sh`
 Two consequences worth knowing:
 
 - Piping a script from `curl` into `bash` means trusting this repository at the moment you run it.
-  The script is short and does nothing before its final line; pin a release with `SIMMER_REF=v0.1.0` rather than tracking the default branch if that matters to you, and read it first — that is what the URL is for.
+  The script is short and does nothing before its final line; pin a release with `SIMMER_REF=v0.2.0` rather than tracking the default branch if that matters to you, and read it first — that is what the URL is for.
 - The bundle is **ad-hoc signed**.
   It has no stable code identity across rebuilds and no Apple Developer certificate, on purpose (`docs/FAQ.md`).
 

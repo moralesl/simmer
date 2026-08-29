@@ -16,6 +16,22 @@
 		<string>@CLI@</string>
 		<string>guard</string>
 	</array>
+	<!--
+	  launchd agents inherit nothing from the shell that installed them, and
+	  the ledger's location is an environment variable. Without this the guard
+	  read ${HOME}/.local/state while a shell exporting XDG_STATE_HOME read
+	  somewhere else - two ledgers settling one global switch, in opposite
+	  directions, every 30 seconds, converging never. `down` said "sleep
+	  allowed again" and the next tick turned it straight back on.
+	  XDG_STATE_HOME is the documented state location (CONTRACTS.md) and not
+	  merely a test seam, so the value the installing shell resolved is baked
+	  in here, and `doctor` compares the two.
+	-->
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>XDG_STATE_HOME</key>
+		<string>@STATE_HOME@</string>
+	</dict>
 	<key>StartInterval</key>
 	<integer>30</integer>
 	<key>RunAtLoad</key>

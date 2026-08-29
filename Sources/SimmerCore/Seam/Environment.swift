@@ -10,13 +10,37 @@ import Foundation
 public struct SimmerEnvironment: Sendable {
     public let env: [String: String]
     public let isTTY: Bool
-    /// The path integrations should exec — SIMMER_BIN, else the running binary.
+    /// The path integrations should exec: the running binary, or SIMMER_BIN
+    /// **when a power seam is already active**.
+    ///
+    /// It goes into the `bash=` of every SwiftBar row and into the commands
+    /// `copyAsCLI` hands out, so an unconditional override let one environment
+    /// variable decide what a person's menu bar runs when they click it. It
+    /// exists for the suite, which always seams the power system too, and it
+    /// is redundant in a real install — the running binary is already the
+    /// installed path, symlink and all. So it is gated like the seam it is.
     public let binPath: String
 
     public init(env: [String: String], isTTY: Bool, executablePath: String) {
         self.env = env
         self.isTTY = isTTY
-        self.binPath = env["SIMMER_BIN"] ?? executablePath
+        let seamed = env["SIMMER_FAKE_PMSET"] != nil
+        self.binPath = (seamed ? env["SIMMER_BIN"] : nil) ?? executablePath
+    }
+
+    /// True when any SIMMER_FAKE_* variable is set — the switch is a file, the
+    /// battery is a string, and nothing this process says about the machine is
+    /// about the machine.
+    ///
+    /// `doctor` already announced this; `status` and `budget` did not, and
+    /// those are the two surfaces AGENTS.md tells an agent to trust before it
+    /// starts hours of unattended work. Under a stray export — a shell rc, an
+    /// .envrc, a harness that leaked, a command copied out of the test docs —
+    /// `budget --need 30m` answered `fits: true` at exit 0 about a Mac that
+    /// will sleep the moment the lid closes. That is the one answer the exit
+    /// codes exist to make impossible.
+    public var isSeamed: Bool {
+        env.keys.contains { $0.hasPrefix("SIMMER_FAKE_") }
     }
 
     // MARK: the clock — SIMMER_FAKE_NOW
@@ -85,8 +109,12 @@ public struct SimmerEnvironment: Sendable {
         return Self.isHumanOwnerName(owner)
     }
 
+    /// Case-insensitively, because these are names of surfaces a person sits
+    /// at rather than identifiers: `Terminal` is the app's own spelling, and
+    /// reading it as a different, non-human actor is what let a capitalised
+    /// name outrank the human it shares a claim file with on APFS.
     public static func isHumanOwnerName(_ owner: String) -> Bool {
-        ["terminal", "menubar", "raycast", "alfred"].contains(owner)
+        ["terminal", "menubar", "raycast"].contains(owner.lowercased())
     }
 
     // MARK: run's renewal clocks

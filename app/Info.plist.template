@@ -14,6 +14,8 @@
 	<string>simmer-app</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>SimmerStateHome</key>
+	<string>@STATE_HOME@</string>
 	<key>CFBundleShortVersionString</key>
 	<string>@VERSION@</string>
 	<key>CFBundleVersion</key>

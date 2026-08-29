@@ -180,8 +180,24 @@ final class RunCoordinator {
                     // That warning is worth having: nobody chose this deadline
                     // just now, it arrived.
                     claim.warned = false
-                    ctx.ledger.write(claim)
-                    ctx.ledger.log("run: renewed until \(Formats.hhmm(target))", now: ctx.now)
+                    // Under the lock, and re-checked inside it. `finished` was
+                    // read at the top of this loop, and everything since —
+                    // building a context, reading the claim, consulting the
+                    // cap — is time for `cleanup()` to run and retire us. The
+                    // write then put the claim back, and the guard held the
+                    // switch on for a dead process until the chunk ran out.
+                    //
+                    // `cleanup` sets `finished` under this same lock before it
+                    // retires anything, so holding it across the write makes
+                    // the two orders the only two possible.
+                    done.lock()
+                    let stillRunning = !finished
+                    if stillRunning {
+                        ctx.ledger.write(claim)
+                        ctx.ledger.log("run: renewed until \(Formats.hhmm(target))", now: ctx.now)
+                    }
+                    done.unlock()
+                    if !stillRunning { return }
                 }
             }
         }
@@ -213,8 +229,25 @@ final class RunCoordinator {
         guard !already else { return }
         let ctx = Runtime.context(ownerFlag: owner)
         if let claim = ctx.ledger.claim(owner: owner) {
-            ctx.ledger.retire(claim, why: "run finished", now: ctx.now)
-            let (_, outcome) = Engine.settle(ctx: ctx, why: "run finished")
+            // The guard's exemption from "a removal that did not happen may
+            // not be announced" does not reach here. `run` is a one-shot,
+            // user-facing command that AGENTS.md sells as "released on any
+            // exit — even SIGKILL", and it already uses stderr for exactly
+            // this kind of commentary. Swallowing the failure meant `simmer
+            // run` finished at exit 0 with empty stderr, the claim still on
+            // disk and the Mac still awake — the wrapped command's own exit
+            // code passed through, saying nothing about the machine.
+            var outcome = Outcome()
+            if !ctx.ledger.retire(claim, why: "run finished", now: ctx.now) {
+                // Epoch 0 must never be formatted as a time — it reads 01:00.
+                // A run claim always carries a deadline, so this is belt and
+                // braces rather than a live case.
+                let held = claim.until == 0 ? "" : " until \(Formats.hhmm(claim.until))"
+                outcome.stderr.append(
+                    "simmer: could not release \(claim.id) — the Mac is STILL being held awake\(held). Run 'simmer doctor'")
+            }
+            let (_, settled) = Engine.settle(ctx: ctx, why: "run finished")
+            outcome.merge(settled)
             Runtime.emit(outcome, human: .stderr)
         }
     }

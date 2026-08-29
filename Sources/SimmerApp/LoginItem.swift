@@ -39,6 +39,24 @@ enum LoginItem {
         try? SMAppService.mainApp.register()
     }
 
+    /// Hand the login item back.
+    ///
+    /// `SMAppService` is bundle-scoped — only this executable can unregister
+    /// what it registered, the same reason the notification grant lives here
+    /// — so `make uninstall` cannot do it from the shell. It removed the app
+    /// and left a login item pointing at a bundle that no longer exists:
+    /// still listed in System Settings, and macOS's own tidy-up for that is
+    /// not something a person removing a tool should have to know about.
+    ///
+    /// The stamp goes too. Reinstalling should mean being offered the login
+    /// item again, not inheriting a decision from a copy that is gone.
+    static func unregisterForUninstall(stateDir: URL) {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        try? SMAppService.mainApp.unregister()
+        try? FileManager.default.removeItem(
+            at: stateDir.appendingPathComponent("login-item.offered"))
+    }
+
     /// The word `doctor` reports. Spelled out rather than a bool: "off because
     /// nobody asked" and "off because macOS wants the person to approve it in
     /// System Settings" need different advice.

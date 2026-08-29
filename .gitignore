@@ -1,4 +1,8 @@
 .build/
-integrations/alfred/*.alfredworkflow
 .DS_Store
 .vscode/
+
+# Agent scratch: Claude Code puts session state and git worktrees here.
+# The worktrees are embedded repositories, so `git add -A` swallows them and
+# commits four one-line gitlinks nobody can clone.
+.claude/
