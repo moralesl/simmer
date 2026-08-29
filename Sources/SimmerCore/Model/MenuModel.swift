@@ -56,10 +56,30 @@ public struct MenuItemModel: Equatable, Sendable {
     }
 }
 
+/// What the menu says about the INSTALL, as opposed to about the claims.
+///
+/// Both facts are ones a person cannot get at from the menu bar otherwise:
+/// which version is actually running — the app is replaced under itself on
+/// upgrade, so "the one I installed" is not a safe assumption — and whether
+/// the guard can hand the switch back while nobody is at the keyboard, which
+/// is the entire promise and which silently is not true without the sudo rule.
+public struct MenuInstall: Sendable, Equatable {
+    public var version: String
+    /// The passwordless rule is in place. Without it the guard still runs and
+    /// still decides correctly, and then cannot move the switch.
+    public var canHandBackUnattended: Bool
+
+    public init(version: String, canHandBackUnattended: Bool) {
+        self.version = version
+        self.canHandBackUnattended = canHandBackUnattended
+    }
+}
+
 public enum MenuModel {
     /// Lead with why, then act: header first, the claims, the
     /// 80% actions, the cap, then the bridge to the CLI.
-    public static func build(aggregate: Aggregate, batteryLine: String) -> [MenuItemModel] {
+    public static func build(aggregate: Aggregate, batteryLine: String,
+                             install: MenuInstall) -> [MenuItemModel] {
         var items: [MenuItemModel] = []
 
         switch aggregate.state {
@@ -120,6 +140,21 @@ public enum MenuModel {
         items.append(copyAsCLI(aggregate))
         items.append(MenuItemModel(title: "Setup…", symbol: "gearshape", action: .openSetup))
         items.append(MenuItemModel(title: "Quit Simmer", action: .quit))
+
+        // Last, and quiet. A claim is why anyone opened this menu; the install
+        // is what they need when something is wrong with it.
+        items.append(.separator)
+        if !install.canHandBackUnattended {
+            // Worth interrupting for: the guard runs, decides correctly, and
+            // then cannot move the switch — so the lid closing ends the work
+            // it was supposed to protect, and nothing else on this menu hints
+            // at it.
+            items.append(MenuItemModel(
+                title: "No sleep-switch permission — the guard cannot hand it back",
+                symbol: "exclamationmark.triangle.fill",
+                action: .openSetup, isProminent: true))
+        }
+        items.append(MenuItemModel(title: "simmer \(install.version)"))
         return items
     }
 

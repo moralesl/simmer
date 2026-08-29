@@ -62,7 +62,9 @@ import Testing
     func build(claims: [Claim], cap: CapRecord? = nil, switchOn: Bool = true) -> [MenuItemModel] {
         let aggregate = Aggregate.compute(claims: claims, cap: cap, now: 100,
                                           sleepDisabled: switchOn)
-        return MenuModel.build(aggregate: aggregate, batteryLine: "battery 80%, on AC")
+        return MenuModel.build(aggregate: aggregate, batteryLine: "battery 80%, on AC",
+                               install: MenuInstall(version: "0.0.0-test",
+                                                    canHandBackUnattended: true))
     }
 
     func titles(_ items: [MenuItemModel]) -> [String] {
@@ -77,7 +79,10 @@ import Testing
         // forever demoted to the power layer
         let forever = items.first { $0.action == .claimForever }
         #expect(forever?.isAlternate == true)
-        #expect(items.last?.action == .quit)
+        // Quit is the last thing you can DO. The install rows sit below it and
+        // carry no action — a version you cannot click is the point.
+        #expect(items.compactMap(\.action).last == .quit)
+        #expect(items.last?.action == nil)
     }
 
     @Test func activeLeadsWithWhyThenActs() {
@@ -173,5 +178,51 @@ import Testing
         let idle = build(claims: [], switchOn: false)
         let idleCopy = idle.first { $0.title == "Copy as CLI command" }
         #expect(idleCopy?.children.contains { $0.title == "simmer cap 23:00" } == true)
+    }
+}
+
+
+/// What the menu says about the INSTALL rather than about the claims. Both
+/// facts are ones a person cannot get at from the menu bar otherwise.
+@Suite struct MenuInstallFooter {
+    func menu(_ install: MenuInstall) -> [MenuItemModel] {
+        MenuModel.build(aggregate: Aggregate(), batteryLine: "battery 80%, on AC",
+                        install: install)
+    }
+
+    /// An upgrade replaces the app underneath a running one, so "the version I
+    /// installed" is not a safe assumption about the version in the menu bar.
+    @Test func theRunningVersionIsAlwaysShown() {
+        let items = menu(MenuInstall(version: "0.2.0", canHandBackUnattended: true))
+        #expect(items.contains { $0.title == "simmer 0.2.0" })
+    }
+
+    /// Without the rule the guard still runs and still decides correctly, and
+    /// then cannot move the switch — so the lid closing ends the work it was
+    /// supposed to protect, and nothing else on this menu hints at it.
+    @Test func aMissingSleepSwitchPermissionIsSaidOutLoud() {
+        let warned = menu(MenuInstall(version: "0.2.0", canHandBackUnattended: false))
+        let row = warned.first { $0.title.contains("cannot hand it back") }
+        #expect(row != nil)
+        #expect(row?.isProminent == true, "a warning nobody can see is not a warning")
+        #expect(row?.action == .openSetup, "it has to lead somewhere")
+
+        // And it is absent when the rule is there, rather than always-on noise.
+        let quiet = menu(MenuInstall(version: "0.2.0", canHandBackUnattended: true))
+        #expect(!quiet.contains { $0.title.contains("cannot hand it back") })
+    }
+
+    /// Last, and after the actions: a claim is why anyone opened this menu.
+    @Test func theInstallRowsComeAfterEverythingAboutTheClaim() {
+        let items = menu(MenuInstall(version: "0.2.0", canHandBackUnattended: false))
+        guard let quit = items.firstIndex(where: { $0.title == "Quit Simmer" }),
+              let version = items.firstIndex(where: { $0.title == "simmer 0.2.0" }),
+              let warning = items.firstIndex(where: { $0.title.contains("cannot hand it back") })
+        else {
+            Issue.record("the menu no longer carries all three rows")
+            return
+        }
+        #expect(quit < warning)
+        #expect(warning < version)
     }
 }

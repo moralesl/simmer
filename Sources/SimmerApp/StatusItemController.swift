@@ -87,7 +87,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let ctx = AppState.shared.context()
         let percent = ctx.power.batteryPercent().map(String.init) ?? "?"
         let batteryLine = "battery \(percent)%, \(ctx.power.onBattery() ? "on battery" : "on AC")"
-        let model = MenuModel.build(aggregate: ctx.aggregate(), batteryLine: batteryLine)
+        // Read per menu open, not cached: the rule can be installed from the
+        // setup window while this menu is the thing that sent you there, and a
+        // stale "no permission" row would then be the lie.
+        let install = MenuInstall(version: ctx.version,
+                                  canHandBackUnattended: SudoRule.installedPath() != nil)
+        let model = MenuModel.build(aggregate: ctx.aggregate(), batteryLine: batteryLine,
+                                    install: install)
         for entry in model {
             menu.addItem(render(entry))
         }
