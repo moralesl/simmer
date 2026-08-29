@@ -213,7 +213,7 @@ final class RunCoordinator {
         guard !already else { return }
         let ctx = Runtime.context(ownerFlag: owner)
         if let claim = ctx.ledger.claim(owner: owner) {
-            ctx.ledger.retire(claim, why: "run finished", now: ctx.now)
+            _ = ctx.ledger.retire(claim, why: "run finished", now: ctx.now)
             let (_, outcome) = Engine.settle(ctx: ctx, why: "run finished")
             Runtime.emit(outcome, human: .stderr)
         }

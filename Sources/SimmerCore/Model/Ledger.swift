@@ -54,17 +54,40 @@ public struct Ledger: Sendable {
         atomicWrite(claim.serialized(), to: claimsDir.appendingPathComponent(claim.id))
     }
 
-    public func removeClaim(id: String) {
-        try? FileManager.default.removeItem(at: claimsDir.appendingPathComponent(id))
+    /// False when the record is still on disk. A claim that is already gone
+    /// counts as removed — the guard and a human can race for the same claim,
+    /// and both should be told the truth, which is that it is not there.
+    ///
+    /// Same argument as `write` and `writeCap`, from the other end: `down`
+    /// swallowed this failure and announced a release anyway, so the response
+    /// contradicted itself in one line — "released" beside `claim_count: 1` —
+    /// while the Mac stayed awake against an explicit instruction to let go.
+    public func removeClaim(id: String) -> Bool {
+        let url = claimsDir.appendingPathComponent(id)
+        do {
+            try FileManager.default.removeItem(at: url)
+            return true
+        } catch {
+            return !FileManager.default.fileExists(atPath: url.path)
+        }
     }
 
     /// Retire: clean up a spike-written claim's recorded caffeinate child,
     /// remove the file, log why. The switch is settle()'s job, never this one's.
-    public func retire(_ claim: Claim, why: String, now: Int) {
+    ///
+    /// False when the file did not go. The `retire` event is emitted only on
+    /// the true path, so the stream never records an ending that did not
+    /// happen — the log carries the failure, because inventing an event kind
+    /// for it would change a contracted surface.
+    public func retire(_ claim: Claim, why: String, now: Int) -> Bool {
         if claim.legacyCaffeinatePid > 0 {
             kill(pid_t(claim.legacyCaffeinatePid), SIGTERM)
         }
-        removeClaim(id: claim.id)
+        guard removeClaim(id: claim.id) else {
+            log("ERROR: could not retire \(claim.owner) · \(why) — \(claimsDir.appendingPathComponent(claim.id).path) is still there",
+                now: now)
+            return false
+        }
         let reasonPart = claim.reason.isEmpty ? "" : " (\(claim.reason))"
         log("retired \(claim.owner)\(reasonPart) · \(why)", now: now)
         event("retire", now: now, [
@@ -73,6 +96,7 @@ public struct Ledger: Sendable {
             ("until", .int(claim.until)),
             ("why", .string(why)),
         ])
+        return true
     }
 
     // MARK: the cap
@@ -132,8 +156,19 @@ public struct Ledger: Sendable {
         return atomicWrite(text, to: capFile)
     }
 
-    public func clearCap() {
-        try? FileManager.default.removeItem(at: capFile)
+    /// False when the ceiling is still on disk. The asymmetry with `writeCap`
+    /// five lines up — whose failure was checked, above a comment saying why —
+    /// is what made this the worse half: `cap off` announced the lift on
+    /// stdout, in `--json` and on the event stream, and a passed cap that
+    /// survived its own lift then refused every new claim while naming the
+    /// command that had just succeeded as the fix.
+    public func clearCap() -> Bool {
+        do {
+            try FileManager.default.removeItem(at: capFile)
+            return true
+        } catch {
+            return !FileManager.default.fileExists(atPath: capFile.path)
+        }
     }
 
     // MARK: log + events
@@ -185,9 +220,14 @@ public struct Ledger: Sendable {
     /// a stale banner is worse than none.
     public func drainNotifications(now: Int, maxAge: Int = 120) -> [NotificationRequest] {
         let draining = spoolFile.appendingPathExtension("draining")
-        guard (try? FileManager.default.moveItem(at: spoolFile, to: draining)) != nil,
-              let text = try? String(contentsOf: draining, encoding: .utf8) else { return [] }
+        guard (try? FileManager.default.moveItem(at: spoolFile, to: draining)) != nil
+        else { return [] }
+        // Armed the moment the sentinel exists, not after the read. Registered
+        // below the read, its own failure path stranded the file it was there
+        // to remove — and a spool that can never be moved into place again is
+        // every banner, silently, forever.
         defer { try? FileManager.default.removeItem(at: draining) }
+        guard let text = try? String(contentsOf: draining, encoding: .utf8) else { return [] }
         var requests: [NotificationRequest] = []
         for line in text.split(separator: "\n") {
             guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8))
@@ -283,7 +323,14 @@ public struct Ledger: Sendable {
             claim.id = "legacy"
             claim.owner = "legacy"
         }
-        write(claim)
+        // The lease is deleted only once the claim it became is on disk.
+        // Deleting it either way lost the awake time it carried and logged a
+        // success about it — the one outcome this function exists to prevent.
+        guard write(claim) else {
+            log("ERROR: could not migrate the format=1 lease — it is left in place, and will be tried again",
+                now: now)
+            return
+        }
         try? FileManager.default.removeItem(at: leaseFile)
         log("migrated a format=1 lease into claim \(claim.id)", now: now)
         event("migrate", now: now, [
@@ -297,8 +344,19 @@ public struct Ledger: Sendable {
     /// Temp file then rename, so a racing reader never sees half a record.
     /// Returns whether the record actually landed; the temp file is cleaned up
     /// on the failure path rather than left behind next to real state.
+    ///
+    /// **The temp file is staged in `stateDir`, never in `claims/`.** Staging
+    /// it beside its destination put a second file into the one directory that
+    /// is enumerated as the list of live claims, and `claims()` cannot tell
+    /// them apart: both are regular files, both parse. The cleanup on the
+    /// failure path above is in-process only, so anything that ends the
+    /// process between the write and the rename — SIGKILL, a panic, power
+    /// loss — leaves that file behind as a claim nothing can remove.
+    ///
+    /// `stateDir` is enumerated by nobody, so debris there is inert. The
+    /// leading dot says the same thing to a person reading the directory.
     private func atomicWrite(_ text: String, to url: URL) -> Bool {
-        let tmp = url.appendingPathExtension("tmp.\(getpid())")
+        let tmp = stateDir.appendingPathComponent(".\(url.lastPathComponent).tmp.\(getpid())")
         do {
             try text.write(to: tmp, atomically: false, encoding: .utf8)
             _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)

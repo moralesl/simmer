@@ -23,8 +23,7 @@ public enum Tick {
         // a spent ceiling from sitting in the state directory looking live.
         // Before the empty-claims return, because an idle Mac is exactly where
         // yesterday's cap would otherwise wait.
-        if let stale = ledger.storedCap(), ctx.now >= stale.expires {
-            ledger.clearCap()
+        if let stale = ledger.storedCap(), ctx.now >= stale.expires, ledger.clearCap() {
             ledger.log("cap \(Formats.hhmm(stale.until)) expired at its \(Formats.hhmm(stale.expires)) rollover",
                        now: ctx.now)
             ledger.event("cap_expired", now: ctx.now, [
@@ -51,9 +50,13 @@ public enum Tick {
         // Heat: release everything and say so. Deliberately not a warning —
         // with the lid closed nobody sees a warning, and the machine cannot
         // vent on a duvet in a bag. A fact about the machine, not anyone's plan.
+        // The guard is the one caller allowed to ignore a retire that failed:
+        // it runs again in thirty seconds, `retire` has already logged why,
+        // and it announces nothing to anybody. Every caller that speaks —
+        // `down`, `cap off` — must check, because the speaking is the harm.
         if ctx.power.thermalPressure() {
             for claim in ledger.claims() {
-                ledger.retire(claim, why: "thermal pressure", now: ctx.now)
+                _ = ledger.retire(claim, why: "thermal pressure", now: ctx.now)
             }
             ledger.event("thermal_release", now: ctx.now, [])
             let (ok, settleOutcome) = Engine.settle(ctx: ctx, why: "thermal pressure — letting it cool")
@@ -70,7 +73,7 @@ public enum Tick {
 
             // Deadline passed — the claim's own, or the cap clipping it.
             if effective != 0 && ctx.now >= effective {
-                ledger.retire(claim, why: "time is up", now: ctx.now)
+                _ = ledger.retire(claim, why: "time is up", now: ctx.now)
                 continue
             }
 
@@ -78,8 +81,8 @@ public enum Tick {
             // claim rather than all at once, so an actor asking --min-battery
             // 60 cannot drag anyone else's time down with it (CONTRACTS.md § the claims ledger).
             if onBattery, let percent, percent <= claim.minBattery {
-                ledger.retire(claim, why: "battery \(percent)% below floor \(claim.minBattery)%",
-                              now: ctx.now)
+                _ = ledger.retire(claim, why: "battery \(percent)% below floor \(claim.minBattery)%",
+                                  now: ctx.now)
                 continue
             }
 
@@ -87,7 +90,7 @@ public enum Tick {
             // assumption behind the claim is gone, so it ends now, at 90%,
             // rather than at the floor hours later.
             if claim.requireAC && onBattery {
-                ledger.retire(claim, why: "charger unplugged (--require-ac)", now: ctx.now)
+                _ = ledger.retire(claim, why: "charger unplugged (--require-ac)", now: ctx.now)
                 continue
             }
 

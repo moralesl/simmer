@@ -25,6 +25,59 @@ import Testing
 }
 
 @Suite struct ClaimTests {
+    /// A reason is copied into the record verbatim and the parser is
+    /// last-key-wins, so a newline in it writes claim fields. `id=` was the
+    /// dangerous one: it renamed the claim out from under its own file, and
+    /// the claim then survived `down` and `down --all` while the guard
+    /// re-retired it on every tick. Reachable straight from the public CLI,
+    /// which is why it is asserted here rather than only against the parser.
+    @Test func aReasonCannotRenameItsClaimOutOfReach() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["60s", "-r", "build\nid=zzz", "--owner", "agent:evals"]).code == 0)
+        #expect(sim.switchValue == "1")
+        #expect(sim.run(["down", "--owner", "agent:evals"]).code == 0)
+        #expect(sim.run(["status", "--machine"]).out.contains("claim_count=0"))
+        #expect(sim.switchValue == "0")
+    }
+
+    /// The same injection against the deadline. The CLI announced the 30
+    /// minutes it had been asked for and recorded a claim that never expires —
+    /// told one thing, ledger holding another.
+    @Test func aReasonCannotRewriteItsOwnDeadline() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let take = sim.run(["30m", "-r", "build\nuntil=0", "--owner", "agent:x", "--json"])
+        #expect(take.code == 0)
+        let status = sim.run(["status", "--json"]).out
+        #expect(status.contains("\"state\":\"active\""))
+        #expect(!status.contains("\"state\":\"forever\""))
+        #expect(status.contains("\"until\":\(Sim.epoch + 1800)"))
+    }
+
+    /// And the owner, which is echoed back verbatim from inside the record.
+    @Test func anOwnerCannotCarryASecondRecordIntoTheLedger() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["30m", "-r", "work", "--owner", "agent:x\nuntil=0"]).code == 0)
+        #expect(sim.run(["status", "--json"]).out.contains("\"until\":\(Sim.epoch + 1800)"))
+    }
+
+    /// A release that did not reach the disk is refused, not announced. It
+    /// used to answer `{"action":"released", …, "claim_count":1}` at exit 0 —
+    /// contradicting itself inside one line while the Mac stayed awake against
+    /// an explicit instruction to let go.
+    @Test func downRefusesRatherThanAnnounceAReleaseThatDidNotHappen() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["2h", "-r", "work", "--owner", "test"]).code == 0)
+        sim.freezeClaims()
+        let down = sim.run(["down", "--owner", "test", "--json"])
+        #expect(down.code == 1)
+        #expect(!down.out.contains("\"released\""))
+        #expect(down.combined.contains("could not be removed"))
+        #expect(sim.switchValue == "1")
+        sim.unfreezeClaims()
+        #expect(sim.run(["down", "--owner", "test"]).code == 0)
+        #expect(sim.switchValue == "0")
+    }
+
     @Test func takeSetsSwitchAndDownClearsIt() {
         let sim = Sim(); defer { sim.tearDown() }
         let take = sim.run(["30m", "-r", "take", "--owner", "test"])

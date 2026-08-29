@@ -71,13 +71,25 @@ import Testing
 }
 
 @Suite struct ClaimCodec {
+    /// The round trip is through a FILE, and a claim's file is named for its
+    /// id — so the id comes back from the name it was stored under, which is
+    /// exactly what `Ledger` passes in.
     @Test func roundTrip() {
         let claim = Claim(owner: "agent:funnel", until: 100, started: 50,
                           reason: "a reason · with = signs", minBattery: 35,
                           requireAC: true, displayOn: true, warned: true,
                           prewarned: false, reminded: 42)
-        let parsed = Claim.parse(claim.serialized(), fallbackId: "x")
+        let parsed = Claim.parse(claim.serialized(), fallbackId: claim.id)
         #expect(parsed == claim)
+    }
+
+    /// A record may not rename itself. `write` and `removeClaim` key on the
+    /// id, so a parsed id that disagrees with the filename is a claim written
+    /// to one path and deleted from another — unreleasable through every
+    /// surface, and re-retired by every guard tick for as long as it lives.
+    @Test func theIdInsideARecordIsNotAuthoritative() {
+        let text = "format=2\nid=zzz\nowner=agent:evals\nuntil=9\n"
+        #expect(Claim.parse(text, fallbackId: "agent:evals").id == "agent:evals")
     }
 
     @Test func unknownKeysAreIgnoredFieldsAreAppendOnly() {
@@ -120,6 +132,8 @@ import Testing
             "agent:a b", "agent:a\tb", "agent:a|b", "agent:a\\b", "agent:a,b",
             // Non-ASCII: all of these flattened to the same underscores.
             "agent:über", "agent:öber", "agent:ober", "agent:发布", "agent:тест",
+            // Case: one file on APFS, and the pair that inverted human primacy.
+            "Terminal", "TERMINAL", "agent:Evals",
             // Traversal, which must stay neutralised AND stay distinguishable.
             "../../../../tmp/pwned", ".._.._.._.._tmp_pwned",
             // Safe names, to prove the two kinds cannot meet either.
@@ -128,12 +142,17 @@ import Testing
             String(repeating: "x", count: 400) + "/one",
             String(repeating: "x", count: 400) + "/two",
         ]
+        // Folded, because that is the comparison the disk makes. Comparing
+        // ids as Swift strings is a stricter notion of distinct than APFS's,
+        // and the gap between the two is where `Terminal` sat: two ids, one
+        // file, and the claim that got there first was gone without a trace.
         var seen: [String: String] = [:]
         for owner in owners {
             let id = Claim.sanitizedId(owner)
-            #expect(seen[id] == nil,
-                    "owners \(seen[id] ?? "?") and \(owner) share the claim id \(id)")
-            seen[id] = owner
+            let onDisk = id.lowercased()
+            #expect(seen[onDisk] == nil,
+                    "owners \(seen[onDisk] ?? "?") and \(owner) share the claim file \(id)")
+            seen[onDisk] = owner
         }
         #expect(seen.count == owners.count)
     }
@@ -319,6 +338,59 @@ import Testing
         #expect(ledger.readCap(now: 1000)?.until == 3000)
     }
 
+    /// The other half, and the one that was missing: a removal that did not
+    /// happen must say so, because the callers above it announce.
+    @Test func aClaimThatCannotBeRemovedReportsFalse() {
+        let (ledger, dir) = makeReadOnlyLedger()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700],
+                                                   ofItemAtPath: ledger.claimsDir.path)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        // Planted before the freeze would need the freeze undone; instead take
+        // the claim first, then freeze — which is the real shape anyway.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700],
+                                               ofItemAtPath: ledger.claimsDir.path)
+        let claim = Claim(owner: "terminal", until: 2000, started: 900)
+        #expect(ledger.write(claim))
+        try? FileManager.default.setAttributes([.posixPermissions: 0o500],
+                                               ofItemAtPath: ledger.claimsDir.path)
+
+        #expect(ledger.removeClaim(id: claim.id) == false)
+        #expect(ledger.retire(claim, why: "released by hand", now: 1000) == false)
+        #expect(ledger.claims().count == 1)
+        // And no `retire` event for an ending that did not happen.
+        let events = (try? String(contentsOf: ledger.eventsFile, encoding: .utf8)) ?? ""
+        #expect(!events.contains("\"retire\""))
+    }
+
+    /// A claim someone else already retired is gone, which is what the caller
+    /// asked for — a race with the guard is not a failure.
+    @Test func removingAClaimThatIsAlreadyGoneSucceeds() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-rm-\(UUID().uuidString)")
+        let ledger = Ledger(stateDir: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(ledger.removeClaim(id: "nobody") == true)
+    }
+
+    /// The cap's lift is checked the way its write already was.
+    @Test func aCapThatCannotBeLiftedReportsFalse() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-cap-\(UUID().uuidString)")
+        let ledger = Ledger(stateDir: dir)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700],
+                                                   ofItemAtPath: dir.path)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        #expect(ledger.writeCap(until: 3000, setBy: "terminal", now: 1000))
+        try? FileManager.default.setAttributes([.posixPermissions: 0o500],
+                                               ofItemAtPath: dir.path)
+        #expect(ledger.clearCap() == false)
+        #expect(ledger.storedCap() != nil)
+    }
+
     /// No leftovers next to real state when a write fails.
     @Test func aFailedWriteLeavesNoTempFileBehind() {
         let (ledger, dir) = makeReadOnlyLedger()
@@ -330,6 +402,75 @@ import Testing
         _ = ledger.write(Claim(owner: "test", until: 2000, started: 900))
         let entries = (try? FileManager.default.contentsOfDirectory(atPath: ledger.claimsDir.path)) ?? []
         #expect(entries.isEmpty)
+    }
+}
+
+/// A crash between `atomicWrite`'s temp file and its rename is the one failure
+/// the function cannot clean up after itself — the cleanup runs in a process
+/// that is already gone. So where the temp file lives is what decides whether
+/// the debris is inert or is a claim nothing can remove.
+@Suite struct CrashDebris {
+    func makeLedger() -> (Ledger, URL) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-debris-\(UUID().uuidString)")
+        return (Ledger(stateDir: dir), dir)
+    }
+
+    /// Staged in `stateDir`, which nothing enumerates. Before, it was staged
+    /// beside its destination — inside the one directory that IS the list of
+    /// live claims, where `claims()` cannot tell a record from a half-written
+    /// copy of one because both are regular files and both parse.
+    @Test func debrisFromAnInterruptedWriteIsNotALiveClaim() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(ledger.write(Claim(owner: "terminal", until: 2000, started: 900)))
+        let record = try! String(contentsOf: ledger.claimsDir.appendingPathComponent("terminal"),
+                                 encoding: .utf8)
+        try! record.write(to: ledger.stateDir.appendingPathComponent(".terminal.tmp.4242"),
+                          atomically: true, encoding: .utf8)
+
+        #expect(ledger.claims().count == 1)
+        ledger.retire(ledger.claims()[0], why: "released by hand", now: 1000)
+        #expect(ledger.claims().isEmpty)
+    }
+
+    /// Debris a version that staged inside `claims/` already left on a real
+    /// machine still enumerates — it is a regular file in the claims directory
+    /// and always was. What changed is that it can be got rid of: its id is now
+    /// the name it is stored under, so `retire` deletes the file it actually
+    /// read instead of one that may not exist.
+    @Test func debrisLeftByAnOlderVersionCanBeReleased() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stale = ledger.claimsDir.appendingPathComponent("terminal.tmp.4242")
+        try! "format=2\nid=terminal\nowner=terminal\nuntil=2000\nstarted=900\n"
+            .write(to: stale, atomically: true, encoding: .utf8)
+
+        #expect(ledger.claims().count == 1)
+        for claim in ledger.claims() {
+            ledger.retire(claim, why: "released by hand (all)", now: 1000)
+        }
+        #expect(ledger.claims().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: stale.path))
+    }
+
+    /// And it cannot bring itself back. A tick that updates a flag writes the
+    /// claim out again; keyed on the `id=` line, that wrote the debris back
+    /// under the name of the claim it was a copy of — so releasing the claim
+    /// recreated it, every thirty seconds, for as long as the Mac ran.
+    @Test func debrisDoesNotResurrectTheClaimItCopied() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stale = ledger.claimsDir.appendingPathComponent("terminal.tmp.4242")
+        try! "format=2\nid=terminal\nowner=terminal\nuntil=2000\nstarted=900\n"
+            .write(to: stale, atomically: true, encoding: .utf8)
+
+        var claim = ledger.claims()[0]
+        claim.warned = true                                   // what a tick does
+        #expect(ledger.write(claim))
+        #expect(!FileManager.default.fileExists(
+            atPath: ledger.claimsDir.appendingPathComponent("terminal").path))
+        #expect(ledger.claims().count == 1)
     }
 }
 

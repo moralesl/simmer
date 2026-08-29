@@ -40,8 +40,18 @@ extension Commands {
                 outcome.merge(.failure("only a person can lift the cap", json: json))
                 return outcome
             }
-            if ctx.ledger.storedCap() != nil {
-                ctx.ledger.clearCap()
+            if let stored = ctx.ledger.storedCap() {
+                // An announced lift that did not reach disk is not a lift —
+                // the mirror of the guard on `writeCap`. Said otherwise, the
+                // ceiling would go on refusing claims while naming this
+                // command as the way out of it.
+                guard ctx.ledger.clearCap() else {
+                    ctx.ledger.log("ERROR: could not lift the cap", now: ctx.now)
+                    outcome.merge(.failure(
+                        "could not remove \(ctx.ledger.capFile.path) — the cap is still in force, and lifts itself at \(Formats.hhmm(stored.expires)). Run 'simmer doctor'",
+                        json: json))
+                    return outcome
+                }
                 ctx.ledger.log("cap lifted by \(ctx.owner)", now: ctx.now)
                 ctx.ledger.event("cap_lifted", now: ctx.now, [("by", .string(ctx.owner))])
                 outcome.stdout.append(json

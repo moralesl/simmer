@@ -78,7 +78,51 @@ import Testing
     }
 }
 
+@Suite struct OwnerCaseTests {
+    /// APFS folds case, so `Terminal` and `terminal` were one claim file. The
+    /// second claim destroyed the first — a four-hour human claim replaced by
+    /// a one-minute one, no refusal, no stderr, and no `retire` event, so the
+    /// audit trail could not show that the claim had ever died.
+    @Test func aCapitalisedNameCannotTakeOverAHumansClaim() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["4h", "-r", "overnight render", "--owner", "terminal"]).code == 0)
+        #expect(sim.run(["1m", "-r", "quick lint", "--owner", "Terminal"]).code == 0)
+
+        let status = sim.run(["status", "--machine"]).out
+        #expect(status.contains("claim_count=2"))
+        // The human's four hours is still the deadline that holds.
+        #expect(status.contains("left_short=4h00"))
+        #expect(sim.run(["status"]).out.contains("overnight render"))
+    }
+
+    /// And the capitalised spelling is the same person, not a second actor
+    /// that outranks them — `Terminal` is what the app calls itself.
+    @Test func theHumanNamesAreRecognisedWhateverTheirCase() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["cap", "10m", "--owner", "Terminal"]).code == 0)
+        #expect(sim.run(["cap", "off", "--owner", "MenuBar"]).code == 0)
+        #expect(sim.run(["cap", "10m", "--owner", "agent:evals"]).code == 1)
+    }
+}
+
 @Suite struct CapTests {
+    /// `cap off` announced the lift on stdout, in `--json` and on the event
+    /// stream without checking that the file had gone — so a passed cap could
+    /// survive its own lift and go on refusing every claim while naming this
+    /// command as the way out of it.
+    @Test func capOffRefusesRatherThanAnnounceALiftThatDidNotHappen() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["cap", "10m", "--owner", "terminal"]).code == 0)
+        sim.freezeState()
+        let lift = sim.run(["cap", "off", "--owner", "terminal", "--json"])
+        #expect(lift.code == 1)
+        #expect(!lift.out.contains("cap_lifted"))
+        sim.unfreezeState()
+        #expect(sim.capUntil != nil)
+        #expect(sim.run(["cap", "off", "--owner", "terminal"]).code == 0)
+        #expect(sim.capUntil == nil)
+    }
+
     @Test func onlyAHumanSetsOrLiftsTheCap() {
         let sim = Sim(); defer { sim.tearDown() }
         let set = sim.run(["cap", "10m", "--owner", "agent"])

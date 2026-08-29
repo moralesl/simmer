@@ -44,10 +44,10 @@ public struct Claim: Sendable, Equatable {
                 displayOn: Bool = false, warned: Bool = false, prewarned: Bool = false,
                 reminded: Int = 0, legacyCaffeinatePid: Int = 0) {
         self.id = Claim.sanitizedId(owner)
-        self.owner = owner
+        self.owner = Claim.singleLine(owner)
         self.until = until
         self.started = started
-        self.reason = reason
+        self.reason = Claim.singleLine(reason)
         self.minBattery = minBattery
         self.requireAC = requireAC
         self.displayOn = displayOn
@@ -83,15 +83,32 @@ public struct Claim: Sendable, Equatable {
     /// the honest version: two mangled owners can still meet, at even odds
     /// around 77,000 distinct ones on a single Mac. The failure it replaces
     /// needed two.
+    /// **Case is part of the flattening, because APFS says it is.** Two ids
+    /// that differ only in case are one file on a stock Mac, so `Terminal`
+    /// addressed `terminal`'s claim: it destroyed a human's four-hour claim,
+    /// replaced it with a one-minute one, said nothing, and left no `retire`
+    /// event — the audit trail could not show the claim had ever died. And it
+    /// inverted human primacy on the way through, since `isHumanOwnerName`
+    /// matched exactly and so read the capitalised name as a non-human actor.
+    ///
+    /// `Makefile:app` already carries this rule for the two executables —
+    /// "APFS is case-insensitive, so Simmer and the CLI simmer would silently
+    /// be the same file". The ledger is the same filesystem.
+    ///
+    /// The test that was meant to catch it compared ids as Swift strings,
+    /// which is a stricter notion of distinct than the filesystem's; it now
+    /// compares them folded, the way the disk will.
     public static func sanitizedId(_ owner: String) -> String {
         let flattened = String(owner.map { char in
             char.isASCII && (char.isLetter || char.isNumber || "._:-".contains(char)) ? char : "_"
         })
         // Flattening maps every non-ASCII scalar to "_", so `flattened` is
-        // pure ASCII and its character count IS its byte count.
-        let overlong = flattened.count > idStemBudget
-        guard flattened != owner || overlong else { return flattened }
-        let stem = overlong ? String(flattened.prefix(idStemBudget)) : flattened
+        // pure ASCII — its character count IS its byte count, and lowercasing
+        // it cannot change either.
+        let folded = flattened.lowercased()
+        let overlong = folded.count > idStemBudget
+        guard folded != owner || overlong else { return folded }
+        let stem = overlong ? String(folded.prefix(idStemBudget)) : folded
         return "\(stem)-\(fingerprint(owner))"
     }
 
@@ -108,9 +125,33 @@ public struct Claim: Sendable, Equatable {
     /// directory reports itself writable, because it is. Truncating instead is
     /// only safe because the fingerprint is taken over the WHOLE owner, so
     /// cutting the stem cannot merge two names that differ only past the cut.
-    static let idTempSuffix = ".tmp.".count + 8   // macOS pids are ≤ 5 digits
+    /// The staged name is `.<id>.tmp.<pid>` — a leading dot and the suffix.
+    static let idTempSuffix = 1 + ".tmp.".count + 8   // macOS pids are ≤ 5 digits
     static let idBudget = 255 - idTempSuffix
     static let idStemBudget = idBudget - 1 - 8    // the "-" and the fingerprint
+
+    /// The two fields that are copied into the record verbatim, made unable to
+    /// carry a line ending.
+    ///
+    /// The format is newline-delimited `key=value` and the parser is
+    /// last-key-wins, so a newline inside `reason` wrote claim fields:
+    /// `-r "build⏎until=0"` printed "simmering until 00:12 (30 min)" and
+    /// persisted a claim that never expires. A commit message, or any text an
+    /// agent composed, is a plausible source — and this tool is driven by
+    /// agents, which makes it an ordinary input rather than an attack.
+    ///
+    /// Normalised here rather than at the CLI so that every path into a claim
+    /// goes through it, and so what a surface prints is what the ledger holds.
+    /// Refusing was the alternative; a reason is a one-line label for a menu
+    /// bar, so folding the whitespace keeps the text the caller meant and
+    /// still cannot express a second record.
+    static func singleLine(_ text: String) -> String {
+        let folded = String(text.map { char in
+            char.isNewline || char.unicodeScalars.allSatisfy({ CharacterSet.controlCharacters.contains($0) })
+                ? " " : char
+        })
+        return folded.trimmingCharacters(in: .whitespaces)
+    }
 
     /// A stable fingerprint of the raw owner, in hex so it is filename-safe.
     ///
@@ -150,13 +191,35 @@ public struct Claim: Sendable, Equatable {
     }
 
     /// Unknown keys are ignored — that is what lets fields be append-only.
+    ///
+    /// **The id is the file's NAME, never the `id=` line inside it.** A record
+    /// that could rename itself is a record no one can address: `write` and
+    /// `removeClaim` key on the id, so a claim whose parsed id had drifted from
+    /// its filename was written to one path and deleted from another. It then
+    /// survived `down`, survived `down --all`, and had its `retire` event
+    /// appended by every guard tick for as long as the machine ran.
+    ///
+    /// Two ways to get there, and the reason this is a parser rule rather than
+    /// a check at either call site:
+    ///
+    /// - the record wrote it — `reason` is copied in verbatim and the parser is
+    ///   last-key-wins, so a reason carrying a newline and `id=` set it; and
+    /// - nobody wrote it — a crash between `atomicWrite`'s temp file and its
+    ///   rename left a second file whose contents named the *original* id, so
+    ///   every tick wrote it faithfully back out under that name. The debris
+    ///   resurrected the claim it was a copy of, indefinitely.
+    ///
+    /// Naming the file is what settles it: a claim lives at exactly one path,
+    /// and that path is the only thing that says who it is. `id=` stays in the
+    /// record because `cat claims/<x>` should still read as a whole claim — it
+    /// is a copy for a reader, not an authority for the parser.
     public static func parse(_ text: String, fallbackId: String) -> Claim {
         var fields: [String: String] = [:]
         for line in text.split(separator: "\n") {
             guard let eq = line.firstIndex(of: "=") else { continue }
             fields[String(line[..<eq])] = String(line[line.index(after: eq)...])
         }
-        let id = fields["id"].flatMap { $0.isEmpty ? nil : $0 } ?? fallbackId
+        let id = fallbackId
         let owner = fields["owner"].flatMap { $0.isEmpty ? nil : $0 } ?? id
         var claim = Claim(
             owner: owner,

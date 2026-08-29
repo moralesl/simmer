@@ -27,7 +27,9 @@ struct Sim {
 
     func tearDown() {
         // A test may have frozen the claims directory; a 0500 directory cannot
-        // be emptied, so restore it before removing the tree.
+        // be emptied, so restore it before removing the tree. State first —
+        // a frozen parent is what stops the child's permissions being changed.
+        unfreezeState()
         unfreezeClaims()
         try? FileManager.default.removeItem(at: root)
     }
@@ -48,6 +50,21 @@ struct Sim {
         guard FileManager.default.fileExists(atPath: claimsDir.path) else { return }
         try? FileManager.default.setAttributes([.posixPermissions: 0o700],
                                                ofItemAtPath: claimsDir.path)
+    }
+
+    /// The same shape one level up, for the records that live beside `claims/`
+    /// rather than inside it — the cap above all, whose lift is the other
+    /// place a surface announced a removal it had not managed.
+    func freezeState() {
+        try? FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o500],
+                                               ofItemAtPath: stateDir.path)
+    }
+
+    func unfreezeState() {
+        guard FileManager.default.fileExists(atPath: stateDir.path) else { return }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700],
+                                               ofItemAtPath: stateDir.path)
     }
 
     var capUntil: Int? {

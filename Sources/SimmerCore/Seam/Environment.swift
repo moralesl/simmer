@@ -85,8 +85,12 @@ public struct SimmerEnvironment: Sendable {
         return Self.isHumanOwnerName(owner)
     }
 
+    /// Case-insensitively, because these are names of surfaces a person sits
+    /// at rather than identifiers: `Terminal` is the app's own spelling, and
+    /// reading it as a different, non-human actor is what let a capitalised
+    /// name outrank the human it shares a claim file with on APFS.
     public static func isHumanOwnerName(_ owner: String) -> Bool {
-        ["terminal", "menubar", "raycast", "alfred"].contains(owner)
+        ["terminal", "menubar", "raycast", "alfred"].contains(owner.lowercased())
     }
 
     // MARK: run's renewal clocks
