@@ -585,3 +585,46 @@ import Testing
         #expect(ordinary.owner == "agent:evals")
     }
 }
+
+@Suite struct BatteryEstimateParsing {
+    /// Real pmset lines. The discharging one cannot be observed on a Mac that
+    /// happens to be plugged in, which is why the parser is separable.
+    @Test func pmsetLinesAreReadOrHonestlyRefused() {
+        #expect(SeamPowerSystem.parseRemaining(
+            " -InternalBattery-0 (id=5439587)\t85%; discharging; 3:42 remaining present: true") == 13_320)
+        #expect(SeamPowerSystem.parseRemaining(
+            " -InternalBattery-0 (id=5439587)\t85%; discharging; (no estimate) present: true") == nil)
+        // Charging prints 0:00 — about the charge, not the discharge.
+        #expect(SeamPowerSystem.parseRemaining(
+            " -InternalBattery-0 (id=5439587)\t99%; finishing charge; 0:00 remaining present: true") == nil)
+        #expect(SeamPowerSystem.parseRemaining("Now drawing from 'AC Power'") == nil)
+    }
+}
+
+/// A facet is faked wholesale or not at all. Half of one is worse than
+/// neither: it passes on the machine the developer happens to be using.
+@Suite struct SeamFacetIsolation {
+    /// `SIMMER_FAKE_BATTERY` without `SIMMER_FAKE_BATTERY_TIME` used to fall
+    /// through to the real `pmset -g batt`, so a test that faked "21%, on
+    /// battery" read THIS Mac's actual time-to-empty. It went unnoticed
+    /// because a plugged-in Mac has no estimate to leak — the suite only
+    /// turned red when it was run unplugged.
+    @Test func aFakedBatteryNeverReadsTheRealOne() {
+        let faked = SeamPowerSystem(env: ["SIMMER_FAKE_BATTERY": "21:1"],
+                                    allowInteractiveSudo: false)
+        #expect(faked.batteryPercent() == 21)
+        #expect(faked.onBattery())
+        #expect(faked.batterySecondsRemaining() == nil)
+    }
+
+    /// And the time is expressible on its own terms, including the state pmset
+    /// is in for the first minute after every unplug.
+    @Test func theFakedBatteryCarriesItsOwnEstimate() {
+        func system(_ time: String) -> SeamPowerSystem {
+            SeamPowerSystem(env: ["SIMMER_FAKE_BATTERY": "60:1", "SIMMER_FAKE_BATTERY_TIME": time],
+                            allowInteractiveSudo: false)
+        }
+        #expect(system("2400").batterySecondsRemaining() == 2400)
+        #expect(system("none").batterySecondsRemaining() == nil)
+    }
+}

@@ -12,6 +12,14 @@ public protocol PowerSystem: Sendable {
     /// 0–100, nil when unreadable (a Mac with no battery).
     func batteryPercent() -> Int?
     func onBattery() -> Bool
+    /// macOS's own estimate of seconds until the battery is empty, or nil when
+    /// it has none — on AC, or while it is still calibrating after a wake.
+    ///
+    /// Deliberately the system's number and not one simmer computes: it is the
+    /// same estimate the menu bar shows, it already accounts for the current
+    /// load, and inventing a second discharge model would be guesswork wearing
+    /// a number's clothes.
+    func batterySecondsRemaining() -> Int?
     /// Any thermal warning level counts — heat ends everything (CONTRACTS.md).
     func thermalPressure() -> Bool
     /// Seconds the screen stays unlocked after the lid closes; nil = unreadable.
@@ -26,17 +34,20 @@ public final class TestPowerSystem: PowerSystem, @unchecked Sendable {
     public var battPower: Bool
     public var thermal: Bool
     public var lockDelay: Int?
+    /// nil = macOS has no estimate, which is a real and common state.
+    public var secondsRemaining: Int?
     /// Set false to simulate a missing sudo rule.
     public var switchWritable: Bool = true
     public private(set) var switchWrites: [Bool] = []
 
     public init(disabled: Bool = false, battery: Int? = 80, onBattery: Bool = false,
-                thermal: Bool = false, lockDelay: Int? = 0) {
+                thermal: Bool = false, lockDelay: Int? = 0, secondsRemaining: Int? = nil) {
         self.disabled = disabled
         self.battery = battery
         self.battPower = onBattery
         self.thermal = thermal
         self.lockDelay = lockDelay
+        self.secondsRemaining = secondsRemaining
     }
 
     public func sleepDisabled() -> Bool { disabled }
@@ -48,6 +59,7 @@ public final class TestPowerSystem: PowerSystem, @unchecked Sendable {
     }
     public func batteryPercent() -> Int? { battery }
     public func onBattery() -> Bool { battPower }
+    public func batterySecondsRemaining() -> Int? { secondsRemaining }
     public func thermalPressure() -> Bool { thermal }
     public func lockDelaySeconds() -> Int? { lockDelay }
 }
@@ -105,6 +117,42 @@ public struct SeamPowerSystem: PowerSystem {
             return fake.split(separator: ":").last.map(String.init) == "1"
         }
         return Shell.run(Self.pmset, ["-g", "batt"]).stdout.contains("'Battery Power'")
+    }
+
+    public func batterySecondsRemaining() -> Int? {
+        if let fake = env["SIMMER_FAKE_BATTERY_TIME"] {
+            // "none" is the calibrating state, which has to be expressible:
+            // it is what pmset reports for minutes after every wake.
+            return fake == "none" ? nil : Int(fake)
+        }
+        // A faked battery has no real estimate to offer. Without this, a test
+        // that fakes "on battery" and says nothing about the time fell through
+        // to the REAL pmset — so the facet was half seamed, and the half that
+        // leaked was invisible on any Mac that happened to be plugged in.
+        //
+        // Found by running the suite unplugged: a test asserting `fits == true`
+        // at a faked 21% started failing because it had picked up this
+        // machine's actual 8:46 remaining. On AC it would have passed forever.
+        guard env["SIMMER_FAKE_BATTERY"] == nil else { return nil }
+        // Charging, pmset still prints a "0:00 remaining" — about the charge,
+        // not the discharge. Only a discharging battery has an estimate worth
+        // reading, so the AC case answers nil before any parsing happens.
+        guard onBattery() else { return nil }
+        return Self.parseRemaining(Shell.run(Self.pmset, ["-g", "batt"]).stdout)
+    }
+
+    /// `85%; discharging; 3:42 remaining` → 13320. `(no estimate)` → nil.
+    /// Split out so it can be tested against real pmset lines without a Mac
+    /// that happens to be unplugged at the time.
+    static func parseRemaining(_ out: String) -> Int? {
+        guard let range = out.range(of: #"[0-9]+:[0-9]{2} remaining"#,
+                                    options: .regularExpression) else { return nil }
+        let parts = out[range].split(separator: " ")[0].split(separator: ":")
+        guard parts.count == 2, let h = Int(parts[0]), let m = Int(parts[1]) else { return nil }
+        let seconds = h * 3600 + m * 60
+        // pmset prints 0:00 both for "no idea yet" and for "about to die"; the
+        // second is not something to bet unattended work on either way.
+        return seconds > 0 ? seconds : nil
     }
 
     public func thermalPressure() -> Bool {

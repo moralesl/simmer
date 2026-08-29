@@ -36,6 +36,22 @@ extension Commands {
         // `status`, so a caller can see the risk without a second call.
         let battery = ctx.power.batteryPercent()
         let onBattery = ctx.power.onBattery()
+
+        /// Seconds until the battery reaches THIS aggregate's floor, from
+        /// macOS's own time-to-empty estimate — the number the menu bar shows,
+        /// scaled by how much of the charge sits above the floor.
+        ///
+        /// Linear, which is the same assumption the system's own estimate
+        /// already embodies; refining it would be a second discharge model
+        /// disagreeing with the first. nil whenever there is nothing to be
+        /// honest with: on AC, while pmset is still calibrating, or when the
+        /// battery is already at or under the floor.
+        func secondsToFloor() -> Int? {
+            guard onBattery, let percent = battery, let toEmpty = ctx.power.batterySecondsRemaining(),
+                  percent > aggregate.minBattery, percent > 0 else { return nil }
+            return toEmpty * (percent - aggregate.minBattery) / percent
+        }
+        let floorSeconds = secondsToFloor()
         // Said out loud on the human surface for the same reason it is a field
         // on the machine one: the deadline is not what is about to end this.
         if !bareSeconds && !json, aggregate.count > 0, onBattery,
@@ -53,6 +69,10 @@ extension Commands {
                 ("battery", battery.map { JSONValue.int($0) } ?? .null),
                 ("on_battery", .int(onBattery ? 1 : 0)),
                 ("min_battery", .int(aggregate.minBattery)),
+                // The second clock, spelled out beside the first so a caller
+                // can see WHICH one `seconds_left` came from. null on AC and
+                // whenever macOS has no estimate to scale.
+                ("battery_seconds_left", floorSeconds.map { JSONValue.int($0) } ?? .null),
                 ("claim_count", .int(aggregate.count)),
                 ("cap", .int(aggregate.cap)),
                 ("capped", .bool(aggregate.capped)),
@@ -81,21 +101,37 @@ extension Commands {
             return outcome
         }
 
+        // The guarantee is the EARLIEST of the clocks, and a deadline is only
+        // one of them. `fits` and the exit code answer about the guarantee;
+        // `seconds_left` keeps its contracted meaning — the deadline clock,
+        // -1 for no deadline — and `battery_seconds_left` carries the other,
+        // so no existing field changed what it means.
+        func fitsWithin(_ deadlineLeft: Int?) -> Bool? {
+            guard needSeconds > 0 else { return nil }
+            let clocks = [deadlineLeft, floorSeconds].compactMap { $0 }
+            guard let earliest = clocks.min() else { return true }  // no clock at all
+            return earliest >= needSeconds
+        }
+
         if aggregate.until == 0 {
             if json {
-                emitJSON(fits: needSeconds > 0 ? .bool(true) : .null,
+                emitJSON(fits: fitsWithin(nil).map { JSONValue.bool($0) } ?? .null,
                          secondsLeft: .int(-1), state: "forever")
             } else if bareSeconds {
                 outcome.stdout.append("-1")
             } else {
                 let reasonPart = aggregate.reason.isEmpty ? "" : " · \(aggregate.reason)"
                 outcome.stdout.append("no deadline — running for \(Durations.human(ctx.now - aggregate.since))\(reasonPart)")
+                if let floorSeconds, needSeconds > 0, floorSeconds < needSeconds {
+                    outcome.stdout.append("❌ \(Durations.human(needSeconds)) does not fit — the battery reaches its floor in about \(Durations.human(floorSeconds))")
+                }
             }
+            if fitsWithin(nil) == false { outcome.exit = 1 }
             return outcome
         }
 
         let left = aggregate.left
-        let fits: Bool? = needSeconds > 0 ? left >= needSeconds : nil
+        let fits = fitsWithin(left)
         if json {
             emitJSON(fits: fits.map { JSONValue.bool($0) } ?? .null,
                      secondsLeft: .int(left), state: "active")
@@ -108,9 +144,15 @@ extension Commands {
             // a person at a terminal cannot see an exit code: fit and no-fit
             // printed the identical line, which made --need look broken.
             if let fits {
-                outcome.stdout.append(fits
-                    ? "✅ \(Durations.human(needSeconds)) fits"
-                    : "❌ \(Durations.human(needSeconds)) does not fit — \(Durations.human(needSeconds - left)) short")
+                if fits {
+                    outcome.stdout.append("✅ \(Durations.human(needSeconds)) fits")
+                } else if let floorSeconds, floorSeconds < left {
+                    // Name the clock that actually runs out first, or the
+                    // reader is told they are short on time they do have.
+                    outcome.stdout.append("❌ \(Durations.human(needSeconds)) does not fit — the battery reaches its floor in about \(Durations.human(floorSeconds)), before the deadline")
+                } else {
+                    outcome.stdout.append("❌ \(Durations.human(needSeconds)) does not fit — \(Durations.human(needSeconds - left)) short")
+                }
             }
             // The truthful answer to "why can I not have more", so an agent at
             // the ceiling reports it instead of retrying with a bigger number.

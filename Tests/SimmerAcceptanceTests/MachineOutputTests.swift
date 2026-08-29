@@ -754,3 +754,90 @@ import Testing
         #expect(sim.run(["budget", "--seconds"]).out.split(separator: "\n").count == 1)
     }
 }
+
+/// The guarantee is the EARLIEST of the clocks, and a deadline is only one of
+/// them. On battery the floor is usually the first to arrive.
+///
+/// **The seam below was checked against real hardware**, unplugged, on
+/// 2026-08-28 — because a fake battery proving a battery feature is exactly
+/// the shape that passes while the real path is broken. What the Mac said,
+/// and what simmer made of it:
+///
+///     pmset: 100%; discharging; 8:46 remaining      → 31,560s to empty
+///     floor 20%  → battery_seconds_left  25,248s    (31,560 × 80/100)
+///     floor 90%  → battery_seconds_left   3,156s    (31,560 × 10/100)
+///
+/// and each of the four states the estimate can be in was observed live:
+/// `(no estimate)` for the first ~40s after unplugging (null, deadline answers
+/// alone), the estimate binding later than the deadline (nothing changes), the
+/// estimate binding FIRST (refused, naming the battery), and the same under an
+/// open-ended claim (refused, `seconds_left` still -1).
+@Suite struct BudgetAgainstTheBatteryClockTests {
+    /// 4h of deadline, and macOS says 40 minutes to empty from 60% with a
+    /// floor of 20% — so two thirds of that, ~27 min, is the real guarantee.
+    /// `fits` used to answer about the deadline alone and said yes to three
+    /// hours of work the guard would end in half an hour.
+    static let dying = ["SIMMER_FAKE_BATTERY": "60:1", "SIMMER_FAKE_BATTERY_TIME": "2400"]
+
+    @Test func aNeedBeyondTheBatteryFloorDoesNotFit() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "long", "--owner", "agent:x", "--min-battery", "20"], env: Self.dying)
+
+        let result = sim.run(["budget", "--need", "3h", "--json"], env: Self.dying)
+        #expect(result.code == 1)
+        let object = sim.json(result)
+        #expect(object["fits"] as? Bool == false)
+        // seconds_left keeps its contracted meaning: the DEADLINE clock.
+        #expect(object["seconds_left"] as? Int == 14400)
+        // The second clock is its own field. 2400 * (60-20)/60 = 1600.
+        #expect(object["battery_seconds_left"] as? Int == 1600)
+
+        // And the human line names the clock that runs out first, rather than
+        // reporting a shortfall against time the caller does have.
+        let human = sim.run(["budget", "--need", "3h"], env: Self.dying)
+        #expect(human.out.contains("battery reaches its floor"))
+        #expect(!human.out.contains("short"))
+    }
+
+    /// Inside the battery's own window it still fits — this must not become a
+    /// blanket refusal whenever the charger is out.
+    @Test func aNeedInsideTheBatteryWindowStillFits() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "long", "--owner", "agent:x", "--min-battery", "20"], env: Self.dying)
+        let result = sim.run(["budget", "--need", "20m", "--json"], env: Self.dying)
+        #expect(result.code == 0)
+        #expect(sim.json(result)["fits"] as? Bool == true)
+    }
+
+    /// An open-ended claim has no deadline at all, so the battery is the only
+    /// clock there is — and `fits` was unconditionally true.
+    @Test func anOpenEndedClaimIsStillBoundedByTheBattery() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["forever", "-r", "render", "--owner", "agent:x"], env: Self.dying)
+        let result = sim.run(["budget", "--need", "3h", "--json"], env: Self.dying)
+        #expect(result.code == 1)
+        #expect(sim.json(result)["fits"] as? Bool == false)
+        // -1 still means "no deadline". That contract did not move.
+        #expect(sim.json(result)["seconds_left"] as? Int == -1)
+    }
+
+    /// macOS has no estimate for minutes after every wake. Nothing is invented
+    /// to fill the gap: the deadline answers alone, as it always did.
+    @Test func noEstimateMeansTheDeadlineAnswersAlone() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let calibrating = ["SIMMER_FAKE_BATTERY": "60:1", "SIMMER_FAKE_BATTERY_TIME": "none"]
+        sim.run(["4h", "-r", "long", "--owner", "agent:x"], env: calibrating)
+        let result = sim.run(["budget", "--need", "3h", "--json"], env: calibrating)
+        #expect(result.code == 0)
+        #expect(sim.json(result)["battery_seconds_left"] is NSNull)
+    }
+
+    /// On AC there is no second clock and nothing changes.
+    @Test func onACTheAnswerIsTheDeadlineAndNothingElse() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "long", "--owner", "agent:x"])
+        let object = sim.json(sim.run(["budget", "--need", "3h", "--json"]))
+        #expect(object["fits"] as? Bool == true)
+        #expect(object["battery_seconds_left"] is NSNull)
+    }
+}
