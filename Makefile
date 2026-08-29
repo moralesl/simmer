@@ -145,6 +145,15 @@ app: build
 
 install: app
 	mkdir -p $(PREFIX) $(BIN_DIR)
+	@# Quit the running app BEFORE its bundle is replaced. Otherwise the
+	@# process keeps running the old executable — the files change underneath
+	@# it and nothing tells anyone — so the menu bar, the event-driven half of
+	@# the guard and the notification identity are all the previous version
+	@# against the new ledger, until the next logout. `open` afterwards would
+	@# not fix it either: LaunchServices resolves it to the process that is
+	@# already there and just activates it.
+	@-osascript -e 'tell application id "$(BUNDLE_ID)" to quit' 2>/dev/null || true
+	@for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -qx simmer-app || break; sleep 0.3; done
 	# Unregister whatever bundle id the outgoing app carried BEFORE deleting
 	# it — a registration that outlives its bundle is exactly the stale-entry
 	# ghost PLATFORM-FACTS documents.

@@ -100,8 +100,12 @@ final class SetupWindow: NSObject {
         icon.heightAnchor.constraint(equalToConstant: 40).isActive = true
         let heading = NSTextField(labelWithString: "Simmer needs three things, once.")
         heading.font = .systemFont(ofSize: 15, weight: .semibold)
+        // The version, here, because this window is where someone lands when
+        // something is wrong — and "which version is this" is the first
+        // question, especially since an upgrade replaces the app underneath a
+        // running one.
         let subheading = NSTextField(labelWithString:
-            "Everything here is reversible, and nothing is asked twice.")
+            "simmer \(SimmerVersion.string) · everything here is reversible, and nothing is asked twice.")
         subheading.font = .systemFont(ofSize: 11)
         subheading.textColor = .secondaryLabelColor
         let headingStack = NSStackView(views: [heading, subheading])

@@ -116,6 +116,41 @@ import Testing
     /// the Dock inherits none of the shell's environment, so a shell exporting
     /// XDG_STATE_HOME put the app on one ledger and the CLI on another — two
     /// halves settling the same switch against each other, converging never.
+    /// Both version keys move with the release.
+    ///
+    /// `CFBundleShortVersionString` was substituted and `CFBundleVersion` was
+    /// the literal `1`, forever — so every build looked like the same build to
+    /// LaunchServices, which is the registry that decides which copy of an app
+    /// is the current one.
+    @Test func theBundleCarriesTheVersionInBothKeys() throws {
+        let plist = try Self.read("app/Info.plist.template")
+        for key in ["CFBundleShortVersionString", "CFBundleVersion"] {
+            guard let range = plist.range(of: "<key>\(key)</key>") else {
+                Issue.record("no \(key) in the bundle template")
+                continue
+            }
+            let after = plist[range.upperBound...].prefix(60)
+            #expect(after.contains("@VERSION@"), "\(key) does not move with the release")
+        }
+    }
+
+    /// `make install` replaces the bundle under a running app, so the process
+    /// keeps executing the old binary — menu bar, event tick and notification
+    /// identity all one version behind the ledger, with nothing saying so, and
+    /// `open` afterwards just activates the process that is already there.
+    @Test func installQuitsTheAppBeforeReplacingIt() throws {
+        let makefile = try Self.read("Makefile")
+        let body = (makefile.components(separatedBy: "\ninstall: app").last ?? "")
+            .components(separatedBy: "\nuninstall:").first ?? ""
+        guard let quit = body.range(of: "to quit"),
+              let replace = body.range(of: "cp -R $(STAGED_APP) $(APP)") else {
+            Issue.record("install no longer both quits and replaces")
+            return
+        }
+        #expect(quit.lowerBound < replace.lowerBound)
+        #expect(body.contains("pgrep -qx simmer-app"))
+    }
+
     @Test func theAppIsToldWhichLedgerToRead() throws {
         let plist = try Self.read("app/Info.plist.template")
         #expect(plist.contains("SimmerStateHome"))
