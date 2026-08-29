@@ -242,6 +242,24 @@ struct DoctorCLI: ParsableCommand {
         rows.append(Row(id: "claims_writable", label: "claims directory writable",
                         ok: FileManager.default.isWritableFile(atPath: ctx.ledger.claimsDir.path)))
 
+        // Writable was the only thing asked about what is IN there, and both
+        // defects that held a Mac awake indefinitely were shapes in this
+        // directory — one of them for ten simulated days under a green report.
+        // A file nothing can act on is a failure: it is the exact state where
+        // every other surface still says fine.
+        let unsound = ctx.ledger.unsoundClaimFiles()
+        if unsound.isEmpty {
+            rows.append(Row(id: "claims_sound",
+                            label: "every claim file is one its owner can address", ok: true))
+        } else {
+            rows.append(Row(
+                id: "claims_sound",
+                label: "\(unsound.count) file(s) in the claims directory that no owner can release.",
+                ok: false,
+                detail: unsound.map { "  \($0.name) — \($0.why)" }
+                    + ["End them with: simmer down --all   (a person's command)"]))
+        }
+
         // The agent protocol, which is the one installed thing whose going
         // stale is completely silent: agents keep reading it and it keeps
         // looking fine. Never red — an out-of-date document is not a broken

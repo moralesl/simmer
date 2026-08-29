@@ -866,6 +866,45 @@ import Testing
     }
 
     /// At or below the floor the clock has run out; that is `0`, not absent.
+    /// The floor is decided from the percentage alone, BEFORE any estimate is
+    /// read — because `pmset` has none for minutes after every wake, and the
+    /// zero-at-the-floor verdict used to sit behind that read. Below the floor
+    /// with no estimate therefore fell out as "no constraint", and `budget`
+    /// answered `fits: true` at exit 0 about a claim the next guard tick ends.
+    ///
+    /// `Tick` retires on `percent <= minBattery` and consults no clock to do
+    /// it. Neither does this.
+    @Test(arguments: ["15:1", "20:1", "1:1"])
+    func belowTheFloorIsZeroEvenWithNoEstimateAtAll(_ battery: String) {
+        let sim = Sim(); defer { sim.tearDown() }
+        // Claimed on AC, so the claim exists; the battery is what moved.
+        sim.run(["4h", "-r", "long run", "--owner", "agent:x", "--min-battery", "20"])
+
+        // No SIMMER_FAKE_BATTERY_TIME: exactly the state after a wake.
+        let drained = ["SIMMER_FAKE_BATTERY": battery]
+        let result = sim.run(["budget", "--need", "30m", "--json"], env: drained)
+        #expect(result.code == 1, "\(battery) answered exit \(result.code)")
+        let object = sim.json(result)
+        #expect(object["fits"] as? Bool == false)
+        #expect(object["battery_seconds_left"] as? Int == 0)
+        #expect(object["seconds_left"] as? Int == 14400)   // the deadline is untouched
+
+        // And the person is told which clock ran out.
+        let human = sim.run(["budget", "--need", "30m"], env: drained)
+        #expect(human.err.contains("at or under the floor"))
+        #expect(human.out.contains("already at its floor"))
+    }
+
+    /// 0% is the same verdict and not a division problem.
+    @Test func aFlatBatteryIsZeroAndNotAnError() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "long run", "--owner", "agent:x", "--min-battery", "20"])
+        let result = sim.run(["budget", "--need", "30m", "--json"],
+                             env: ["SIMMER_FAKE_BATTERY": "0:1"])
+        #expect(result.code == 1)
+        #expect(sim.json(result)["battery_seconds_left"] as? Int == 0)
+    }
+
     @Test func atTheFloorTheBatteryClockIsZeroRatherThanMissing() {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["4h", "--owner", "agent:evals"])

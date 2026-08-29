@@ -628,3 +628,74 @@ import Testing
         #expect(system("none").batterySecondsRemaining() == nil)
     }
 }
+
+/// `doctor` asked whether the claims directory was WRITABLE and never whether
+/// what was in it made sense. Both defects that held a Mac awake indefinitely
+/// were shapes in this directory, and one of them survived ten simulated days
+/// under a fully green report.
+@Suite struct ClaimsDirectorySoundness {
+    func makeLedger() -> (Ledger, URL) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-sound-\(UUID().uuidString)")
+        return (Ledger(stateDir: dir), dir)
+    }
+
+    @Test func anOrdinaryLedgerIsSound() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(ledger.write(Claim(owner: "agent:evals", until: 2000, started: 900)))
+        #expect(ledger.write(Claim(owner: "terminal", until: 3000, started: 900)))
+        #expect(ledger.unsoundClaimFiles().isEmpty)
+    }
+
+    /// The crash debris a pre-0.2.0 write left inside `claims/`.
+    @Test func aLeftoverTempFileIsNamed() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try! "format=2\nid=terminal\nowner=terminal\nuntil=2000\nstarted=900\n"
+            .write(to: ledger.claimsDir.appendingPathComponent("terminal.tmp.4242"),
+                   atomically: true, encoding: .utf8)
+        let unsound = ledger.unsoundClaimFiles()
+        #expect(unsound.count == 1)
+        #expect(unsound.first?.name == "terminal.tmp.4242")
+        #expect(unsound.first?.why.contains("only 'down --all'") == true)
+    }
+
+    /// A record that renamed itself out from under its filename — the shape
+    /// `-r "build⏎id=zzz"` produced, unreleasable through every surface.
+    @Test func aRecordStoredUnderTheWrongNameIsNamed() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try! "format=2\nid=zzz\nowner=agent:evals\nuntil=2000\nstarted=900\n"
+            .write(to: ledger.claimsDir.appendingPathComponent("zzz"),
+                   atomically: true, encoding: .utf8)
+        #expect(ledger.unsoundClaimFiles().first?.name == "zzz")
+    }
+
+    @Test func aFileThatIsNotAClaimAtAllIsNamed() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try! "hello".write(to: ledger.claimsDir.appendingPathComponent("notes.txt"),
+                           atomically: true, encoding: .utf8)
+        let unsound = ledger.unsoundClaimFiles()
+        #expect(unsound.first?.why.contains("no format=") == true)
+    }
+
+    /// The one case that must NOT be reported. `owner` is stored folded to
+    /// maxOwnerLength while the id is fingerprinted over the WHOLE original
+    /// string, so such a record cannot reconstruct its own name — the same
+    /// asymmetry migrateClaimIds had to reason about. Unverifiable is not
+    /// damaged, and a row that goes red on a legitimate claim is worse than no
+    /// row at all.
+    @Test func aTruncatedOwnerIsUnverifiableNotUnsound() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let long = String(repeating: "o", count: Claim.maxOwnerLength + 200)
+        let claim = Claim(owner: long, until: 2000, started: 900)
+        #expect(ledger.write(claim))
+        // The record genuinely cannot round-trip its own id...
+        #expect(Claim.sanitizedId(claim.owner) != claim.id)
+        // ...and is therefore not reported as damage.
+        #expect(ledger.unsoundClaimFiles().isEmpty)
+    }
+}

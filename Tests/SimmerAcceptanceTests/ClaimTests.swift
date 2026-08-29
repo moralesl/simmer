@@ -556,3 +556,64 @@ import Testing
         #expect(sim.events(named: "migrate").isEmpty)
     }
 }
+
+/// `claims/` is a directory on a Mac, so things land in it that are not claims.
+@Suite struct StrayFilesInTheClaimsDirectory {
+    /// `parse` is lenient about UNKNOWN keys so fields can be append-only, and
+    /// that turned into leniency about there being no known ones: absent
+    /// `until` is 0, and 0 is "no deadline". A `.DS_Store` or an editor's swap
+    /// file therefore enumerated as an open-ended claim, and the guard flipped
+    /// the switch ON for it — indefinitely, since an open-ended claim has no
+    /// deadline to heal by.
+    @Test func junkDoesNotBecomeAnOpenEndedClaim() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.plantInClaims(".DS_Store", "\u{0}\u{1}Bud1\u{0}")
+        sim.plantInClaims("notes.swp", "some editor backup\n")
+
+        #expect(sim.run(["status", "--machine"]).out.contains("claim_count=0"))
+        #expect(sim.run(["status", "--machine"]).out.contains("state=idle"))
+        #expect(sim.run(["guard"]).code == 0)
+        #expect(sim.switchValue == "0", "a guard tick held the Mac awake for junk")
+    }
+
+    /// And the migration must not launder it. `.DS_Store` is filename-safe
+    /// under the old id rule and resolves to `.ds_store-<fingerprint>` under
+    /// the new one, so it was renamed into a canonically-named file — which
+    /// the soundness check then reads as a claim whose owner CAN address it,
+    /// and passes. Two mechanisms built to protect this directory each made
+    /// the junk in it look more legitimate.
+    @Test func junkIsNotRenamedIntoACanonicalClaim() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.plantInClaims(".DS_Store", "\u{0}\u{1}Bud1\u{0}")
+        sim.run(["status"])                      // runs the migrations
+        #expect(sim.claimFileNames().contains(".DS_Store"))
+        #expect(!sim.claimFileNames().contains { $0.hasPrefix(".ds_store-") })
+    }
+
+    /// Inert is not the same as unnoticed: `doctor` names every one of them,
+    /// and it used to see only the ones the migration had not renamed.
+    @Test func doctorNamesEveryStrayFileNotJustTheUnlaunderedOnes() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.plantInClaims(".DS_Store", "\u{0}\u{1}Bud1\u{0}")
+        sim.plantInClaims("notes.swp", "some editor backup\n")
+
+        let result = sim.run(["doctor", "--json"])
+        #expect(result.code == 1)
+        let object = sim.json(result)
+        #expect(object["healthy"] as? Bool == false)
+        let checks = object["checks"] as? [[String: Any]] ?? []
+        let sound = checks.first { $0["id"] as? String == "claims_sound" }
+        #expect(sound?["ok"] as? Bool == false)
+        #expect((sound?["label"] as? String)?.contains("2 file(s)") == true)
+    }
+
+    /// A real claim beside the junk is untouched — the point is to ignore what
+    /// is not a record, not to become strict about what is.
+    @Test func aRealClaimBesideTheJunkStillHolds() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["2h", "-r", "work", "--owner", "agent:x"]).code == 0)
+        sim.plantInClaims(".DS_Store", "\u{0}\u{1}Bud1\u{0}")
+        #expect(sim.run(["status", "--machine"]).out.contains("claim_count=1"))
+        #expect(sim.switchValue == "1")
+    }
+}

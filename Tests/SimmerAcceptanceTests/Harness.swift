@@ -108,6 +108,19 @@ struct Sim {
                                                ofItemAtPath: stateDir.path)
     }
 
+    /// Put a file into `claims/` that simmer did not write — a `.DS_Store`, an
+    /// editor's swap file. Modelling the DIRECTORY's real contents, not the
+    /// records: this suite never edits a claim behind the implementation.
+    func plantInClaims(_ name: String, _ contents: String) {
+        try? FileManager.default.createDirectory(at: claimsDir, withIntermediateDirectories: true)
+        try? contents.write(to: claimsDir.appendingPathComponent(name),
+                            atomically: true, encoding: .utf8)
+    }
+
+    func claimFileNames() -> [String] {
+        ((try? FileManager.default.contentsOfDirectory(atPath: claimsDir.path)) ?? []).sorted()
+    }
+
     var capUntil: Int? {
         guard let text = try? String(contentsOf: stateDir.appendingPathComponent("cap"),
                                      encoding: .utf8) else { return nil }

@@ -42,7 +42,11 @@ public struct Ledger: Sendable {
             .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
             .compactMap { url in
-                guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+                guard let text = try? String(contentsOf: url, encoding: .utf8),
+                      // Not everything in a directory is a record of what is in
+                      // it. A file that never said it was a claim does not get
+                      // to hold the machine awake because `until` defaulted.
+                      Claim.looksLikeRecord(text) else { return nil }
                 return Claim.parse(text, fallbackId: url.lastPathComponent)
             }
     }
@@ -392,7 +396,11 @@ public struct Ledger: Sendable {
             at: claimsDir, includingPropertiesForKeys: nil)) ?? []
         for url in files {
             guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false,
-                  let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+                  let text = try? String(contentsOf: url, encoding: .utf8),
+                  // Never rename something that was not a claim to begin with:
+                  // giving junk a canonical name is how it stopped looking like
+                  // junk to every check downstream of here.
+                  Claim.looksLikeRecord(text) else { continue }
             let name = url.lastPathComponent
             var claim = Claim.parse(text, fallbackId: name)
             let resolved = Claim.sanitizedId(claim.owner)
@@ -425,6 +433,55 @@ public struct Ledger: Sendable {
                 ("until", .int(keep.until)),
             ])
         }
+    }
+
+    // MARK: the invariant the claims directory is supposed to hold
+
+    /// A claim file that no surface can act on, and what is wrong with it.
+    ///
+    /// Both defects that held this Mac awake indefinitely were shapes IN this
+    /// directory — a leftover temp file that re-wrote itself every tick, and a
+    /// record whose `id=` line renamed it out from under its own filename —
+    /// and `doctor` reported ✅ over both, for ten simulated days. It checked
+    /// that the directory was writable and never that what was in it made
+    /// sense. This is the check that would have caught them from the outside,
+    /// without a review.
+    ///
+    /// Two conditions, both of which mean a specific thing went wrong and
+    /// neither of which has an innocent cause:
+    ///
+    /// - **not a claim at all** — no `format=` line. Crash debris, a stray
+    ///   file, something's editor backup.
+    /// - **unaddressable** — the recorded owner does not resolve to the name
+    ///   the record is stored under, so `simmer down --owner <them>` looks
+    ///   somewhere else and only `down --all` can end it.
+    ///
+    /// An owner stored at the truncation limit is deliberately NOT reported.
+    /// `owner` is folded to `maxOwnerLength` while the id is fingerprinted
+    /// over the whole original string, so such a record genuinely cannot
+    /// reconstruct its own name — the same asymmetry `migrateClaimIds` had to
+    /// reason about. Unverifiable is not damaged, and a row that goes red on a
+    /// legitimate case teaches people to skim the report.
+    public func unsoundClaimFiles() -> [(name: String, why: String)] {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: claimsDir, includingPropertiesForKeys: nil)) ?? []
+        var found: [(name: String, why: String)] = []
+        for url in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false,
+                  let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            let name = url.lastPathComponent
+            guard Claim.looksLikeRecord(text) else {
+                found.append((name, "not a claim record — it has no format= line, and is ignored"))
+                continue
+            }
+            let claim = Claim.parse(text, fallbackId: name)
+            guard claim.owner.count < Claim.maxOwnerLength else { continue }
+            let resolved = Claim.sanitizedId(claim.owner)
+            if resolved != name {
+                found.append((name, "its owner \"\(claim.owner)\" resolves to \(resolved), so only 'down --all' can end it"))
+            }
+        }
+        return found
     }
 
     /// `Claim.sanitizedId` exactly as 0.1.0 shipped it — no case folding, and

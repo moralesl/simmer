@@ -202,6 +202,31 @@ public struct Claim: Sendable, Equatable {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    /// Whether this text is a claim record at all.
+    ///
+    /// `parse` is lenient by design — unknown keys are ignored so fields can be
+    /// append-only — and leniency about UNKNOWN keys turned into leniency about
+    /// there being no known ones. Anything readable in `claims/` became a claim:
+    /// no `until` means 0, and 0 means no deadline, so a `.DS_Store` or an
+    /// editor's swap file enumerated as an open-ended claim and the guard
+    /// flipped the switch on for it, indefinitely.
+    ///
+    /// The migration then laundered it. `.DS_Store` is filename-safe under the
+    /// old rule and resolves to `.ds_store-<fingerprint>` under the new one, so
+    /// `migrateClaimIds` renamed it into a canonically-named file — which the
+    /// soundness check reads as a claim whose owner CAN address it, and passes.
+    /// Two mechanisms built to protect this directory each made the junk in it
+    /// look more legitimate.
+    ///
+    /// So a record has to say it is one. Every claim simmer has ever written
+    /// carries `format=` on its own line; nothing else in the directory does.
+    public static func looksLikeRecord(_ text: String) -> Bool {
+        text.split(separator: "\n").contains { line in
+            guard line.hasPrefix("format=") else { return false }
+            return Int(line.dropFirst("format=".count)) != nil
+        }
+    }
+
     /// Unknown keys are ignored — that is what lets fields be append-only.
     ///
     /// **The id is the file's NAME, never the `id=` line inside it.** A record

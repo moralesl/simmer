@@ -37,36 +37,37 @@ extension Commands {
         let battery = ctx.power.batteryPercent()
         let onBattery = ctx.power.onBattery()
 
-        /// Seconds until the battery reaches THIS aggregate's floor, from
-        /// macOS's own time-to-empty estimate — the number the menu bar shows,
-        /// scaled by how much of the charge sits above the floor.
+        /// The battery's own ceiling on this claim, in seconds, or nil when
+        /// there is none to give.
         ///
-        /// Linear, which is the same assumption the system's own estimate
-        /// already embodies; refining it would be a second discharge model
-        /// disagreeing with the first. nil only where there is genuinely no
-        /// clock to read: on AC, or while pmset is still calibrating.
-        ///
-        /// **At or below the floor it is `0`, not nil.** Returning nil there
-        /// dropped the battery clock at the exact moment it had run out, so
-        /// `fitsWithin` fell back to the deadline alone and the answer went
-        /// non-monotonic: 21% said "does not fit" at exit 1, and 20% and 5%
-        /// said "fits" at exit 0 about a claim the very next guard tick ends.
-        /// The human surface printed "the claim ends there, whatever the
-        /// deadline says" and "✅ 3 h 0 min fits" in one breath.
+        /// **Zero is an answer and nil is not.** At or below the floor `Tick`
+        /// retires the claim on its next tick, so the ceiling is zero — but
+        /// that verdict used to be reached only after an estimate had been
+        /// read, and `pmset` has none for minutes after every wake. Below the
+        /// floor with no estimate therefore fell out as nil, nil meant "no
+        /// constraint", and `budget --need 30m` answered `fits: true` at exit 0
+        /// about a claim the next guard tick ends. That is the exit code an
+        /// agent bets hours of unattended work on, so the floor is decided
+        /// first, from the percentage alone.
         ///
         /// Overflow-checked, because this is a multiply on a number that comes
         /// in from outside — the seam directly, `pmset` in production — and an
-        /// unchecked one here traps the process with exit 133, which is the
-        /// exact class the duration ceiling was added to close.
+        /// unchecked one traps the process with exit 133.
         func secondsToFloor() -> Int? {
             // With nothing claimed there is no floor: `aggregate.minBattery`
             // is the struct's default, not any claim's choice, so a number
-            // here would describe a guarantee nobody asked for — beside a
-            // `seconds_left` of null, which exists precisely to avoid that.
+            // here would describe a guarantee nobody asked for.
             guard aggregate.count > 0 else { return nil }
-            guard onBattery, let percent = battery, let toEmpty = ctx.power.batterySecondsRemaining(),
-                  percent > 0, toEmpty >= 0 else { return nil }
+            guard onBattery, let percent = battery else { return nil }
+            // Decided before the estimate is consulted, and before the guard
+            // that keeps the division below safe. `Tick` retires on
+            // `percent <= minBattery` while on battery and reads no clock to
+            // do it, so neither does this — and 0% is a floor case, not a
+            // division problem, which is why `percent > 0` sits below rather
+            // than here.
             guard percent > aggregate.minBattery else { return 0 }
+            guard percent > 0,
+                  let toEmpty = ctx.power.batterySecondsRemaining(), toEmpty >= 0 else { return nil }
             let (scaled, overflowed) = toEmpty.multipliedReportingOverflow(
                 by: percent - aggregate.minBattery)
             guard !overflowed else { return nil }
@@ -75,10 +76,14 @@ extension Commands {
         let floorSeconds = secondsToFloor()
         // Said out loud on the human surface for the same reason it is a field
         // on the machine one: the deadline is not what is about to end this.
-        if !bareSeconds && !json, aggregate.count > 0, onBattery,
-           let percent = battery, percent <= aggregate.minBattery + Tick.prefloorMargin {
-            outcome.stderr.append(
-                "simmer: on battery at \(percent)% with a floor of \(aggregate.minBattery)% — the claim ends there, whatever the deadline says.")
+        if !bareSeconds && !json, aggregate.count > 0, onBattery, let percent = battery {
+            if percent <= aggregate.minBattery {
+                outcome.stderr.append(
+                    "simmer: on battery at \(percent)%, at or under the floor of \(aggregate.minBattery)% — this claim ends on the next guard tick.")
+            } else if percent <= aggregate.minBattery + Tick.prefloorMargin {
+                outcome.stderr.append(
+                    "simmer: on battery at \(percent)% with a floor of \(aggregate.minBattery)% — the claim ends there, whatever the deadline says.")
+            }
         }
 
         func emitJSON(fits: JSONValue, secondsLeft: JSONValue, state: String) {
@@ -143,7 +148,9 @@ extension Commands {
             } else {
                 let reasonPart = aggregate.reason.isEmpty ? "" : " · \(aggregate.reason)"
                 outcome.stdout.append("no deadline — running for \(Durations.human(ctx.now - aggregate.since))\(reasonPart)")
-                if let floorSeconds, needSeconds > 0, floorSeconds < needSeconds {
+                if let floorSeconds, needSeconds > 0, floorSeconds == 0 {
+                    outcome.stdout.append("❌ \(Durations.human(needSeconds)) does not fit — the battery is already at its floor")
+                } else if let floorSeconds, needSeconds > 0, floorSeconds < needSeconds {
                     outcome.stdout.append("❌ \(Durations.human(needSeconds)) does not fit — the battery reaches its floor in about \(Durations.human(floorSeconds))")
                 }
             }
@@ -167,6 +174,8 @@ extension Commands {
             if let fits {
                 if fits {
                     outcome.stdout.append("✅ \(Durations.human(needSeconds)) fits")
+                } else if let floorSeconds, floorSeconds == 0 {
+                    outcome.stdout.append("❌ \(Durations.human(needSeconds)) does not fit — the battery is already at its floor")
                 } else if let floorSeconds, floorSeconds < left {
                     // Name the clock that actually runs out first, or the
                     // reader is told they are short on time they do have.
