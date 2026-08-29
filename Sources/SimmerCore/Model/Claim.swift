@@ -44,10 +44,10 @@ public struct Claim: Sendable, Equatable {
                 displayOn: Bool = false, warned: Bool = false, prewarned: Bool = false,
                 reminded: Int = 0, legacyCaffeinatePid: Int = 0) {
         self.id = Claim.sanitizedId(owner)
-        self.owner = Claim.singleLine(owner)
+        self.owner = Claim.singleLine(owner, limit: Claim.maxOwnerLength)
         self.until = until
         self.started = started
-        self.reason = Claim.singleLine(reason)
+        self.reason = Claim.singleLine(reason, limit: Claim.maxReasonLength)
         self.minBattery = minBattery
         self.requireAC = requireAC
         self.displayOn = displayOn
@@ -145,12 +145,24 @@ public struct Claim: Sendable, Equatable {
     /// Refusing was the alternative; a reason is a one-line label for a menu
     /// bar, so folding the whitespace keeps the text the caller meant and
     /// still cannot express a second record.
-    static func singleLine(_ text: String) -> String {
+    /// And a length, because both are labels. A reason is a phrase in a menu
+    /// bar and a status line; nothing stopped it being twenty thousand
+    /// characters, which reached the menu-bar title, every `status` line, and
+    /// every agent's context. `simmer run` records the command it wraps as the
+    /// reason, so a long one-liner gets there without anyone typing it.
+    ///
+    /// Generous on purpose: past these lengths the text has stopped being a
+    /// label, and the ellipsis says so rather than pretending it fits.
+    public static let maxReasonLength = 200
+    public static let maxOwnerLength = 128
+
+    static func singleLine(_ text: String, limit: Int) -> String {
         let folded = String(text.map { char in
             char.isNewline || char.unicodeScalars.allSatisfy({ CharacterSet.controlCharacters.contains($0) })
                 ? " " : char
-        })
-        return folded.trimmingCharacters(in: .whitespaces)
+        }).trimmingCharacters(in: .whitespaces)
+        guard folded.count > limit else { return folded }
+        return String(folded.prefix(limit - 1)) + "…"
     }
 
     /// A stable fingerprint of the raw owner, in hex so it is filename-safe.

@@ -18,15 +18,48 @@ extension Commands {
         var outcome = Outcome()
         let aggregate = ctx.aggregate()
 
+        // The whole point of this command is a guarantee to act on. Under a
+        // seam there is none, whatever the exit code says, so say it first —
+        // `--bare-seconds` excepted, which is one number by contract.
+        if ctx.isSeamed && !bareSeconds && !json {
+            outcome.stderr.append("simmer: SIMMER_FAKE_* is set — this answer is about a test seam, not this Mac.")
+        }
+
+
+        // A deadline is not the only way the time runs out, and on battery it
+        // is rarely the first. `fits` answers the question this command was
+        // asked — is the DEADLINE far enough away — and answered `true` with
+        // four hours left while the battery sat one point above the floor that
+        // ends the claim. The exit code is deliberately unchanged (the caller
+        // is told to re-check between units of work), but the inputs that
+        // decide the other ending are on the surface now instead of only in
+        // `status`, so a caller can see the risk without a second call.
+        let battery = ctx.power.batteryPercent()
+        let onBattery = ctx.power.onBattery()
+        // Said out loud on the human surface for the same reason it is a field
+        // on the machine one: the deadline is not what is about to end this.
+        if !bareSeconds && !json, aggregate.count > 0, onBattery,
+           let percent = battery, percent <= aggregate.minBattery + Tick.prefloorMargin {
+            outcome.stderr.append(
+                "simmer: on battery at \(percent)% with a floor of \(aggregate.minBattery)% — the claim ends there, whatever the deadline says.")
+        }
+
         func emitJSON(fits: JSONValue, secondsLeft: JSONValue, state: String) {
             outcome.stdout = [JSONValue.object([
                 ("fits", fits),
                 ("seconds_left", secondsLeft),
                 ("state", .string(state)),
                 ("need_seconds", .int(needSeconds)),
+                ("battery", battery.map { JSONValue.int($0) } ?? .null),
+                ("on_battery", .int(onBattery ? 1 : 0)),
+                ("min_battery", .int(aggregate.minBattery)),
                 ("claim_count", .int(aggregate.count)),
                 ("cap", .int(aggregate.cap)),
                 ("capped", .bool(aggregate.capped)),
+                // The answer this command exists to give is worthless if the
+                // power system underneath it is a file in /tmp. Said on the
+                // surface an agent reads, not only in `doctor`.
+                ("seamed", .bool(ctx.isSeamed)),
             ]).serialized()]
         }
 

@@ -38,7 +38,7 @@ final class AppState {
                        owner: "menubar", ownerExplicit: true,
                        isHuman: true, isTTY: false,
                        version: AppState.version,
-                       binPath: environment.binPath)
+                       binPath: environment.binPath, isSeamed: environment.isSeamed)
     }
 
     func aggregate() -> Aggregate { context().aggregate() }

@@ -12,9 +12,23 @@ public struct Ledger: Sendable {
     public var logFile: URL { stateDir.appendingPathComponent("simmer.log") }
     public var eventsFile: URL { stateDir.appendingPathComponent("events.jsonl") }
 
+    /// Created 0700, and every record inside it 0600.
+    ///
+    /// The default was 0755/0644 — world-readable — while SECURITY.md
+    /// describes this directory as belonging to the user who owns it. A reason
+    /// is free text a person or an agent writes about what they are doing, so
+    /// in practice it carries customer names, project names and ticket
+    /// numbers; the log and the event stream keep every one of them, dated.
+    /// Nothing needs to read this but its owner.
+    ///
+    /// Applied at creation only. An existing directory keeps the mode it has —
+    /// tightening someone's state behind their back is not this function's
+    /// call — and `doctor` reports the wider mode instead.
     public init(stateDir: URL) {
         self.stateDir = stateDir
-        try? FileManager.default.createDirectory(at: claimsDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(
+            at: claimsDir, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
     }
 
     // MARK: claims
@@ -359,6 +373,10 @@ public struct Ledger: Sendable {
         let tmp = stateDir.appendingPathComponent(".\(url.lastPathComponent).tmp.\(getpid())")
         do {
             try text.write(to: tmp, atomically: false, encoding: .utf8)
+            // Set on the temp file, so the record is never briefly world-
+            // readable between landing and being tightened.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                                   ofItemAtPath: tmp.path)
             _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
             return true
         } catch {
@@ -371,7 +389,7 @@ public struct Ledger: Sendable {
     /// LaunchAgent tick may append concurrently, and only kernel-level append
     /// keeps their lines whole.
     private func append(_ text: String, to url: URL) {
-        let fd = open(url.path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
+        let fd = open(url.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
         guard fd >= 0 else { return }
         defer { close(fd) }
         let data = Array(text.utf8)

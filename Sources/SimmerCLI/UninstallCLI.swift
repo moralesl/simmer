@@ -94,8 +94,15 @@ struct UninstallCLI: ParsableCommand {
             outcome.stdout.append("There is no \(SudoRule.path) to remove.")
             // A capability with no file behind it belongs to something else,
             // and telling someone to delete a stranger's grant would be wrong.
-            if Shell.run("/usr/bin/sudo",
-                         ["-nl", "/usr/bin/pmset", "-a", "disablesleep", "0"]).status == 0 {
+            //
+            // Read from the LISTING. `sudo -nl <command>` answers whether the
+            // command is permitted, not whether it is permitted without a
+            // password, so through the stock `(ALL) ALL` entry it said yes on
+            // every admin Mac — and this sentence sent people hunting for a
+            // grant that was never there.
+            let listing = Shell.run("/usr/bin/sudo", ["-nl"])
+            if listing.status == 0,
+               SudoRule.grants(inListing: listing.stdout).hasSimmersOwn {
                 outcome.stdout.append("   Something else on this Mac still grants the pmset capability — not simmer's to remove.")
                 outcome.stdout.append("   Find it with: sudo grep -rn disablesleep /etc/sudoers /etc/sudoers.d/")
             }

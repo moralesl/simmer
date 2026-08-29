@@ -15,10 +15,13 @@ public struct Context {
     public var version: String
     /// What integrations should exec — the SwiftBar renderer embeds it.
     public var binPath: String
+    /// A SIMMER_FAKE_* variable is set, so nothing this process reports about
+    /// the machine is about the machine. Every machine surface says so.
+    public var isSeamed: Bool
 
     public init(now: Int, power: PowerSystem, ledger: Ledger, owner: String,
                 ownerExplicit: Bool, isHuman: Bool, isTTY: Bool,
-                version: String, binPath: String) {
+                version: String, binPath: String, isSeamed: Bool = false) {
         self.now = now
         self.power = power
         self.ledger = ledger
@@ -28,6 +31,7 @@ public struct Context {
         self.isTTY = isTTY
         self.version = version
         self.binPath = binPath
+        self.isSeamed = isSeamed
     }
 
     public func aggregate() -> Aggregate {

@@ -65,11 +65,51 @@ struct DoctorCLI: ParsableCommand {
                             label: "SIMMER_FAKE_PMSET is set — the sudo rule is not being checked",
                             ok: nil))
         } else {
-            let ownFile = FileManager.default.fileExists(atPath: "/etc/sudoers.d/simmer")
-            // -nl asks whether the command is *allowed*, without running it
-            // and without ever prompting.
-            let capability = Shell.run("/usr/bin/sudo",
-                                       ["-nl", "/usr/bin/pmset", "-a", "disablesleep", "0"]).status == 0
+            let ownFile = FileManager.default.fileExists(atPath: SudoRule.path)
+            // The LISTING, not `-nl <command>`. The latter answers whether the
+            // command is permitted, not whether it is permitted without a
+            // password, so on any admin Mac it returns 0 through the stock
+            // `(ALL) ALL` entry — which is how this check reported a grant on
+            // a machine that granted nothing. The listing enumerates the rules
+            // themselves and needs no password.
+            let listing = Shell.run("/usr/bin/sudo", ["-nl"])
+            let readable = listing.status == 0
+            let grants = SudoRule.grants(inListing: listing.stdout)
+            let capability = readable && grants.hasSimmersOwn
+
+            // What the user asked simmer to promise: the grant is the two
+            // invocations and nothing else. Informational, never a failure —
+            // another tool's passwordless rule is not simmer's to fix, and a
+            // permanently red line teaches people to skim the whole report.
+            let extra = grants.beyondWhatSimmerNeeds
+            if !readable {
+                rows.append(Row(
+                    id: "sudo_width",
+                    label: "could not read what sudo grants ('sudo -nl' failed) — not guessing.",
+                    ok: nil,
+                    detail: ["Check it by hand: sudo -l"]))
+            } else if grants.hasBlanketGrant {
+                rows.append(Row(
+                    id: "sudo_width",
+                    label: "this account can run ANY command as root without a password.",
+                    ok: nil,
+                    detail: [
+                        "That is far wider than the two invocations simmer asks for, and not simmer's doing.",
+                        "Find the rule: sudo grep -rn NOPASSWD /etc/sudoers /etc/sudoers.d/",
+                    ]))
+            } else if !extra.isEmpty {
+                rows.append(Row(
+                    id: "sudo_width",
+                    label: "\(extra.count) passwordless grant(s) beyond the two simmer asks for.",
+                    ok: nil,
+                    detail: extra.map { "  \($0)" }
+                        + ["Find them: sudo grep -rn NOPASSWD /etc/sudoers /etc/sudoers.d/"]))
+            } else if capability {
+                rows.append(Row(id: "sudo_width",
+                                label: "the passwordless grant is exactly the two simmer asks for",
+                                ok: true))
+            }
+
             switch (ownFile, capability) {
             case (true, true):
                 rows.append(Row(id: "sudo_rule",
@@ -83,6 +123,11 @@ struct DoctorCLI: ParsableCommand {
                         "Something else grants it — find it: sudo grep -rn disablesleep /etc/sudoers.d/",
                         "Not adopting it. Install simmer's own rule: see the README's install step.",
                     ]))
+            case (true, false) where !readable:
+                rows.append(Row(
+                    id: "sudo_rule",
+                    label: "/etc/sudoers.d/simmer exists; whether sudo honours it could not be read.",
+                    ok: nil))
             case (true, false):
                 rows.append(Row(
                     id: "sudo_rule",

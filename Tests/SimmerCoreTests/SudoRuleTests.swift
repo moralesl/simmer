@@ -81,3 +81,109 @@ import Testing
         #expect(lastRealLine == "main \"$@\"")
     }
 }
+
+/// What sudo actually grants, read from the listing rather than guessed from
+/// an exit code.
+///
+/// `sudo -nl <command>` reports whether a command is PERMITTED, not whether it
+/// is permitted without a password — so through the stock `(ALL) ALL` entry it
+/// exits 0 on every admin Mac. Measured on one: `sudo -nv` says there is no
+/// timestamp and `sudo -nl /bin/sh` still exits 0. `doctor` read that as a
+/// granted capability, and told people it came from somebody else's file.
+@Suite struct SudoGrantWidthTests {
+    /// The real listing from a Mac with simmer installed, verbatim.
+    static let installed = """
+    Matching Defaults entries for luis on MacBook-Pro-von-Luis:
+        env_reset, env_keep+=BLOCKSIZE, lecture_file=/etc/sudo_lecture, !log_allowed
+
+    User luis may run the following commands on MacBook-Pro-von-Luis:
+        (ALL) ALL
+        (root) NOPASSWD: /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0
+    """
+
+    @Test func theStockAdminEntryIsNotAPasswordlessGrant() {
+        let grants = SudoRule.grants(inListing: Self.installed)
+        // `(ALL) ALL` requires a password. It is the entry that made the old
+        // exit-code check answer yes on machines that granted nothing.
+        #expect(grants.passwordless == SudoRule.commands)
+        #expect(grants.hasSimmersOwn)
+        #expect(grants.beyondWhatSimmerNeeds.isEmpty)
+        #expect(!grants.hasBlanketGrant)
+    }
+
+    @Test func aMacWithNoSimmerRuleGrantsNothing() {
+        let listing = """
+        User luis may run the following commands on host:
+            (ALL) ALL
+        """
+        let grants = SudoRule.grants(inListing: listing)
+        #expect(grants.passwordless.isEmpty)
+        #expect(!grants.hasSimmersOwn)
+    }
+
+    /// The thing the check exists to notice: a grant wider than the two.
+    @Test func aWidenedPmsetGrantIsSeenAsWider() {
+        let listing = """
+        User luis may run the following commands on host:
+            (root) NOPASSWD: /usr/bin/pmset
+        """
+        let grants = SudoRule.grants(inListing: listing)
+        #expect(!grants.hasSimmersOwn)          // the two exact spellings are not there
+        #expect(grants.beyondWhatSimmerNeeds == ["/usr/bin/pmset"])
+    }
+
+    @Test func aBlanketPasswordlessGrantIsNamedAsOne() {
+        let listing = """
+        User luis may run the following commands on host:
+            (ALL) NOPASSWD: ALL
+        """
+        let grants = SudoRule.grants(inListing: listing)
+        #expect(grants.hasBlanketGrant)
+        #expect(!grants.beyondWhatSimmerNeeds.isEmpty)
+    }
+
+    /// Simmer's own two, plus somebody else's — which is not simmer's to fix,
+    /// but is exactly what "nothing has more grants than it needs" means.
+    @Test func anotherToolsPasswordlessRuleShowsUpBesideSimmersOwn() {
+        let listing = """
+        User luis may run the following commands on host:
+            (root) NOPASSWD: /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0
+            (root) NOPASSWD: /usr/local/bin/some-agent --daemon
+        """
+        let grants = SudoRule.grants(inListing: listing)
+        #expect(grants.hasSimmersOwn)
+        #expect(grants.beyondWhatSimmerNeeds == ["/usr/local/bin/some-agent --daemon"])
+    }
+
+    /// Tag stacking and an explicit PASSWD: reset, both of which sudo emits.
+    @Test func tagsAreReadInOrder() {
+        let listing = """
+        User luis may run the following commands on host:
+            (root) NOPASSWD: SETENV: /usr/bin/thing
+            (root) NOPASSWD: /usr/bin/a, PASSWD: /usr/bin/b
+        """
+        let grants = SudoRule.grants(inListing: listing)
+        #expect(grants.passwordless.contains("/usr/bin/thing"))
+        #expect(!grants.passwordless.contains("/usr/bin/b"))
+    }
+
+    /// The Defaults block above the rules must never be mistaken for one — it
+    /// is full of commas and colons and would otherwise parse as commands.
+    @Test func theDefaultsBlockIsNotARuleList() {
+        let listing = """
+        Matching Defaults entries for luis on host:
+            env_reset, env_keep+="A B", NOPASSWD_LOOKING_THING: x, y
+
+        User luis may run the following commands on host:
+            (root) NOPASSWD: /usr/bin/pmset -a disablesleep 1
+        """
+        #expect(SudoRule.grants(inListing: listing).passwordless == ["/usr/bin/pmset -a disablesleep 1"])
+    }
+
+    /// The capability string is still assembled from the same two commands, so
+    /// bootstrap.sh and this file cannot drift (CI asserts they agree).
+    @Test func theCapabilityStringIsBuiltFromTheCommandList() {
+        #expect(SudoRule.capability ==
+                "ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0")
+    }
+}

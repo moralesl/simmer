@@ -42,7 +42,7 @@ extension Commands {
             lines.append("---")
             lines.append("Simmering until \(Formats.hhmm(aggregate.until)) | sfimage=clock")
             if aggregate.capped { lines.append("— that is your cap | sfimage=hand.raised.fill") }
-            if !aggregate.reason.isEmpty { lines.append("\(aggregate.reason) | sfimage=text.quote") }
+            if !aggregate.reason.isEmpty { lines.append("\(swiftBarText(aggregate.reason)) | sfimage=text.quote") }
             lines.append("\(power) · floor \(aggregate.minBattery)% | sfimage=battery.50")
             if !ctx.power.sleepDisabled() {
                 lines.append("⚠️ disablesleep is off — the lid will not hold | color=red")
@@ -62,7 +62,7 @@ extension Commands {
             lines.append("---")
             lines.append("Simmering with no deadline | sfimage=infinity")
             if aggregate.since != 0 { lines.append("since \(Formats.hhmm(aggregate.since)) | sfimage=clock") }
-            if !aggregate.reason.isEmpty { lines.append("\(aggregate.reason) | sfimage=text.quote") }
+            if !aggregate.reason.isEmpty { lines.append("\(swiftBarText(aggregate.reason)) | sfimage=text.quote") }
             lines.append("\(power) · floor \(aggregate.minBattery)% | sfimage=battery.50")
             lines.append(contentsOf: claimRowsSwiftBar(aggregate))
             lines.append("---")
@@ -114,14 +114,36 @@ extension Commands {
         return lines
     }
 
+    /// SwiftBar splits a row at the first `|`: everything after it is
+    /// parameters, and `bash=` is one of them. So a reason or an owner
+    /// containing a pipe does not decorate the row — it REPLACES the row's
+    /// behaviour, turning a line that only reports something into a menu item
+    /// that runs a command when the person clicks it.
+    ///
+    /// That is reachable without anybody meaning harm: `simmer run` records
+    /// the command it is wrapping as the reason, so `simmer run -- sh -c 'a |
+    /// b'` corrupts the menu on its own. And it inverts the one thing this
+    /// tool is built around — the human blessing what an agent proposed —
+    /// because the label they click says one thing and the parameters say
+    /// another.
+    ///
+    /// A broken bar reads the same at menu size and cannot open a parameter
+    /// list. Alfred needs none of this: it goes out through the JSON emitter,
+    /// which escapes properly. This is the only surface that hand-assembles
+    /// its own syntax, and so the only one that has to think about it.
+    static func swiftBarText(_ text: String) -> String {
+        text.replacingOccurrences(of: "|", with: "\u{00A6}")
+    }
+
     private static func claimRowsSwiftBar(_ aggregate: Aggregate) -> [String] {
         guard aggregate.count > 1 else { return [] }
         var lines = ["---", "\(aggregate.count) claims"]
         for entry in aggregate.live {
-            let reasonPart = entry.claim.reason.isEmpty ? "" : " · \(entry.claim.reason)"
+            let reasonPart = entry.claim.reason.isEmpty
+                ? "" : " · \(swiftBarText(entry.claim.reason))"
             let deadline = entry.effectiveUntil == 0
                 ? "no deadline" : "until \(Formats.hhmm(entry.effectiveUntil))"
-            lines.append("\(Present.ownerGlyph(entry.claim.owner)) \(entry.claim.owner)\(reasonPart) · \(deadline)")
+            lines.append("\(Present.ownerGlyph(entry.claim.owner)) \(swiftBarText(entry.claim.owner))\(reasonPart) · \(deadline)")
         }
         return lines
     }

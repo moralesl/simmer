@@ -86,7 +86,11 @@ import Testing
 @Suite struct StatusOutputTests {
     static let machineKeys = ["state", "until", "left", "left_short", "reason",
                               "min_battery", "battery", "on_battery", "sleep_disabled",
-                              "since", "owner", "claim_count", "cap", "cap_expires"]
+                              "since", "owner", "claim_count", "cap", "cap_expires",
+                              // Whether everything above describes this Mac or
+                              // a seam. The suite always runs seamed, so this
+                              // is 1 here and 0 on a real machine.
+                              "seamed"]
 
     @Test func machineEmitsEveryFieldEveryTime() {
         let sim = Sim(); defer { sim.tearDown() }
@@ -382,6 +386,51 @@ import Testing
 }
 
 @Suite struct RenderTests {
+    /// SwiftBar splits a row at the first `|` and reads what follows as
+    /// parameters — `bash=` among them. So a pipe in a reason or an owner did
+    /// not decorate the row, it replaced what the row DOES: a line that only
+    /// reported something became a menu item that runs a command when the
+    /// person clicks it, under a label that says something else.
+    ///
+    /// `simmer run` records the command it wraps as the reason, so an ordinary
+    /// `simmer run -- sh -c 'a | b'` reaches this without anybody meaning to.
+    @Test func aPipeInAReasonCannotTurnARowIntoAnAction() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let payload = #"build | bash="/bin/sh" param1="-c" param2="touch /tmp/pwned""#
+        sim.run(["45m", "-r", payload, "--owner", "test"])
+        sim.run(["45m", "-r", "second", "--owner", #"agent:b | color=red"#])
+
+        for line in sim.run(["render", "swiftbar"]).lines {
+            // At most one delimiter per row: the one simmer wrote. A second
+            // would let the text before it open a parameter list of its own.
+            #expect(line.filter { $0 == "|" }.count <= 1, "two delimiters in: \(line)")
+            // The payload may still READ as `bash=…` — it is inert label text
+            // now, which is the point. What matters is the parameter half,
+            // after the delimiter: nothing there may name a foreign binary.
+            guard let delimiter = line.firstIndex(of: "|") else { continue }
+            let parameters = String(line[line.index(after: delimiter)...])
+            if parameters.contains("bash=") {
+                #expect(parameters.contains("bash=\"\(Sim.binary)\""), "foreign bash= in: \(line)")
+            }
+        }
+    }
+
+    /// Alfred needs none of that — it goes out through the JSON emitter. This
+    /// asserts the difference is real rather than assumed.
+    @Test func alfredEscapesTheSamePayloadStructurally() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["45m", "-r", #"x" ,"arg":"down --all"#, "--owner", "test"])
+        let out = sim.run(["render", "alfred"]).out
+        let object = (try? JSONSerialization.jsonObject(with: Data(out.utf8))) as? [String: Any]
+        #expect(object != nil, "alfred emitted unparseable JSON: \(out)")
+        let items = object?["items"] as? [[String: Any]] ?? []
+        #expect(!items.isEmpty)
+        // The payload stayed a title. It did not become anybody's `arg`.
+        for item in items where (item["arg"] as? String) == "down --all" {
+            #expect((item["title"] as? String) == "Release everything")
+        }
+    }
+
     @Test func swiftBarShowsTheAggregateAndTheActions() {
         let sim = Sim(); defer { sim.tearDown() }
         let idle = sim.run(["render", "swiftbar"]).out
@@ -659,5 +708,49 @@ import Testing
         let log = sim.run(["log", "10"]).out
         #expect(log.contains("claim test"))
         #expect(log.contains("released by hand"))
+    }
+}
+
+/// `budget` answers "is there room to start" — and a deadline is not the only
+/// way the room runs out. On battery it is rarely the first.
+@Suite struct BudgetAgainstTheFloorTests {
+    /// Four hours of deadline, one point above the floor that ends the claim.
+    /// `fits` still answers about the deadline, by contract; what changed is
+    /// that the other ending is on the surface instead of needing a second
+    /// call to `status`.
+    @Test func budgetShowsTheFloorThatWillEndTheClaimFirst() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let onBattery = ["SIMMER_FAKE_BATTERY": "21:1"]
+        sim.run(["4h", "-r", "long", "--owner", "agent:x", "--min-battery", "20"], env: onBattery)
+
+        let object = sim.json(sim.run(["budget", "--need", "3h", "--json"], env: onBattery))
+        #expect(object["fits"] as? Bool == true)
+        #expect(object["battery"] as? Int == 21)
+        #expect(object["on_battery"] as? Int == 1)
+        #expect(object["min_battery"] as? Int == 20)
+
+        let human = sim.run(["budget", "--need", "3h"], env: onBattery)
+        #expect(human.err.contains("floor of 20%"))
+    }
+
+    /// On AC, none of it applies and none of it is said.
+    @Test func budgetSaysNothingAboutAFloorItIsNotNear() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "long", "--owner", "agent:x"])
+        let human = sim.run(["budget", "--need", "3h"])
+        #expect(human.code == 0)
+        #expect(!human.err.contains("floor of"))
+    }
+
+    /// The seam is named on the surface an agent is told to trust, not only in
+    /// `doctor`: a leaked SIMMER_FAKE_* made `fits: true` a statement about a
+    /// file in /tmp.
+    @Test func budgetNamesTheSeamItIsAnsweringAbout() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "--owner", "agent:x"])
+        #expect(sim.json(sim.run(["budget", "--need", "1h", "--json"]))["seamed"] as? Bool == true)
+        #expect(sim.run(["budget", "--need", "1h"]).err.contains("test seam"))
+        // --bare-seconds is one number by contract, and stays one number.
+        #expect(sim.run(["budget", "--seconds"]).out.split(separator: "\n").count == 1)
     }
 }

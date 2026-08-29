@@ -294,3 +294,56 @@ import Testing
         #expect(prose.out.contains("cap"))
     }
 }
+
+/// One claim per owner is the rule, and replacing your own is how you move a
+/// deadline. The gap was that nothing said when a replacement made the
+/// deadline EARLIER — and under the anonymous default the two claims usually
+/// belong to two different callers.
+@Suite struct ReplacementTests {
+    /// Two agents that both forget `--owner` are both "script". A one-minute
+    /// claim replaced a four-hour one and the only sign was a nudge about
+    /// slots, which says nothing about what was just lost. AGENTS.md: "no
+    /// surface may cost a caller awake time it already holds."
+    @Test func anAnonymousClaimThatShortensAnotherSaysSo() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["4h", "-r", "long eval"]).code == 0)
+        let second = sim.run(["1m", "-r", "quick thing"])
+        #expect(second.code == 0)
+        #expect(second.err.contains("already held a claim"))
+        #expect(second.err.contains("long eval"))
+        #expect(second.err.contains("both of you need --owner"))
+    }
+
+    /// A named caller shortening its own deadline is ordinary — one line, not
+    /// the collision warning.
+    @Test func anOwnedClaimThatShortensItsOwnSaysItMoreQuietly() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "eval", "--owner", "agent:evals"])
+        let second = sim.run(["10m", "-r", "eval", "--owner", "agent:evals"])
+        #expect(second.code == 0)
+        #expect(second.err.contains("replaces your earlier claim"))
+        #expect(!second.err.contains("both of you need"))
+    }
+
+    /// Extending says nothing: nobody lost anything.
+    @Test func aReplacementThatLengthensIsSilent() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["30m", "-r", "eval", "--owner", "agent:evals"])
+        let longer = sim.run(["4h", "-r", "eval", "--owner", "agent:evals"])
+        #expect(longer.code == 0)
+        #expect(!longer.err.contains("replaces"))
+        #expect(!longer.err.contains("already held"))
+    }
+
+    /// Trading an open-ended claim for a deadline is a shortening, and the one
+    /// case where comparing epochs the naive way gets it backwards.
+    @Test func replacingAnOpenEndedClaimWithADeadlineCounts() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["forever", "-r", "render", "--owner", "agent:render"])
+        let bounded = sim.run(["30m", "-r", "render", "--owner", "agent:render"])
+        #expect(bounded.err.contains("no deadline"))
+        // And the other way round is not.
+        let back = sim.run(["forever", "-r", "render", "--owner", "agent:render"])
+        #expect(!back.err.contains("replaces"))
+    }
+}

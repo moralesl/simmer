@@ -41,12 +41,22 @@ extension Commands {
                 "claim_count=\(aggregate.count)",
                 "cap=\(aggregate.cap)",
                 "cap_expires=\(aggregate.capExpires)",
+                // Not a detail of the claim: a statement that everything above
+                // it describes a seam rather than this Mac.
+                "seamed=\(ctx.isSeamed ? 1 : 0)",
             ]
 
         case .json:
             outcome.stdout = [statusObject(ctx: ctx).serialized()]
 
         case .human:
+            // Before anything about the claim, because it changes what all of
+            // it means: under a seam these numbers describe a file, not this
+            // Mac, and the lid will close on the work regardless.
+            if ctx.isSeamed {
+                outcome.stdout.append("⚠️  SIMMER_FAKE_* is set — this is a test seam, not this Mac.")
+                outcome.stdout.append("   The sleep switch is a file and nothing below holds the lid open.")
+            }
             if aggregate.count == 0 {
                 if aggregate.state == .orphan {
                     // Either set by hand, or the guard is not running. Both

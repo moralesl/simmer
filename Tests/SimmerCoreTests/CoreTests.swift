@@ -513,3 +513,75 @@ import Testing
         #expect(parsed?["k"] == "a\"b\\c\nd\te\u{01}")
     }
 }
+
+/// What the tool tells a caller about the machine, when it is not looking at
+/// the machine — and what it leaves lying around while it does.
+@Suite struct SeamAndStateHygiene {
+    /// SIMMER_BIN lands in the `bash=` of every SwiftBar row and in the
+    /// commands `copyAsCLI` hands out. Honoured unconditionally, one
+    /// environment variable decided what a person's menu bar runs when they
+    /// click it. It is a test seam, so it is gated like one.
+    @Test func simmerBinIsOnlyHonouredWhenThePowerSeamIsActive() {
+        let loose = SimmerEnvironment(env: ["SIMMER_BIN": "/tmp/evil"],
+                                      isTTY: false, executablePath: "/usr/local/bin/simmer")
+        #expect(loose.binPath == "/usr/local/bin/simmer")
+
+        let seamed = SimmerEnvironment(env: ["SIMMER_BIN": "/tmp/evil",
+                                             "SIMMER_FAKE_PMSET": "/tmp/switch"],
+                                       isTTY: false, executablePath: "/usr/local/bin/simmer")
+        #expect(seamed.binPath == "/tmp/evil")
+    }
+
+    /// Any SIMMER_FAKE_* means the answers are about a seam. `doctor` said so;
+    /// `status` and `budget` — the two surfaces the agent protocol points at —
+    /// did not.
+    @Test func anyFakeVariableMarksTheEnvironmentAsSeamed() {
+        for key in ["SIMMER_FAKE_PMSET", "SIMMER_FAKE_BATTERY", "SIMMER_FAKE_NOW",
+                    "SIMMER_FAKE_THERMAL", "SIMMER_FAKE_LOCKDELAY"] {
+            #expect(SimmerEnvironment(env: [key: "x"], isTTY: false,
+                                      executablePath: "simmer").isSeamed, "\(key)")
+        }
+        #expect(!SimmerEnvironment(env: ["SIMMER_OWNER": "agent:x"], isTTY: false,
+                                   executablePath: "simmer").isSeamed)
+    }
+
+    /// A reason is free text about what someone is doing, so it carries
+    /// customer names, project names and ticket numbers — and the log and the
+    /// event stream keep every one of them, dated. SECURITY.md describes this
+    /// directory as the owner's; the mode said otherwise.
+    @Test func theStateDirectoryAndItsRecordsAreOwnerOnly() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-perm-\(UUID().uuidString)")
+        let ledger = Ledger(stateDir: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(ledger.write(Claim(owner: "agent:x", until: 2000, started: 900,
+                                   reason: "customer ACME migration")))
+        ledger.log("something", now: 1000)
+        ledger.event("test", now: 1000, [])
+
+        func mode(_ url: URL) -> Int? {
+            (try? FileManager.default.attributesOfItem(atPath: url.path))?[.posixPermissions] as? Int
+        }
+        #expect(mode(ledger.claimsDir) == 0o700)
+        #expect(mode(ledger.claimsDir.appendingPathComponent("agent:x")) == 0o600)
+        #expect(mode(ledger.logFile) == 0o600)
+        #expect(mode(ledger.eventsFile) == 0o600)
+    }
+
+    /// A label, not a document. Twenty thousand characters reached the
+    /// menu-bar title, every status line and every agent's context — and
+    /// `simmer run` records the command it wraps, so a long one-liner gets
+    /// there without anyone typing it.
+    @Test func aReasonAndAnOwnerAreBoundedInLength() {
+        let claim = Claim(owner: String(repeating: "o", count: 5_000),
+                          until: 0, started: 0,
+                          reason: String(repeating: "r", count: 20_000))
+        #expect(claim.reason.count == Claim.maxReasonLength)
+        #expect(claim.reason.hasSuffix("…"))
+        #expect(claim.owner.count == Claim.maxOwnerLength)
+        // Short ones are untouched, ellipsis and all.
+        let ordinary = Claim(owner: "agent:evals", until: 0, started: 0, reason: "nightly eval")
+        #expect(ordinary.reason == "nightly eval")
+        #expect(ordinary.owner == "agent:evals")
+    }
+}

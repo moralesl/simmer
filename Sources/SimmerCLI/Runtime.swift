@@ -72,7 +72,7 @@ enum Runtime {
         return Context(now: now, power: power, ledger: ledger,
                        owner: owner, ownerExplicit: explicit,
                        isHuman: env.callerIsHuman(owner: owner), isTTY: env.isTTY,
-                       version: version, binPath: env.binPath)
+                       version: version, binPath: env.binPath, isSeamed: env.isSeamed)
     }
 
     /// Where a command's human lines go. `stdout` for every subcommand except

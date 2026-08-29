@@ -119,6 +119,37 @@ public enum Commands {
         if let existing = ctx.ledger.claim(owner: ctx.owner) {
             if existing.legacyCaffeinatePid > 0 { kill(pid_t(existing.legacyCaffeinatePid), SIGTERM) }
             started = existing.started
+
+            // A replacement that ENDS SOONER costs whoever held it the
+            // difference, and said nothing about it.
+            //
+            // Under an explicit --owner that is a caller shortening its own
+            // deadline, which is allowed and worth one line. Under the
+            // anonymous default it is usually not the same caller at all: two
+            // agents that both forgot --owner are both "script", so a one-
+            // minute claim replaced a four-hour one and the only sign was a
+            // nudge about slots that gave no hint anything had been lost.
+            //
+            // AGENTS.md states the rule this broke — "no surface may cost a
+            // caller awake time it already holds" — and it broke it through
+            // the DOCUMENTED default rather than any unusual input.
+            let shortens = existing.until == 0
+                ? untilEpoch != 0
+                : (untilEpoch == 0 ? false : untilEpoch < existing.until)
+            if shortens {
+                let had = existing.until == 0
+                    ? "no deadline" : "until \(Formats.hhmm(existing.until))"
+                let reasonPart = existing.reason.isEmpty ? "" : " · \(existing.reason)"
+                if ctx.ownerExplicit {
+                    outcome.stderr.append(
+                        "simmer: this replaces your earlier claim (\(had)\(reasonPart)) with a shorter one.")
+                } else {
+                    outcome.stderr.append(
+                        "simmer: \"\(ctx.owner)\" already held a claim \(had)\(reasonPart) — this replaces it,")
+                    outcome.stderr.append(
+                        "        and ends sooner. If that was somebody else's work, both of you need --owner.")
+                }
+            }
         }
 
         let before = ctx.aggregate()
