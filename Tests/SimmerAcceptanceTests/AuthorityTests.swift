@@ -555,8 +555,10 @@ import Testing
 
         let unplugged = ["SIMMER_FAKE_BATTERY": "80:1"]
         #expect(sim.run(["budget", "--need", "3h"], env: unplugged).code == 1)
+        // "this claim", not "every claim": there is one, and naming it wrongly
+        // is the failure this surface keeps having.
         #expect(sim.run(["budget", "--need", "3h"], env: unplugged)
-            .out.contains("every claim needs the charger"))
+            .out.contains("needs the charger, and it is out"))
     }
 
     /// Not a global zero: a claim that did not ask for AC keeps holding the
@@ -570,6 +572,47 @@ import Testing
         #expect(sim.run(["budget", "--need", "90m"], env: unplugged).code == 0)
         let past = sim.run(["budget", "--need", "3h"], env: unplugged)
         #expect(past.code == 1)
-        #expect(past.out.contains("survive the charger being out"))
+        // The bound is the ORDINARY claim's own deadline — the AC claim is
+        // already gone — so the sentence names that, not the charger. The old
+        // wording explained why the aggregate shrank; this one says what the
+        // guarantee actually is, which is what the caller asked.
+        #expect(past.out.contains("the last claim still standing ends in about"))
+    }
+}
+
+/// `simmer uninstall` is the page for someone with no checkout — the `make`
+/// target's ordering fix does not reach them. Its own ordering was unpinned,
+/// and the warning printed under the `rm -rf` lines: pasted top to bottom,
+/// that removes the means and then explains what to have run first.
+@Suite struct UninstallPageOrderTests {
+    @Test func theHandBackComesBeforeAnythingThatRemoves() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.setSwitch(true)
+        sim.run(["2h", "-r", "work", "--owner", "agent:x"])
+
+        let page = sim.run(["uninstall"], env: ["SIMMER_DIR": "/nonexistent"]).out
+        guard let handBack = page.range(of: "simmer down --all"),
+              let firstRemoval = page.range(of: "launchctl bootout") else {
+            Issue.record("the page no longer names both steps:\n\(page)")
+            return
+        }
+        #expect(handBack.lowerBound < firstRemoval.lowerBound,
+                "the removal commands print before the hand-back")
+        #expect(page.contains("held awake RIGHT NOW"))
+    }
+
+    /// And the raw command list carries the two steps the Makefile takes —
+    /// leaving them out here closed the instance and not the class.
+    @Test func theRawCommandsIncludeTheLoginItemAndTheQuit() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let page = sim.run(["uninstall"], env: ["SIMMER_DIR": "/nonexistent"]).out
+        #expect(page.contains("simmer-app --uninstall"))
+        #expect(page.contains("to quit"))
+        guard let quit = page.range(of: "to quit"),
+              let removal = page.range(of: "rm -rf") else {
+            Issue.record("the page no longer names both")
+            return
+        }
+        #expect(quit.lowerBound < removal.lowerBound)
     }
 }

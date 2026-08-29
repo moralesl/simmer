@@ -291,8 +291,16 @@ struct NotifyTestCLI: ParsableCommand {
             body: "This banner is the test — pot icon, buttons and all.",
             actionable: true), now: ctx.now)
 
+        // Both halves, the way `doctor` asks. `app.status` is never removed on
+        // exit, so its pid outlives the app and is eventually held by
+        // something else — pid 1 among them — and `ps -p` said yes. The one
+        // diagnostic whose whole job is "will a banner arrive" then reported
+        // success about a post that would never happen, and disagreed with
+        // `doctor` about the identical state. The predicate was added to
+        // AppStatus and wired into one of its two callers.
         guard let status = ctx.ledger.readAppStatus(),
-              Shell.run("/bin/ps", ["-p", String(status.pid)]).status == 0 else {
+              Shell.run("/bin/ps", ["-p", String(status.pid)]).status == 0,
+              status.heartbeatIsFresh(now: ctx.now) else {
             print("Queued — but Simmer.app is not running, so nobody will post it.")
             print("open -a Simmer  (banners and the menu bar live in the app)")
             throw ExitCode(1)

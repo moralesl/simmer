@@ -13,7 +13,52 @@ import Foundation
 /// once, in front of a person who is already at a keyboard. A command the
 /// human can read before running is smaller, and honest about who decides.
 public enum SudoRule {
-    public static let path = "/etc/sudoers.d/simmer"
+    /// Where 0.1.0 put the rule: one file per MACHINE holding one line for
+    /// whoever installed last. Still read, so an existing install is
+    /// recognised and can be pointed at.
+    public static let legacyPath = "/etc/sudoers.d/simmer"
+
+    /// One file per USER.
+    ///
+    /// The shared file held a single `<user> ALL=(root) NOPASSWD: …` line, and
+    /// a second admin's install overwrote the first's — no malice, both of
+    /// them just running the documented one-paste install. The loser's guard
+    /// then failed `sudo -n pmset` on every tick, forever, with the lid closed
+    /// and the machine held awake.
+    ///
+    /// **`#includedir` ignores any filename containing a dot**, so a username
+    /// with one cannot have a file here at all. Rather than mangle it into a
+    /// name that could collide with another user's — the mistake this codebase
+    /// has now made twice with ids — that case returns nil and the caller
+    /// falls back to showing the command for a human to place by hand.
+    public static func path(for user: String) -> String? {
+        guard !user.isEmpty,
+              user.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") })
+        else { return nil }
+        return "/etc/sudoers.d/simmer-\(user)"
+    }
+
+    /// Every path a rule of simmer's could live at, newest first — what
+    /// `doctor` and `uninstall` look for.
+    public static func candidatePaths(for user: String) -> [String] {
+        [path(for: user), legacyPath].compactMap { $0 }
+    }
+
+    /// The rule file that is actually on this Mac for this user, or nil.
+    ///
+    /// Every surface asks this rather than naming a path, because there are
+    /// two now and there was one when they were written — and "a rule applied
+    /// at the call sites its author had in hand" is how four defects in this
+    /// branch came back. `StructureTests` asserts nothing outside this file
+    /// names a path directly.
+    public static func installedPath(for user: String = NSUserName()) -> String? {
+        candidatePaths(for: user).first { FileManager.default.fileExists(atPath: $0) }
+    }
+
+    /// Where this user's rule belongs, whether or not it is there yet.
+    public static func intendedPath(for user: String = NSUserName()) -> String {
+        path(for: user) ?? legacyPath
+    }
 
     /// The two invocations simmer makes, and the whole of what it asks for.
     /// The source the capability string is built from, so there is one list
@@ -124,8 +169,13 @@ public enum SudoRule {
     /// (PLATFORM-FACTS.md), so validation-before-landing is not optional.
     public static func installCommand(user: String) -> String {
         let rule = text(user: user)
+        // Per user, so a second admin's install cannot replace the first's.
+        // A username `#includedir` cannot represent falls back to the shared
+        // name, which is the 0.1.0 behaviour and the only thing sudo will
+        // actually read for them.
+        let destination = path(for: user) ?? legacyPath
         return "tmp=$(mktemp) && printf '%s\\n' '\(rule)' > \"$tmp\" && "
             + "sudo visudo -c -f \"$tmp\" && "
-            + "sudo install -m 0440 -o root -g wheel \"$tmp\" \(path); rm -f \"$tmp\""
+            + "sudo install -m 0440 -o root -g wheel \"$tmp\" \(destination); rm -f \"$tmp\""
     }
 }

@@ -845,6 +845,40 @@ import Testing
         }
     }
 
+    /// **The property, over both reserved shapes.** A name the claims
+    /// directory reads as meaning something — a fingerprint suffix, a
+    /// pre-0.2.0 temp suffix — must never also be a name `sanitizedId` will
+    /// mint. The first collision let one owner take another's file; the second
+    /// let the guard delete a live claim thirty seconds after it was taken.
+    ///
+    /// Written over a generated space rather than a list, because both
+    /// collisions were found by someone thinking of a name nobody had listed.
+    @Test func noOwnerEverResolvesToAReservedShape() {
+        var owners = ["agent:eval.tmp.12", "ci.tmp.42", "agent:build.tmp.99",
+                      "x-deadbeef", "agent:a/b", "Terminal", "agent:über",
+                      "terminal", "run:4821", "agent:evals"]
+        // And the shapes composed with each other, which is where a rule that
+        // handles one at a time comes apart.
+        for base in ["job", "agent:job", "a.b_c"] {
+            for suffix in [".tmp.1", ".tmp.999999", "-0123abcd", "-ffffffff",
+                           ".tmp.7-abcdef01", "-abcdef01.tmp.7"] {
+                owners.append(base + suffix)
+            }
+        }
+        for owner in owners {
+            let id = Claim.sanitizedId(owner)
+            #expect(!Ledger.isWriteDebris(id),
+                    "owner \"\(owner)\" resolves to \(id), which the guard sweeps as debris")
+            // Only a MINTED id can be forged: where the owner passed through
+            // untouched, `id == owner` is the point — it is what means no
+            // existing claim file ever moves.
+            if id != owner {
+                #expect(Claim.sanitizedId(id) != id,
+                        "owner \"\(id)\" maps onto \(owner)'s claim file")
+            }
+        }
+    }
+
     /// Stated as the property rather than the instances: the two forms this
     /// function can return must not overlap.
     @Test func theTwoIdFormsAreDisjoint() {
@@ -878,6 +912,61 @@ import Testing
         #expect(readBack?.until == 1)
         #expect(readBack?.until == Claim(owner: "agent:x", until: Claim.maxEpoch + 86_400,
                                          started: 0).until)
+    }
+
+    /// The write half of the same TOCTOU, three lines from the delete half
+    /// that got its compare in round 5. A tick reads `claims()` once, then
+    /// writes claims back to stamp `warned` / `prewarned` / `reminded` — and
+    /// an `extend` that lands in between is overwritten by the older copy,
+    /// after `extend` returned exit 0 saying the deadline moved.
+    ///
+    /// Deterministic on purpose: the race itself is a coin flip that neither I
+    /// nor a 300-iteration harness could reliably trigger, so the primitive is
+    /// what gets pinned rather than the timing.
+    @Test func writingAClaimThatMovedUnderUsIsRefused() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-cas-write-\(UUID().uuidString)")
+        let ledger = Ledger(stateDir: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        #expect(ledger.write(Claim(owner: "agent:x", until: 1_800_000_000, started: 1_700_000_000)))
+        let snapshot = ledger.claims()[0]           // what a tick would hold
+
+        // The extend that lands between the snapshot and the write.
+        var renewed = snapshot
+        renewed.until += 7200
+        #expect(ledger.write(renewed))
+
+        // The tick now stamps a flag on ITS copy and writes it back.
+        var stale = snapshot
+        stale.warned = true
+        #expect(ledger.write(stale, ifStillMatching: snapshot) == false)
+        #expect(ledger.claims().first?.until == renewed.until, "the renewal was overwritten")
+
+        // And a write against what is actually there still lands.
+        var current = ledger.claims()[0]
+        current.warned = true
+        #expect(ledger.write(current, ifStillMatching: ledger.claims()[0]))
+        #expect(ledger.claims().first?.warned == true)
+    }
+
+    /// A claim released since the snapshot must not come back. This is the
+    /// resurrection half: `down --all` announced the release, and the tick's
+    /// remind-write put an open-ended claim back with nothing to end it.
+    @Test func writingAClaimThatIsGoneDoesNotResurrectIt() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-cas-gone-\(UUID().uuidString)")
+        let ledger = Ledger(stateDir: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        #expect(ledger.write(Claim(owner: "agent:x", until: 0, started: 1_700_000_000)))
+        let snapshot = ledger.claims()[0]
+        #expect(ledger.retire(snapshot, why: "released by hand", now: 1_800_000_000))
+
+        var stale = snapshot
+        stale.reminded = 1_800_000_000
+        #expect(ledger.write(stale, ifStillMatching: snapshot) == false)
+        #expect(ledger.claims().isEmpty, "a released claim came back")
     }
 
     /// A tick reads `claims()` once and then unlinks by filename, so a renewal

@@ -101,6 +101,10 @@ public enum Tick {
         let onBattery = ctx.power.onBattery()
 
         for var claim in ledger.claims() {
+            // What was on disk when this tick decided. Every write below
+            // mutates `claim` first, so the comparison needs the copy taken
+            // before any of that.
+            let snapshot = claim
             let effective = cappedUntil(claim.until, cap: cap)
 
             // Deadline passed — the claim's own, or the cap clipping it.
@@ -131,7 +135,7 @@ public enum Tick {
             if onBattery, let percent, percent <= claim.minBattery + prefloorMargin {
                 if !claim.prewarned {
                     claim.prewarned = true
-                    ledger.write(claim)
+                    ledger.write(claim, ifStillMatching: snapshot)
                     outcome.notifications.append(NotificationRequest(
                         title: "🔌 Battery \(percent)%, floor \(claim.minBattery)%",
                         subtitle: "plug in, or simmer hands the switch back soon",
@@ -147,7 +151,7 @@ public enum Tick {
                 }
             } else if claim.prewarned {
                 claim.prewarned = false
-                ledger.write(claim)
+                ledger.write(claim, ifStillMatching: snapshot)
             }
         }
 
@@ -165,6 +169,8 @@ public enum Tick {
               var defining = ledger.claims().first(where: { $0.id == definingId }) else {
             return outcome
         }
+        // As above: the copy as it was read, before the flags below move it.
+        let definingSnapshot = defining
 
         if aggregate.until != 0 {
             // One warning, exactly once — against the AGGREGATE deadline,
@@ -175,7 +181,7 @@ public enum Tick {
             let left = aggregate.until - ctx.now
             if left <= warnSeconds && !defining.warned {
                 defining.warned = true
-                ledger.write(defining)
+                ledger.write(defining, ifStillMatching: definingSnapshot)
                 let reasonPart = aggregate.reason.isEmpty ? "" : " · \(aggregate.reason)"
                 outcome.notifications.append(NotificationRequest(
                     title: "☕ \(Durations.human(left)) left",
@@ -192,7 +198,7 @@ public enum Tick {
             // No deadline: remind regularly. An open-ended claim must be
             // impossible to forget — the condition under which it is allowed.
             defining.reminded = ctx.now
-            ledger.write(defining)
+            ledger.write(defining, ifStillMatching: definingSnapshot)
             outcome.notifications.append(NotificationRequest(
                 title: "☕ Still simmering, no deadline",
                 subtitle: "running \(Durations.human(ctx.now - defining.started))",

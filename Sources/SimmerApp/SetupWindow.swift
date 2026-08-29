@@ -11,7 +11,7 @@ import UserNotifications
 /// privileges (`SudoRule` says why).
 final class SetupWindow: NSObject {
     static let shared = SetupWindow()
-    static var sudoersPath: String { SudoRule.path }
+    static var sudoersPath: String { SudoRule.installedPath() ?? SudoRule.intendedPath() }
 
     /// The exact two-line rule, shown in full — one source, shared with
     /// `simmer doctor` and the installer.

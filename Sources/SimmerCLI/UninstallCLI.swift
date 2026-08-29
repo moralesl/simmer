@@ -49,6 +49,19 @@ struct UninstallCLI: ParsableCommand {
             fm.fileExists(atPath: path) ? "present" : "not there"
         }
 
+        // BEFORE the commands, not after them. This page is the surface for
+        // someone who has no checkout — the `make` path's ordering fix does
+        // not reach them — and the warning used to print at the bottom, under
+        // the `rm -rf` lines. Pasted top to bottom, that removes the means and
+        // then explains what to have run first, with no simmer left to run it.
+        if ctx.power.sleepDisabled() {
+            outcome.stdout.append("⚠️  This Mac is being held awake RIGHT NOW. Do this first, or nothing")
+            outcome.stdout.append("   below will be able to hand it back afterwards:")
+            outcome.stdout.append("")
+            outcome.stdout.append("   simmer down --all")
+            outcome.stdout.append("")
+        }
+
         outcome.stdout.append("simmer installed these, and nothing else:")
         outcome.stdout.append("   \(app)  — \(mark(app))")
         outcome.stdout.append("   \(home.appendingPathComponent(".local/bin/simmer").path)  — \(mark(home.appendingPathComponent(".local/bin/simmer").path))")
@@ -78,6 +91,13 @@ struct UninstallCLI: ParsableCommand {
             outcome.stdout.append("The checkout that carries the uninstall target is not at \(checkout).")
             outcome.stdout.append("These lines do the same thing:")
             outcome.stdout.append("")
+            // The same order, and the same two steps, the Makefile target
+            // takes: unregister the login item while the bundle still exists
+            // (SMAppService is bundle-scoped, so only that binary can), and
+            // quit the app before deleting what it is running from. Leaving
+            // them out here closed the instance and not the class.
+            outcome.stdout.append("   \(app)/Contents/MacOS/simmer-app --uninstall   # hands back the login item")
+            outcome.stdout.append("   osascript -e 'tell application id \"\(Runtime.bundleIdentifier)\" to quit'")
             outcome.stdout.append("   launchctl bootout gui/$(id -u)/\(Runtime.guardLabel)")
             outcome.stdout.append("   rm -f \(plist) \(home.appendingPathComponent(".local/bin/simmer").path)")
             outcome.stdout.append("   rm -rf \(app)\(skillInstalled ? " \(skill)" : "")")
@@ -86,12 +106,12 @@ struct UninstallCLI: ParsableCommand {
 
         // Root, and therefore yours. simmer only ever removes what simmer
         // wrote, and it never escalates its own privileges (SECURITY.md).
-        if fm.fileExists(atPath: SudoRule.path) {
+        if let rulePath = SudoRule.installedPath() {
             outcome.stdout.append("Then the sudo rule, which needs root and so is yours to run:")
             outcome.stdout.append("")
-            outcome.stdout.append("   sudo rm \(SudoRule.path)")
+            outcome.stdout.append("   sudo rm \(rulePath)")
         } else {
-            outcome.stdout.append("There is no \(SudoRule.path) to remove.")
+            outcome.stdout.append("There is no \(SudoRule.intendedPath()) to remove.")
             // A capability with no file behind it belongs to something else,
             // and telling someone to delete a stranger's grant would be wrong.
             //
@@ -111,21 +131,7 @@ struct UninstallCLI: ParsableCommand {
         outcome.stdout.append("Your state stays put — delete it too if you want the log and the claims gone:")
         outcome.stdout.append("   rm -rf \(env.stateDir.path)")
 
-        // Removing simmer removes every mechanism on this Mac that can put the
-        // sleep switch back, and the switch has no expiry, no indicator, and
-        // survives reboots (PLATFORM-FACTS.md). `make uninstall` hands the
-        // machine back first and refuses to continue if it could not — but
-        // someone following the raw commands above skips that, so the last
-        // word here is the one that gets them out of it either way.
         outcome.stdout.append("")
-        if ctx.power.sleepDisabled() {
-            outcome.stdout.append("⚠️  Right now this Mac is being held awake. Hand it back BEFORE removing")
-            outcome.stdout.append("   simmer, or nothing here will be able to afterwards:")
-            outcome.stdout.append("")
-            outcome.stdout.append("   simmer down --all")
-        } else {
-            outcome.stdout.append("Nothing is holding the Mac awake, so it is a safe moment to remove it.")
-        }
         outcome.stdout.append("   If sleep ever stops working after this: sudo pmset -a disablesleep 0")
 
         Runtime.deliver(outcome)

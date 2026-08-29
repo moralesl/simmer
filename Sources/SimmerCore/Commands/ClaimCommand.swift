@@ -154,17 +154,6 @@ public enum Commands {
 
         let before = ctx.aggregate()
 
-        let switchWasOn = ctx.power.sleepDisabled()
-        guard ctx.power.setDisableSleep(true) else {
-            outcome.merge(.failure("could not set disablesleep (sudo?). Run 'simmer doctor'",
-                                   json: input.json))
-            return outcome
-        }
-        if !switchWasOn {
-            ctx.ledger.event("switch_on", now: ctx.now,
-                             [("why", .string("claim by \(ctx.owner)"))])
-        }
-
         // A deadline set from INSIDE the warning window needs no warning: the
         // act of asking for two minutes is the notification that two minutes
         // is all there is. Otherwise `simmer 1m` answers itself seconds later
@@ -176,10 +165,22 @@ public enum Commands {
                           requireAC: input.requireAC, displayOn: input.displayOn,
                           warned: bornWarned,
                           reminded: ctx.now)
-        // The switch is already on. If the claim cannot be recorded, nothing
-        // holds it open and nothing schedules it back down — so settle here
-        // (which reverts it, the ledger being empty) and refuse, rather than
-        // print a deadline for a claim that does not exist.
+
+        // **The claim lands BEFORE the switch flips**, and the ordering is the
+        // whole point.
+        //
+        // The other way round leaves a window where the switch is on and the
+        // ledger is empty — which is exactly the orphan a tick is built to
+        // heal, so a guard running in that gap turned the switch back off
+        // under a caller who had just been told "lid may close" at exit 0. In
+        // production the restore is the next tick, up to thirty seconds away,
+        // and a lid closed inside that window sleeps the Mac with no guard
+        // running to notice.
+        //
+        // This order's window is the mirror: a claim on disk with the switch
+        // not yet on. A tick landing THERE turns the switch on, which is what
+        // was going to happen anyway. Both orders have a race; only one of
+        // them races toward the answer.
         guard ctx.ledger.write(claim) else {
             ctx.ledger.log("ERROR: could not record the claim for \(ctx.owner)", now: ctx.now)
             Engine.settle(ctx: ctx, why: "the claim could not be recorded")
@@ -196,20 +197,21 @@ public enum Commands {
                 json: input.json))
             return outcome
         }
-        // Everything below renders `claim.reason` — the folded copy the ledger
-        // actually holds — and never `input.reason`, which is still the
-        // caller's raw argv. Folding in `Claim`'s initialiser was meant to make
-        // "what a surface prints is what the ledger holds" true, and this
-        // function never re-read the claim it had just built, so it printed and
-        // logged the unfolded string instead.
-        //
-        // `simmer.log` is newline-delimited with a fixed timestamp prefix, so a
-        // reason carrying a newline and a plausible timestamp forged whole log
-        // records — which `simmer log --json` then handed to machine readers as
-        // separate elements of `lines`. On stdout the same text could
-        // impersonate simmer's own indented notes. And the event stream carried
-        // a reason the claim file did not, so the two disagreed about the same
-        // claim.
+
+        let switchWasOn = ctx.power.sleepDisabled()
+        guard ctx.power.setDisableSleep(true) else {
+            // The claim is on disk and the switch would not move. Take the
+            // claim back rather than leave a promise nothing is keeping.
+            _ = ctx.ledger.removeClaim(id: claim.id, ifStillMatching: claim)
+            outcome.merge(.failure("could not set disablesleep (sudo?). Run 'simmer doctor'",
+                                   json: input.json))
+            return outcome
+        }
+        if !switchWasOn {
+            ctx.ledger.event("switch_on", now: ctx.now,
+                             [("why", .string("claim by \(ctx.owner)"))])
+        }
+
         ctx.ledger.event("claim", now: ctx.now, [
             ("owner", .string(ctx.owner)),
             ("reason", .string(claim.reason)),

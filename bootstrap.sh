@@ -29,7 +29,20 @@ REF="${SIMMER_REF:-}"
 # A stable path: ~/.local/bin/simmer symlinks into it and the launchd guard
 # names it. Machinery, not a project someone works in.
 DIR="${SIMMER_DIR:-$HOME/.local/share/simmer}"
-SUDOERS=/etc/sudoers.d/simmer
+# One file per USER, not one per machine. The shared file held a single
+# `<user> ALL=(root) NOPASSWD: …` line, so a second admin running this same
+# one-paste install overwrote the first admin's — and their guard then failed
+# `sudo -n pmset` on every tick, forever, lid closed, machine held awake.
+#
+# `#includedir` ignores any filename containing a dot, so a username with one
+# cannot have a file here; that falls back to the shared name, which is the
+# only thing sudo will read for them.
+SUDOERS_USER=$(id -un)
+case "$SUDOERS_USER" in
+  *[!A-Za-z0-9_-]*) SUDOERS=/etc/sudoers.d/simmer ;;
+  *)                SUDOERS=/etc/sudoers.d/simmer-$SUDOERS_USER ;;
+esac
+SUDOERS_LEGACY=/etc/sudoers.d/simmer
 
 die() { printf 'simmer: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n▸ %s\n' "$*"; }
@@ -181,7 +194,16 @@ install_sudo_rule() {
     echo "  already in place ($SUDOERS) — nothing to do"
     return 0
   fi
-  if [ ! -f "$SUDOERS" ] && have_capability; then
+  # An install from before the rule went per-user: the line is in the shared
+  # file, it works, and it is this user's own. Without this the next branch
+  # would report it as a stranger's grant and install a second, redundant
+  # rule — the "adopted somebody else's rule" failure, inverted.
+  if [ -f "$SUDOERS_LEGACY" ] && have_capability; then
+    echo "  already in place ($SUDOERS_LEGACY, from an earlier version) — nothing to do"
+    echo "  Newer installs use one file per user; yours keeps working as it is."
+    return 0
+  fi
+  if [ ! -f "$SUDOERS" ] && [ ! -f "$SUDOERS_LEGACY" ] && have_capability; then
     cat <<'FOREIGN'
   Note: something OTHER than simmer already grants this capability.
   Find it with:  sudo grep -rn disablesleep /etc/sudoers.d/

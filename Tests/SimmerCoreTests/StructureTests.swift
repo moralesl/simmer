@@ -193,6 +193,86 @@ import Testing
         #expect(offenders.isEmpty, "still probing one command: \(offenders)")
     }
 
+    /// The claim has to land BEFORE the switch flips.
+    ///
+    /// The other order leaves a window where the switch is on and the ledger
+    /// is empty — the exact orphan a tick is built to heal — so a guard in
+    /// that gap turned the switch back off under a caller who had just been
+    /// told "lid may close" at exit 0. This order's window is the mirror: a
+    /// claim on disk with the switch not yet on, where a tick turns it on,
+    /// which was going to happen anyway. Both orders race; only one races
+    /// toward the answer.
+    ///
+    /// Asserted on the source because the window is microseconds and no
+    /// harness here could trigger it reliably — which is exactly the kind of
+    /// ordering someone tidies back the other way.
+    /// One owner-kind table, in two languages. A kind that gets 🚀 in the
+    /// extension and 🤖 in the core is the human/non-human distinction
+    /// blurring depending on where you look — and removing Alfred reached the
+    /// renderer, the CLI, the roadmap and the human-name set, but not the
+    /// agents' own law or the fourth renderer.
+    /// **The sweep, for the sudoers path.** There is one rule file per user
+    /// now and there was one per machine when every surface was written, so a
+    /// caller naming a path directly reports "no rule" for an install that is
+    /// right there. That is the fourth recurrence of "the rule reached the
+    /// call sites its author had in hand", so it is asserted over the tree
+    /// rather than at the places someone remembered.
+    @Test func nothingOutsideSudoRuleNamesTheRuleFileDirectly() throws {
+        var offenders: [String] = []
+        let root = Self.repoRoot.appendingPathComponent("Sources")
+        let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" && $0.lastPathComponent != "SudoRule.swift" }) ?? []
+        for file in files {
+            let source = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+            let code = source.split(separator: "\n", omittingEmptySubsequences: false)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+            // The DIRECTORY is fine — "sudo grep -rn NOPASSWD /etc/sudoers.d/"
+            // is advice, not a path this tool acts on. A named FILE is not.
+            if code.contains("/etc/sudoers.d/simmer") || code.contains("SudoRule.path")
+                || code.contains("SudoRule.legacyPath") {
+                offenders.append(file.lastPathComponent)
+            }
+        }
+        #expect(offenders.isEmpty,
+                "these name a rule path instead of asking SudoRule: \(offenders)")
+    }
+
+    @Test func theOwnerFacesAgreeAcrossLanguages() throws {
+        let core = try Self.read("Sources/SimmerCore/Model/StatusTitle.swift")
+        let extensionSource = try Self.read("integrations/raycast/src/claims.tsx")
+        let agents = try Self.read("AGENTS.md")
+        for gone in ["alfred"] {
+            #expect(!core.contains("\"\(gone)\""), "core still knows \(gone)")
+            #expect(!extensionSource.contains("\"\(gone)\""), "the extension still knows \(gone)")
+            #expect(!agents.contains("`\(gone)`"), "AGENTS.md still names \(gone)")
+        }
+        // And every name the binary calls human is one the extension faces the
+        // same way.
+        let environment = try Self.read("Sources/SimmerCore/Seam/Environment.swift")
+        for human in ["terminal", "menubar", "raycast"] {
+            #expect(environment.contains("\"\(human)\""))
+            #expect(extensionSource.contains("\"\(human)\""), "the extension has no face for \(human)")
+        }
+    }
+
+    @Test func aClaimIsRecordedBeforeTheSwitchIsFlipped() throws {
+        let source = try Self.read("Sources/SimmerCore/Commands/ClaimCommand.swift")
+        let claimFn = source.components(separatedBy: "public static func claim(").last ?? ""
+        let body = claimFn.components(separatedBy: "public static func extend(").first ?? claimFn
+        guard let write = body.range(of: "ctx.ledger.write(claim)"),
+              let flip = body.range(of: "ctx.power.setDisableSleep(true)") else {
+            Issue.record("claim no longer both records and flips — re-read this test")
+            return
+        }
+        #expect(write.lowerBound < flip.lowerBound,
+                "the switch is flipped before the claim exists, which a guard tick reads as an orphan")
+        // And a switch that will not move takes the claim back rather than
+        // leaving a promise nothing is keeping.
+        #expect(body.contains("removeClaim(id: claim.id, ifStillMatching: claim)"))
+    }
+
     @Test func theRunRenewerWritesUnderTheLockItChecksUnder() throws {
         let source = try Self.read("Sources/SimmerCLI/RunCLI.swift")
         let renewer = source.components(separatedBy: "func startRenewer()").last ?? ""
@@ -212,6 +292,65 @@ import Testing
         let insideLock = before.components(separatedBy: "done.lock()").last ?? ""
         #expect(insideLock.contains("finished"),
                 "the write is under the lock but nothing re-checks finished inside it")
+    }
+
+    /// The gate has to key on the INSTALLED reality, not on this invocation's
+    /// variables, and it has to notice a seam.
+    ///
+    /// It hung off `$(BIN_DIR)/simmer`, so an install done with a different
+    /// BIN_DIR or PREFIX made both the hand-back and the refusal silently
+    /// untrue while the removals below — fixed paths — ran anyway. And it
+    /// grepped `sleep_disabled=0` while `status` prints `seamed=1` on the next
+    /// line: under a leaked SIMMER_FAKE_PMSET the gate was reading a file in
+    /// /tmp and calling it the machine.
+    @Test func theUninstallGateReadsTheMachineAndNotTheEnvironment() throws {
+        let makefile = try Self.read("Makefile")
+        let body = (makefile.components(separatedBy: "\nuninstall:").last ?? "")
+            .components(separatedBy: "\nclean:").first ?? ""
+        // Which binary: from the LaunchAgent, which records what was installed.
+        #expect(body.contains("PlistBuddy"))
+        #expect(body.contains("$(AGENT_PLIST)"))
+        // The seam is a refusal, not a detail.
+        #expect(body.contains("seamed=0"))
+        #expect(body.contains("-u SIMMER_FAKE_PMSET"))
+        // And no binary at all means refuse, rather than skip the gate.
+        #expect(body.contains("no installed simmer binary found"))
+    }
+
+    /// The quit is an AppleEvent: TCC can refuse it silently and it fails in
+    /// any non-interactive context. `-osascript … 2>/dev/null` on its own was
+    /// a hope, not a step — so it is verified, the way `install` verifies its
+    /// bootout, before the bundle the app is running from is deleted.
+    @Test func uninstallVerifiesTheAppActuallyQuit() throws {
+        let makefile = try Self.read("Makefile")
+        let body = (makefile.components(separatedBy: "\nuninstall:").last ?? "")
+            .components(separatedBy: "\nclean:").first ?? ""
+        guard let check = body.range(of: "pgrep -qx simmer-app"),
+              let removal = body.range(of: "rm -rf $(APP)") else {
+            Issue.record("uninstall no longer checks for the app or removes the bundle")
+            return
+        }
+        #expect(check.lowerBound < removal.lowerBound)
+        #expect(body.contains("still running and would outlive"))
+    }
+
+    /// One bundle id, in two files that cannot see each other. A quit sent to
+    /// the wrong id silently does nothing, which is the failure mode with no
+    /// symptom.
+    @Test func theBundleIdIsTheSameInTheMakefileAndTheBinary() throws {
+        let makefile = try Self.read("Makefile")
+        let runtime = try Self.read("Sources/SimmerCLI/Runtime.swift")
+        guard let line = makefile.split(separator: "\n").first(where: {
+            $0.hasPrefix("BUNDLE_ID")
+        }) else {
+            Issue.record("no BUNDLE_ID in the Makefile")
+            return
+        }
+        let id = line.components(separatedBy: "?=").last?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        #expect(!id.isEmpty)
+        #expect(runtime.contains("\"\(id)\""), "Runtime does not carry \(id)")
+        #expect(runtime.contains("\"\(id).guard\""), "the guard label drifted from the bundle id")
     }
 
     @Test func uninstallHandsTheMachineBackBeforeRemovingTheMeansToDoIt() throws {

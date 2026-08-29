@@ -75,7 +75,7 @@ Exit 1 means finish the current unit and write the handoff rather than starting 
 - One live claim per owner: a second claim under the same name *replaces* yours.
   `simmer 2h` twice moves your deadline, it does not stack.
 - Concurrent agents each pick their own name, or they fight over one claim.
-- **Never** use a human owner name (`terminal`, `menubar`, `raycast`, `alfred`) and **never** set `SIMMER_HUMAN=1`.
+- **Never** use a human owner name (`terminal`, `menubar`, `raycast`) and **never** set `SIMMER_HUMAN=1`.
   Nothing stops you technically — that is exactly why it is an obligation.
   Human primacy protects the person's time from your accidents.
 - Inside a pty you are indistinguishable from a person, so simmer treats you as one and your default owner becomes the human `terminal`.

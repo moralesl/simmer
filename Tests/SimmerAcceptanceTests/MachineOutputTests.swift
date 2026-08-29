@@ -921,3 +921,70 @@ import Testing
         }
     }
 }
+
+/// `Tick` retires PER CLAIM — its own floor, its own `--require-ac`. `budget`
+/// measured each clock against a different set: the battery against
+/// `aggregate.minBattery`, which is the DEFINING claim's floor, and require-ac
+/// against the survivors' deadlines while ignoring the survivors' own floors.
+///
+/// Two claims were enough that no clock saw the binding one. Every existing
+/// battery test in this file has exactly one claim, which is why the invariant
+/// held everywhere the author was looking.
+@Suite struct BudgetAcrossSeveralClaimsTests {
+    /// The over-promise, and the dangerous direction: `fits: true` at exit 0
+    /// one tick before the guard hands the machine back.
+    @Test func aSurvivorsOwnFloorIsNotTheDefiningClaimsFloor() {
+        let sim = Sim(); defer { sim.tearDown() }
+        // Taken on AC. agent:a defines the aggregate and has the default floor.
+        sim.run(["8h", "-r", "overnight", "--owner", "agent:a", "--require-ac"])
+        sim.run(["6h", "-r", "batch", "--owner", "agent:b", "--min-battery", "55"])
+
+        // On battery at exactly agent:b's floor: agent:a dies of the charger,
+        // agent:b dies of its own floor. Neither is agent:a's floor of 20.
+        let drained = ["SIMMER_FAKE_BATTERY": "55:1", "SIMMER_FAKE_BATTERY_TIME": "36000"]
+        let result = sim.run(["budget", "--need", "2h", "--json"], env: drained)
+        #expect(result.code == 1)
+        #expect(sim.json(result)["fits"] as? Bool == false)
+        #expect(sim.json(result)["battery_seconds_left"] as? Int == 0)
+
+        // And the guard agrees, which is the only thing that makes it true.
+        #expect(sim.run(["guard"], env: drained).code == 0)
+        #expect(sim.run(["status", "--machine"], env: drained).out.contains("claim_count=0"))
+        #expect(sim.switchValue == "0")
+    }
+
+    /// The under-promise. Same defect, and it costs work rather than losing it:
+    /// refusing while a claim with a lower floor holds the machine for hours.
+    @Test func aDefiningClaimsFloorDoesNotCondemnTheOthers() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["8h", "-r", "overnight", "--owner", "agent:a", "--min-battery", "60"])
+        sim.run(["6h", "-r", "batch", "--owner", "agent:b"])          // floor 20
+
+        let drained = ["SIMMER_FAKE_BATTERY": "55:1", "SIMMER_FAKE_BATTERY_TIME": "36000"]
+        #expect(sim.run(["budget", "--need", "2h"], env: drained).code == 0)
+
+        // agent:a goes on the next tick; agent:b keeps the machine, and the
+        // answer before the tick has to be the same as the answer after it.
+        #expect(sim.run(["guard"], env: drained).code == 0)
+        #expect(sim.run(["status", "--machine"], env: drained).out.contains("claim_count=1"))
+        #expect(sim.run(["budget", "--need", "2h"], env: drained).code == 0)
+    }
+
+    /// The property behind both: what `budget` promises and what one guard
+    /// tick leaves must agree, whatever the mix of claims.
+    @Test(arguments: [
+        ["--require-ac"], ["--min-battery", "55"], ["--min-battery", "10"],
+    ])
+    func budgetAndTheGuardAgreeAboutTheSameState(_ flags: [String]) {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["8h", "-r", "a", "--owner", "agent:a"] + flags)
+        sim.run(["6h", "-r", "b", "--owner", "agent:b", "--min-battery", "40"])
+
+        let drained = ["SIMMER_FAKE_BATTERY": "45:1", "SIMMER_FAKE_BATTERY_TIME": "36000"]
+        let promised = sim.run(["budget", "--need", "1h"], env: drained).code == 0
+        sim.run(["guard"], env: drained)
+        let stillAwake = sim.switchValue == "1"
+        #expect(promised == stillAwake,
+                "budget said \(promised ? "fits" : "does not fit") and the guard left the switch \(sim.switchValue)")
+    }
+}

@@ -24,7 +24,9 @@ import Testing
             "ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0")
         #expect(!SudoRule.capability.contains("*"))
         #expect(!SudoRule.capability.contains("ALL:ALL"))
-        #expect(SudoRule.path == "/etc/sudoers.d/simmer")
+        // The shared file 0.1.0 wrote. Still the fallback for a username
+        // `#includedir` cannot represent, and still what an old install has.
+        #expect(SudoRule.legacyPath == "/etc/sudoers.d/simmer")
 
         let text = SudoRule.text(user: "someone")
         #expect(text.hasPrefix("# simmer"))
@@ -42,7 +44,7 @@ import Testing
         #expect(install != nil)
         if let validate, let install { #expect(validate.upperBound < install.lowerBound) }
         // Landing as root-owned 0440 is what makes sudoers accept it at all.
-        #expect(command.contains(SudoRule.path))
+        #expect(command.contains(SudoRule.intendedPath(for: "someone")))
         #expect(command.contains("mktemp"))
     }
 
@@ -53,7 +55,10 @@ import Testing
         let bootstrap = try Self.read("bootstrap.sh")
         #expect(bootstrap.contains(SudoRule.capability))
         #expect(bootstrap.contains("# simmer — flip the sleep switch without a password; nothing else."))
-        #expect(bootstrap.contains(SudoRule.path))
+        // The installer composes the per-user name; both halves must agree on
+        // the directory and the prefix.
+        #expect(bootstrap.contains("/etc/sudoers.d/simmer-$SUDOERS_USER"))
+        #expect(bootstrap.contains(SudoRule.legacyPath))
     }
 
     /// simmer never escalates its own privileges. `osascript … with
@@ -185,5 +190,42 @@ import Testing
     @Test func theCapabilityStringIsBuiltFromTheCommandList() {
         #expect(SudoRule.capability ==
                 "ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0")
+    }
+}
+
+/// One file per USER. The shared `/etc/sudoers.d/simmer` held a single
+/// `<user> ALL=(root) NOPASSWD: …` line, so a second admin running the
+/// documented one-paste install overwrote the first admin's — no malice, and
+/// the loser's guard then failed `sudo -n pmset` on every tick, forever.
+@Suite struct SudoRulePerUserTests {
+    @Test func eachUserGetsTheirOwnFile() {
+        #expect(SudoRule.path(for: "luis") == "/etc/sudoers.d/simmer-luis")
+        #expect(SudoRule.path(for: "alice") != SudoRule.path(for: "bob"))
+        #expect(SudoRule.installCommand(user: "luis").contains("/etc/sudoers.d/simmer-luis"))
+    }
+
+    /// `#includedir` ignores any filename containing a dot, so a username with
+    /// one cannot have a file there at all — and mangling it into a name that
+    /// could collide with another user's is the mistake this codebase has made
+    /// twice already with claim ids. It falls back to the shared name, which
+    /// is the only thing sudo will actually read for them.
+    @Test(arguments: ["first.last", "ad\\user", "hé", "", "a b"])
+    func aNameSudoCannotRepresentIsNotInvented(_ user: String) {
+        #expect(SudoRule.path(for: user) == nil)
+        #expect(SudoRule.installCommand(user: user).contains(SudoRule.legacyPath))
+    }
+
+    /// An install from 0.1.0 is still found, so `doctor` and `uninstall` can
+    /// point at it rather than reporting no rule at all.
+    @Test func theSharedFileIsStillLookedFor() {
+        #expect(SudoRule.candidatePaths(for: "luis")
+            == ["/etc/sudoers.d/simmer-luis", "/etc/sudoers.d/simmer"])
+    }
+
+    /// The rule's TEXT is per-user either way — that has always been true, and
+    /// it is what makes the shared file lossy in the first place.
+    @Test func theRuleNamesTheUserItIsFor() {
+        #expect(SudoRule.text(user: "alice").contains("alice ALL=(root) NOPASSWD:"))
+        #expect(!SudoRule.text(user: "alice").contains("bob"))
     }
 }

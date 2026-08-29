@@ -617,3 +617,31 @@ import Testing
         #expect(sim.switchValue == "1")
     }
 }
+
+/// A job number is not an attack. `agent:eval.tmp.12` was claimed at exit 0
+/// with "simmering until 19:33", left the switch on with `claim_count: 0`, and
+/// was deleted by the guard within thirty seconds — because the debris
+/// classifier and the id space were allowed to overlap.
+@Suite struct OwnersThatLookLikeSomethingElse {
+    @Test(arguments: ["agent:eval.tmp.12", "ci.tmp.42", "agent:build.tmp.99"])
+    func anOwnerShapedLikeCrashDebrisStillGetsARealClaim(_ owner: String) {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["2h", "-r", "eval batch", "--owner", owner]).code == 0)
+
+        // The claim the caller was told it had.
+        let status = sim.run(["status", "--machine"]).out
+        #expect(status.contains("claim_count=1"), "claimed at exit 0 and not counted")
+        #expect(status.contains("state=active"))
+        #expect(sim.switchValue == "1")
+
+        // And it survives the tick that used to delete it.
+        #expect(sim.run(["guard"]).code == 0)
+        #expect(sim.run(["status", "--machine"]).out.contains("claim_count=1"),
+                "the guard swept a live claim")
+        #expect(sim.switchValue == "1")
+
+        // Its owner can still address it, which is the other half.
+        #expect(sim.run(["down", "--owner", owner]).code == 0)
+        #expect(sim.switchValue == "0")
+    }
+}

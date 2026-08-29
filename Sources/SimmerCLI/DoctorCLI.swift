@@ -114,7 +114,7 @@ struct DoctorCLI: ParsableCommand {
                             label: "SIMMER_FAKE_PMSET is set — the sudo rule is not being checked",
                             ok: nil))
         } else {
-            let ownFile = FileManager.default.fileExists(atPath: SudoRule.path)
+            let ownFile = SudoRule.installedPath() != nil
             // The LISTING, not `-nl <command>`. The latter answers whether the
             // command is permitted, not whether it is permitted without a
             // password, so on any admin Mac it returns 0 through the stock
@@ -162,7 +162,8 @@ struct DoctorCLI: ParsableCommand {
             switch (ownFile, capability) {
             case (true, true):
                 rows.append(Row(id: "sudo_rule",
-                                label: "passwordless pmset rule (/etc/sudoers.d/simmer)", ok: true))
+                                label: "passwordless pmset rule (\(SudoRule.installedPath() ?? SudoRule.intendedPath()))",
+                                ok: true))
             case (false, true):
                 rows.append(Row(
                     id: "sudo_rule",
@@ -175,12 +176,12 @@ struct DoctorCLI: ParsableCommand {
             case (true, false) where !readable:
                 rows.append(Row(
                     id: "sudo_rule",
-                    label: "/etc/sudoers.d/simmer exists; whether sudo honours it could not be read.",
+                    label: "\(SudoRule.installedPath() ?? SudoRule.intendedPath()) exists; whether sudo honours it could not be read.",
                     ok: nil))
             case (true, false):
                 rows.append(Row(
                     id: "sudo_rule",
-                    label: "passwordless pmset rule (/etc/sudoers.d/simmer exists but sudo refuses — run 'sudo visudo -c')",
+                    label: "passwordless pmset rule (\(SudoRule.installedPath() ?? SudoRule.intendedPath()) exists but sudo refuses — run 'sudo visudo -c')",
                     ok: false))
             case (false, false):
                 rows.append(Row(
@@ -399,7 +400,7 @@ struct DoctorCLI: ParsableCommand {
             // needs root, and simmer never escalates its own privileges. So
             // print the command in full rather than describing it — a rule
             // someone can read before running is the whole point (SudoRule).
-            if !seamed, !FileManager.default.fileExists(atPath: SudoRule.path) {
+            if !seamed, SudoRule.installedPath() == nil {
                 print("The sudo rule needs root, so it is yours to run. This exact rule:")
                 print("")
                 for line in SudoRule.text(user: NSUserName()).split(separator: "\n") {

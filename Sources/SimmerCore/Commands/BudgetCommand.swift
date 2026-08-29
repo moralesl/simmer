@@ -37,66 +37,103 @@ extension Commands {
         let battery = ctx.power.batteryPercent()
         let onBattery = ctx.power.onBattery()
 
-        /// The battery's own ceiling on this claim, in seconds, or nil when
-        /// there is none to give.
+        /// **How long THIS claim survives the conditions the machine is in.**
+        /// nil means nothing bounds it.
         ///
-        /// **Zero is an answer and nil is not.** At or below the floor `Tick`
-        /// retires the claim on its next tick, so the ceiling is zero — but
-        /// that verdict used to be reached only after an estimate had been
-        /// read, and `pmset` has none for minutes after every wake. Below the
-        /// floor with no estimate therefore fell out as nil, nil meant "no
-        /// constraint", and `budget --need 30m` answered `fits: true` at exit 0
-        /// about a claim the next guard tick ends. That is the exit code an
-        /// agent bets hours of unattended work on, so the floor is decided
-        /// first, from the percentage alone.
+        /// Per claim, because that is how `Tick` retires: its own floor, its
+        /// own `--require-ac`. Each clock used to be measured against a
+        /// different set — the battery against `aggregate.minBattery`, which
+        /// is the DEFINING claim's floor, and require-ac against the
+        /// survivors' deadlines while ignoring the survivors' own floors. Two
+        /// claims were enough that no clock saw the binding one: `--need 2h`
+        /// answered `fits: true` at exit 0 quoting six hours of battery, and
+        /// one tick later the machine was idle with the switch handed back.
         ///
-        /// Overflow-checked, because this is a multiply on a number that comes
-        /// in from outside — the seam directly, `pmset` in production — and an
-        /// unchecked one traps the process with exit 133.
-        func secondsToFloor() -> Int? {
-            // With nothing claimed there is no floor: `aggregate.minBattery`
-            // is the struct's default, not any claim's choice, so a number
-            // here would describe a guarantee nobody asked for.
-            guard aggregate.count > 0 else { return nil }
-            guard onBattery, let percent = battery else { return nil }
-            // Decided before the estimate is consulted, and before the guard
-            // that keeps the division below safe. `Tick` retires on
-            // `percent <= minBattery` while on battery and reads no clock to
-            // do it, so neither does this — and 0% is a floor case, not a
-            // division problem, which is why `percent > 0` sits below rather
-            // than here.
-            guard percent > aggregate.minBattery else { return 0 }
-            guard percent > 0,
-                  let toEmpty = ctx.power.batterySecondsRemaining(), toEmpty >= 0 else { return nil }
-            let (scaled, overflowed) = toEmpty.multipliedReportingOverflow(
-                by: percent - aggregate.minBattery)
-            guard !overflowed else { return nil }
-            return scaled / percent
+        /// Overflow-checked: the estimate comes in from outside — the seam
+        /// directly, `pmset` in production — and an unchecked multiply traps
+        /// the process with exit 133.
+        /// nil seconds = nothing bounds it. `why` is nil when the bound is the
+        /// claim's own deadline, which gets the ordinary shortfall sentence.
+        typealias Survival = (seconds: Int?, why: String?)
+
+        /// Whether there is one claim or several changes how to name it, and
+        /// naming it wrongly is the failure this whole surface keeps having.
+        let subject = aggregate.count > 1 ? "the last claim still standing" : "this claim"
+
+        func survives(_ entry: (claim: Claim, effectiveUntil: Int)) -> Survival {
+            if ctx.power.thermalPressure() {
+                return (0, "heat ends every claim on the next tick")
+            }
+            var bounds: [Survival] = []
+            if onBattery {
+                if entry.claim.requireAC {
+                    return (0, "\(subject) needs the charger, and it is out")
+                }
+                if let percent = battery {
+                    // At or below ITS floor, decided from the percentage alone
+                    // and before any estimate — `Tick` consults no clock to do
+                    // it either, and 0% is a floor case, not a division one.
+                    guard percent > entry.claim.minBattery else {
+                        return (0, "\(subject) is already at its floor")
+                    }
+                    if percent > 0, let toEmpty = ctx.power.batterySecondsRemaining(),
+                       toEmpty >= 0 {
+                        let (scaled, over) = toEmpty.multipliedReportingOverflow(
+                            by: percent - entry.claim.minBattery)
+                        if !over {
+                            let left = scaled / percent
+                            bounds.append((left,
+                                "the battery reaches its floor in about \(Durations.human(left))"))
+                        }
+                    }
+                }
+            }
+            if entry.effectiveUntil != 0 {
+                bounds.append((max(entry.effectiveUntil - ctx.now, 0), nil))
+            }
+            guard let earliest = bounds.min(by: { ($0.seconds ?? 0) < ($1.seconds ?? 0) })
+            else { return (nil, nil) }
+            return earliest
         }
-        let floorSeconds = secondsToFloor()
 
-        /// Heat ends everything, unconditionally — CONTRACTS.md guarantee 1,
-        /// and `Tick` releases every claim on the next tick without consulting
-        /// a deadline. So under pressure the guarantee is zero however far away
-        /// the deadline is.
+        /// The guarantee: the machine stays awake while ANY claim survives, so
+        /// it is the longest of them. nil when one of them is unbounded.
+        /// The machine stays awake while ANY claim survives, so the guarantee
+        /// is the longest of them — and the reason is that claim's reason.
+        let guarantee: Survival = {
+            guard aggregate.count > 0 else { return (nil, nil) }
+            let each = aggregate.live.map(survives)
+            if each.contains(where: { $0.seconds == nil }) { return (nil, nil) }
+            return each.max(by: { ($0.seconds ?? 0) < ($1.seconds ?? 0) }) ?? (nil, nil)
+        }()
+        let guaranteeSeconds = guarantee.seconds
+
+        /// What the battery alone says, for the machine surface: the longest
+        /// any claim survives on battery, deadlines set aside.
+        let floorSeconds: Int? = {
+            guard aggregate.count > 0, onBattery, let percent = battery else { return nil }
+            var each: [Int] = []
+            for entry in aggregate.live {
+                if entry.claim.requireAC || percent <= entry.claim.minBattery {
+                    each.append(0); continue
+                }
+                guard percent > 0, let toEmpty = ctx.power.batterySecondsRemaining(),
+                      toEmpty >= 0 else { return nil }
+                let (scaled, over) = toEmpty.multipliedReportingOverflow(
+                    by: percent - entry.claim.minBattery)
+                guard !over else { return nil }
+                each.append(scaled / percent)
+            }
+            return each.max()
+        }()
+
         let thermalSeconds: Int? = ctx.power.thermalPressure() ? 0 : nil
-
-        /// The deadline that survives the charger being out.
-        ///
-        /// `Tick` retires a `--require-ac` claim the moment the machine goes on
-        /// battery, so a deadline provided by one of those is already over —
-        /// and `budget` went on quoting it. Not a global zero like heat: a
-        /// claim that did not ask for AC keeps holding the machine, so the
-        /// honest number is the furthest deadline among the ones that survive.
+        /// Every live claim needs a charger that is out.
         let requireACSeconds: Int? = {
             guard onBattery, aggregate.count > 0 else { return nil }
-            let survivors = aggregate.live.filter { !$0.claim.requireAC }
-            guard !survivors.isEmpty else { return 0 }
-            // An open-ended survivor outlasts every epoch, so there is no
-            // ceiling to add here.
-            guard !survivors.contains(where: { $0.effectiveUntil == 0 }) else { return nil }
-            return max((survivors.map(\.effectiveUntil).max() ?? ctx.now) - ctx.now, 0)
+            return aggregate.live.allSatisfy(\.claim.requireAC) ? 0 : nil
         }()
+
         // Said out loud on the human surface for the same reason it is a field
         // on the machine one: the deadline is not what is about to end this.
         if !bareSeconds && !json, aggregate.count > 0, thermalSeconds == 0 {
@@ -163,27 +200,31 @@ extension Commands {
         // `seconds_left` keeps its contracted meaning — the deadline clock,
         // -1 for no deadline — and `battery_seconds_left` carries the other,
         // so no existing field changed what it means.
-        /// Every clock that can end this claim, with the words for it. The
-        /// guarantee is the earliest of them, and the verdict has to name
-        /// WHICH — four times now a refusal has reported a shortfall against
-        /// the deadline while something else was the thing running out.
+        /// The guarantee, with the words for whatever bounds it. Four times a
+        /// refusal has reported a shortfall against the deadline while
+        /// something else was the thing running out, so the sentence comes
+        /// from the same computation as the verdict.
         func clocks(_ deadlineLeft: Int?) -> [(seconds: Int, why: String?)] {
-            var found: [(Int, String?)] = []
-            if let deadlineLeft { found.append((deadlineLeft, nil)) }   // nil = the deadline
-            if let floorSeconds {
-                found.append((floorSeconds, floorSeconds == 0
-                    ? "the battery is already at its floor"
-                    : "the battery reaches its floor in about \(Durations.human(floorSeconds))"))
+            guard let guaranteeSeconds else {
+                return deadlineLeft.map { [($0, nil)] } ?? []
             }
-            if thermalSeconds != nil {
-                found.append((0, "heat ends every claim on the next tick"))
+            // The deadline being the binding component is the ordinary case
+            // and gets the ordinary "N short" sentence; otherwise the reason
+            // comes from the same computation as the verdict, so the two
+            // cannot describe different things.
+            if let deadlineLeft, deadlineLeft <= guaranteeSeconds {
+                return [(guaranteeSeconds, nil)]
             }
-            if let requireACSeconds {
-                found.append((requireACSeconds, requireACSeconds == 0
-                    ? "every claim needs the charger, and it is out"
-                    : "the claims that survive the charger being out end in about \(Durations.human(requireACSeconds))"))
+            // A nil `why` here means the bound is a deadline — but NOT the one
+            // the aggregate reports, or we would not be past the branch above.
+            // Saying "N short" then subtracts against a number that was never
+            // the guarantee, which is the mistake this surface has now made
+            // five times.
+            guard let why = guarantee.why else {
+                return [(guaranteeSeconds,
+                         "\(subject) ends in about \(Durations.human(guaranteeSeconds))")]
             }
-            return found
+            return [(guaranteeSeconds, why)]
         }
 
         func fitsWithin(_ deadlineLeft: Int?) -> Bool? {

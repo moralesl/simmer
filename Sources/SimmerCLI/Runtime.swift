@@ -9,6 +9,10 @@ import SimmerCore
 enum Runtime {
     static let version = SimmerVersion.string
     static let guardLabel = "io.github.moralesl.simmer.guard"
+    /// The bundle id `make install` stamps into Info.plist. The guard label is
+    /// this plus `.guard`, and the two must not drift — a quit sent to the
+    /// wrong id is a quit that silently does nothing.
+    static let bundleIdentifier = "io.github.moralesl.simmer"
 
     static func environment() -> SimmerEnvironment {
         return SimmerEnvironment(env: ProcessInfo.processInfo.environment,

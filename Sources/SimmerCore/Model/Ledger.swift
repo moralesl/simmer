@@ -62,7 +62,13 @@ public struct Ledger: Sendable {
     /// moved to `stateDir` — so a file wearing it in `claims/` is debris by
     /// construction, and it is simmer's own to clear away.
     public static func isWriteDebris(_ name: String) -> Bool {
+        // The pattern lives with the other reserved shape, in `Claim`, because
+        // `sanitizedId` has to refuse to MINT one and this has to recognise
+        // one — and the two staying in step is the whole property. Spelled out
+        // here as its own function anyway: the classifier and the id-minter
+        // are different jobs that happen to share a list.
         name.range(of: #"\.tmp\.[0-9]+$"#, options: .regularExpression) != nil
+            && Claim.isReservedShape(name)
     }
 
     /// Remove what a crashed write of an older version left behind. Called by
@@ -104,6 +110,35 @@ public struct Ledger: Sendable {
     /// until 11:00" about a claim that does not exist. The guard would heal it
     /// within 30s — toward sleep, the safe direction — but the sentence was
     /// still a lie, and honesty is not something the next tick can restore.
+    /// Write only while what is on disk is still what the caller read.
+    ///
+    /// The delete half of this got its compare in round 5, because a tick
+    /// unlinking by filename destroyed a renewal that landed after its
+    /// snapshot. The write half three lines away kept the same shape: a tick
+    /// reads `claims()` once, then writes claims back to stamp `warned`,
+    /// `prewarned` or `reminded` — and an `extend` or a `down` that lands in
+    /// between is overwritten by the older copy. `extend` returns exit 0 and
+    /// says the deadline moved; the deadline did not move.
+    ///
+    /// Same discriminator as `removeClaim`, for the same reason: `until` and
+    /// `started` are what a renewal moves, and comparing whole records would
+    /// refuse every write once a newer version added a field.
+    @discardableResult
+    public func write(_ claim: Claim, ifStillMatching expected: Claim) -> Bool {
+        let url = claimsDir.appendingPathComponent(claim.id)
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            // Gone since the snapshot — released, retired, swept. Writing now
+            // would put it back, which is the resurrection half of the same
+            // bug.
+            return false
+        }
+        let current = Claim.parse(text, fallbackId: claim.id)
+        guard current.until == expected.until, current.started == expected.started else {
+            return false
+        }
+        return write(claim)
+    }
+
     @discardableResult
     public func write(_ claim: Claim) -> Bool {
         // Re-checked here, not only at birth: every field is a `var` and three

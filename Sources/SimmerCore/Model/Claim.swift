@@ -153,12 +153,41 @@ public struct Claim: Sendable, Equatable {
         // no existing claim file moves: only a name shaped like an id is
         // affected, and one of those was never addressable by its owner
         // anyway.
-        let looksLikeAnId = folded.range(of: "-[0-9a-f]{8}$",
-                                         options: .regularExpression) != nil
-        guard folded != owner || overlong || looksLikeAnId else { return folded }
+        guard folded != owner || overlong || isReservedShape(folded) else { return folded }
         let stem = overlong ? String(folded.prefix(idStemBudget)) : folded
         return "\(stem)-\(fingerprint(owner))"
     }
+
+    /// Names the claims directory reads as meaning something, rather than as
+    /// the name of a claim. **A passthrough id may never wear one of these**,
+    /// or two things that must be distinguishable become the same string.
+    ///
+    /// There are two, and they arrived a day apart from opposite directions:
+    ///
+    /// - `-<8 hex>` is what `sanitizedId` appends when it had to alter an
+    ///   owner. Without this rule, reading a victim's id out of `status
+    ///   --json` and claiming under it landed on their file.
+    /// - `.tmp.<pid>` is what pre-0.2.0 releases staged under, so `Ledger`
+    ///   treats a file wearing it as crash debris: uncounted, and swept by the
+    ///   guard. Without this rule, `--owner agent:eval.tmp.12` — a job number,
+    ///   not an attack — was claimed at exit 0, left the switch on with
+    ///   `claim_count: 0`, and was deleted within thirty seconds.
+    ///
+    /// The second was introduced by the fix for the first's sibling, which is
+    /// why the two live here together now: a shape-based classifier over this
+    /// directory has to be disjoint from the id space, and the only way that
+    /// keeps being true is if adding a third shape means editing the same
+    /// list both readers consult.
+    static func isReservedShape(_ id: String) -> Bool {
+        reservedShapePatterns.contains {
+            id.range(of: $0, options: .regularExpression) != nil
+        }
+    }
+
+    static let reservedShapePatterns = [
+        "-[0-9a-f]{8}$",        // a fingerprinted id
+        #"\.tmp\.[0-9]+$"#,     // a pre-0.2.0 half-written record
+    ]
 
     /// How much of a mangled owner survives into its id.
     ///
