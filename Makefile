@@ -128,7 +128,12 @@ skill:
 app: build
 	rm -rf $(STAGED_APP)
 	mkdir -p $(STAGED_APP)/Contents/MacOS $(STAGED_APP)/Contents/Resources
+	# @STATE_HOME@ for the same reason the LaunchAgent gets it: an app
+	# launched from the Dock inherits none of the shell's environment, so a
+	# shell exporting XDG_STATE_HOME put the app on one ledger and the CLI
+	# on another — the guard's bug, in the other half of the bundle.
 	sed -e 's/@BUNDLE_ID@/$(BUNDLE_ID)/g' -e 's/@VERSION@/$(VERSION)/g' \
+	    -e 's|@STATE_HOME@|$(STATE_HOME)|g' \
 	    app/Info.plist.template > $(STAGED_APP)/Contents/Info.plist
 	# The app executable is NOT named "Simmer": APFS is case-insensitive,
 	# so "Simmer" and the CLI "simmer" would silently be the same file.
@@ -207,6 +212,11 @@ uninstall:
 	fi
 	-launchctl bootout gui/$$(id -u)/$(GUARD_LABEL) 2>/dev/null
 	rm -f $(AGENT_PLIST)
+	# Quit it before its bundle goes. A running Simmer.app outlives the
+	# files it was launched from, keeps its menu bar, and one click on
+	# "Stay awake for…" re-arms disablesleep — with the sudoers rule still
+	# in place and nothing left on the Mac able to turn it off again.
+	-osascript -e 'tell application id "$(BUNDLE_ID)" to quit' 2>/dev/null
 	-[ -d $(APP) ] && $(LSREGISTER) -u $(APP)
 	rm -rf $(APP)
 	rm -f $(BIN_DIR)/simmer

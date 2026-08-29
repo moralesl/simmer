@@ -481,3 +481,95 @@ import Testing
         sim.unfreezeClaims()
     }
 }
+
+/// A cap is a decision about tonight, and `HH:MM` rolling to tomorrow is right
+/// for a deadline and wrong for a ceiling.
+@Suite struct CapRolloverTests {
+    // The harness epoch is 2027-01-15 09:00 Europe/Berlin.
+    static let at0900 = Sim.epoch
+    static let at2230 = Sim.epoch + 13 * 3600 + 1800
+    static let at2330 = Sim.epoch + 14 * 3600 + 1800
+
+    /// The menu offers a "Tonight 22:00" button. Clicked at 22:30 it capped
+    /// twenty-three and a half hours out, at exit 0, with no hint — the
+    /// inverse of the safety a cap exists for.
+    @Test func aTimeThatRolledMoreThanHalfADayIsRefused() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["cap", "22:00", "--owner", "terminal"], now: Self.at2230)
+        #expect(result.code == 1)
+        #expect(result.combined.contains("was 30 min ago"))
+        #expect(result.combined.contains("longer than a night"))
+        #expect(sim.capUntil == nil, "a refused cap must not land")
+    }
+
+    /// Refusing on distance alone would have broken this: thirteen hours away
+    /// and perfectly ordinary, because nothing rolled.
+    @Test func aDistantTimeThatDidNotRollIsFine() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["cap", "22:00", "--owner", "terminal"], now: Self.at0900)
+        #expect(result.code == 0)
+        #expect(sim.capUntil == Self.at0900 + 13 * 3600)
+    }
+
+    /// And a real overnight ceiling still works: rolled, but inside the night.
+    @Test func aRolledTimeInsideHalfADayIsFine() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["cap", "09:00", "--owner", "terminal"], now: Self.at2330)
+        #expect(result.code == 0)
+        #expect(sim.capUntil == Self.at2330 + 9 * 3600 + 1800)
+    }
+
+    /// The duration form says it without ambiguity, which is what the refusal
+    /// points at — so it must keep working past the rollover limit.
+    @Test func theDurationFormIsNotSubjectToTheRolloverLimit() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["cap", "23h", "--owner", "terminal"], now: Self.at2230).code == 0)
+    }
+}
+
+/// `budget` answers about the earliest clock, and a deadline is only one of
+/// them. These two end a claim without consulting it at all.
+@Suite struct BudgetOtherClocksTests {
+    @Test func heatEndsEverythingAndBudgetSaysSo() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "work", "--owner", "agent:x"])
+        #expect(sim.run(["budget", "--need", "3h"]).code == 0)
+
+        let hot = ["SIMMER_FAKE_THERMAL": "1"]
+        let result = sim.run(["budget", "--need", "3h", "--json"], env: hot)
+        #expect(result.code == 1)
+        #expect(sim.json(result)["fits"] as? Bool == false)
+        // And the verdict names the clock rather than subtracting against the
+        // deadline, which was never the binding one.
+        let human = sim.run(["budget", "--need", "3h"], env: hot)
+        #expect(human.out.contains("heat ends every claim"))
+        #expect(!human.out.contains("short"))
+    }
+
+    /// `Tick` retires a --require-ac claim the moment the charger goes, so a
+    /// deadline provided by one of those is already over.
+    @Test func aRequireACClaimIsNotADeadlineOnceTheChargerIsOut() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "needs ac", "--owner", "agent:ac", "--require-ac"])
+        #expect(sim.run(["budget", "--need", "3h"]).code == 0)
+
+        let unplugged = ["SIMMER_FAKE_BATTERY": "80:1"]
+        #expect(sim.run(["budget", "--need", "3h"], env: unplugged).code == 1)
+        #expect(sim.run(["budget", "--need", "3h"], env: unplugged)
+            .out.contains("every claim needs the charger"))
+    }
+
+    /// Not a global zero: a claim that did not ask for AC keeps holding the
+    /// machine, so the honest number is the furthest deadline that survives.
+    @Test func anOrdinaryClaimBesideItStillProvidesItsOwnDeadline() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "-r", "needs ac", "--owner", "agent:ac", "--require-ac"])
+        sim.run(["2h", "-r", "ordinary", "--owner", "agent:plain"])
+
+        let unplugged = ["SIMMER_FAKE_BATTERY": "80:1"]
+        #expect(sim.run(["budget", "--need", "90m"], env: unplugged).code == 0)
+        let past = sim.run(["budget", "--need", "3h"], env: unplugged)
+        #expect(past.code == 1)
+        #expect(past.out.contains("survive the charger being out"))
+    }
+}

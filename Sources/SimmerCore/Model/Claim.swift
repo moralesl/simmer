@@ -138,7 +138,24 @@ public struct Claim: Sendable, Equatable {
         // it cannot change either.
         let folded = flattened.lowercased()
         let overlong = folded.count > idStemBudget
-        guard folded != owner || overlong else { return folded }
+        // **The passthrough and the fingerprinted forms must not overlap.**
+        // A fingerprinted id — `agent:a_b-e6a27fc6` — is built only from
+        // characters the safe set allows, so it is itself a perfectly valid
+        // owner, and naming yourself one mapped straight onto somebody else's
+        // claim file: a six-hour claim replaced by a one-minute one, with no
+        // retire event and a green `doctor`. Read the victim's id out of
+        // `status --json` and claim under it; that is the whole attack.
+        //
+        // So an owner that already looks like an id is fingerprinted rather
+        // than passed through, which is what makes the two sets disjoint —
+        // every fingerprinted id ends in `-<8 hex>` and no passthrough one
+        // does. Done this way rather than by changing the separator because
+        // no existing claim file moves: only a name shaped like an id is
+        // affected, and one of those was never addressable by its owner
+        // anyway.
+        let looksLikeAnId = folded.range(of: "-[0-9a-f]{8}$",
+                                         options: .regularExpression) != nil
+        guard folded != owner || overlong || looksLikeAnId else { return folded }
         let stem = overlong ? String(folded.prefix(idStemBudget)) : folded
         return "\(stem)-\(fingerprint(owner))"
     }
@@ -209,6 +226,26 @@ public struct Claim: Sendable, Equatable {
             hash = hash.multipliedReportingOverflow(by: 16_777_619).partialValue
         }
         return String(format: "%08x", hash)
+    }
+
+    /// The same value, with every range re-applied and the id kept.
+    ///
+    /// `until` and the rest are `var`s, and `extend`, `cap` and `run`'s
+    /// renewer all move them after the initialiser has had its say — so a
+    /// deadline could be walked past `maxEpoch` one extension at a time and
+    /// written out, and the NEXT read folded it to expired. The claim's
+    /// deadline moved backwards and nothing said so.
+    ///
+    /// The id is carried across rather than recomputed: crash debris and
+    /// pre-migration records live under names their owner no longer resolves
+    /// to, and rebuilding would rename them out from under themselves.
+    func revalidated() -> Claim {
+        var copy = Claim(owner: owner, until: until, started: started, reason: reason,
+                         minBattery: minBattery, requireAC: requireAC, displayOn: displayOn,
+                         warned: warned, prewarned: prewarned, reminded: reminded,
+                         legacyCaffeinatePid: legacyCaffeinatePid)
+        copy.id = id
+        return copy
     }
 
     // MARK: format=2 codec

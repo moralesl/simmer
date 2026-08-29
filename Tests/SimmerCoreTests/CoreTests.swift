@@ -435,42 +435,63 @@ import Testing
     }
 
     /// Debris a version that staged inside `claims/` already left on a real
-    /// machine still enumerates — it is a regular file in the claims directory
-    /// and always was. What changed is that it can be got rid of: its id is now
-    /// the name it is stored under, so `retire` deletes the file it actually
-    /// read instead of one that may not exist.
-    @Test func debrisLeftByAnOlderVersionCanBeReleased() {
+    /// machine is a COPY of a real claim — `format=` and all — so it read as a
+    /// record and went on holding the switch, with no deadline for the guard
+    /// to heal an open-ended one by. It is not counted at all now: nothing
+    /// writes that shape any more, so a file wearing it is debris by
+    /// construction.
+    @Test func debrisLeftByAnOlderVersionHoldsNothing() {
         let (ledger, dir) = makeLedger()
         defer { try? FileManager.default.removeItem(at: dir) }
         let stale = ledger.claimsDir.appendingPathComponent("terminal.tmp.4242")
-        try! "format=2\nid=terminal\nowner=terminal\nuntil=2000\nstarted=900\n"
+        try! "format=2\nid=terminal\nowner=terminal\nuntil=0\nstarted=900\n"
             .write(to: stale, atomically: true, encoding: .utf8)
 
-        #expect(ledger.claims().count == 1)
-        for claim in ledger.claims() {
-            ledger.retire(claim, why: "released by hand (all)", now: 1000)
-        }
         #expect(ledger.claims().isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: stale.path))
+        #expect(Ledger.isWriteDebris("terminal.tmp.4242"))
+        #expect(!Ledger.isWriteDebris("terminal"))
+        #expect(!Ledger.isWriteDebris("agent:a_b-e6a27fc6"))
+    }
+
+    /// And the guard clears it, because once it stopped being counted nothing
+    /// else could reach it — `down --all` retires claims, and this is not one.
+    @Test func theGuardSweepsWhatACrashedWriteLeft() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try! "format=2\nid=terminal\nowner=terminal\nuntil=0\nstarted=900\n"
+            .write(to: ledger.claimsDir.appendingPathComponent("terminal.tmp.4242"),
+                   atomically: true, encoding: .utf8)
+        #expect(ledger.write(Claim(owner: "agent:x", until: 2000, started: 900)))
+
+        #expect(ledger.sweepWriteDebris(now: 1000) == 1)
+        #expect(ledger.claimFileNamesForTests().sorted() == ["agent:x"],
+                "a real claim beside it must be untouched")
+        #expect(ledger.sweepWriteDebris(now: 1000) == 0, "and it is idempotent")
     }
 
     /// And it cannot bring itself back. A tick that updates a flag writes the
     /// claim out again; keyed on the `id=` line, that wrote the debris back
     /// under the name of the claim it was a copy of — so releasing the claim
     /// recreated it, every thirty seconds, for as long as the Mac ran.
-    @Test func debrisDoesNotResurrectTheClaimItCopied() {
+    /// The resurrection this used to guard against is now unreachable a step
+    /// earlier: a tick never reads the debris, so there is nothing for it to
+    /// write back out under the name of the claim it copied. Asserted from the
+    /// tick's side, which is where the loop actually was.
+    @Test func aTickCannotWriteDebrisBackOutAsARealClaim() {
         let (ledger, dir) = makeLedger()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let stale = ledger.claimsDir.appendingPathComponent("terminal.tmp.4242")
         try! "format=2\nid=terminal\nowner=terminal\nuntil=2000\nstarted=900\n"
-            .write(to: stale, atomically: true, encoding: .utf8)
+            .write(to: ledger.claimsDir.appendingPathComponent("terminal.tmp.4242"),
+                   atomically: true, encoding: .utf8)
 
-        var claim = ledger.claims()[0]
-        claim.warned = true                                   // what a tick does
-        #expect(ledger.write(claim))
+        // Everything a tick iterates over — and it is empty.
+        for var claim in ledger.claims() {
+            claim.warned = true
+            _ = ledger.write(claim)
+        }
         #expect(!FileManager.default.fileExists(
             atPath: ledger.claimsDir.appendingPathComponent("terminal").path))
-        #expect(ledger.claims().count == 1)
+        #expect(ledger.claims().isEmpty)
     }
 }
 
@@ -804,5 +825,84 @@ import Testing
 
         ledger.log("a line that must not travel", now: 1000)
         #expect(!FileManager.default.fileExists(atPath: elsewhere.path))
+    }
+}
+
+/// Round 5: three of the four blockers were the same defect — a value checked
+/// at birth, or read into a snapshot, then changed through a second path that
+/// skipped the check.
+@Suite struct InvariantsThatSurviveASecondPath {
+    /// A fingerprinted id is built only from characters the safe set allows,
+    /// so it is itself a valid owner — and naming yourself one mapped onto
+    /// somebody else's claim file. Read the victim's id out of `status --json`
+    /// and claim under it; that was the whole attack.
+    @Test func anIdIsNeverAlsoAnOwnerThatMapsToIt() {
+        for owner in ["agent:a/b", "agent:über", "../../tmp/pwned", "Terminal",
+                      String(repeating: "x", count: 400)] {
+            let id = Claim.sanitizedId(owner)
+            #expect(Claim.sanitizedId(id) != id,
+                    "owner \"\(id)\" maps onto \(owner)'s claim file")
+        }
+    }
+
+    /// Stated as the property rather than the instances: the two forms this
+    /// function can return must not overlap.
+    @Test func theTwoIdFormsAreDisjoint() {
+        // Everything fingerprinted ends in a dash and eight hex digits...
+        #expect(Claim.sanitizedId("agent:a/b").range(
+            of: "-[0-9a-f]{8}$", options: .regularExpression) != nil)
+        // ...and nothing passed through unchanged does.
+        for safe in ["terminal", "agent:evals", "run:4821", "a.b_c-d:e"] {
+            #expect(Claim.sanitizedId(safe) == safe)
+            #expect(safe.range(of: "-[0-9a-f]{8}$", options: .regularExpression) == nil)
+        }
+    }
+
+    /// `until` is a var and three commands move it after the initialiser has
+    /// had its say, so a deadline could be walked past `maxEpoch` one
+    /// extension at a time — and the next read folded it to expired. The
+    /// deadline moved backwards and nothing said so.
+    @Test func theLedgerWillNotWriteAValueThatFailedItsOwnRanges() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-reval-\(UUID().uuidString)")
+        let ledger = Ledger(stateDir: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        var claim = Claim(owner: "agent:x", until: 1_800_000_000, started: 1_700_000_000)
+        claim.until = Claim.maxEpoch + 86_400        // the mutation the check missed
+        #expect(ledger.write(claim))
+
+        // What lands is what the ranges allow, so a re-read cannot disagree
+        // with what was written.
+        let readBack = ledger.claims().first
+        #expect(readBack?.until == 1)
+        #expect(readBack?.until == Claim(owner: "agent:x", until: Claim.maxEpoch + 86_400,
+                                         started: 0).until)
+    }
+
+    /// A tick reads `claims()` once and then unlinks by filename, so a renewal
+    /// landing in between was deleted by a decision taken before it existed:
+    /// `extend` returned exit 0 and the renewed claim was gone.
+    @Test func retiringAClaimThatMovedUnderUsIsRefused() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-cas-\(UUID().uuidString)")
+        let ledger = Ledger(stateDir: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let original = Claim(owner: "agent:x", until: 1_800_000_000, started: 1_700_000_000)
+        #expect(ledger.write(original))
+        let snapshot = ledger.claims()[0]           // what a tick would hold
+
+        // The renewal that lands between the snapshot and the unlink.
+        var renewed = snapshot
+        renewed.until += 3600
+        #expect(ledger.write(renewed))
+
+        #expect(ledger.retire(snapshot, why: "time is up", now: 1_800_000_001) == false)
+        #expect(ledger.claims().first?.until == renewed.until, "the renewal was deleted")
+
+        // And retiring what is actually there still works.
+        #expect(ledger.retire(ledger.claims()[0], why: "time is up", now: 1_800_000_001))
+        #expect(ledger.claims().isEmpty)
     }
 }

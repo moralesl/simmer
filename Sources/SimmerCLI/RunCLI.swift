@@ -180,8 +180,24 @@ final class RunCoordinator {
                     // That warning is worth having: nobody chose this deadline
                     // just now, it arrived.
                     claim.warned = false
-                    ctx.ledger.write(claim)
-                    ctx.ledger.log("run: renewed until \(Formats.hhmm(target))", now: ctx.now)
+                    // Under the lock, and re-checked inside it. `finished` was
+                    // read at the top of this loop, and everything since —
+                    // building a context, reading the claim, consulting the
+                    // cap — is time for `cleanup()` to run and retire us. The
+                    // write then put the claim back, and the guard held the
+                    // switch on for a dead process until the chunk ran out.
+                    //
+                    // `cleanup` sets `finished` under this same lock before it
+                    // retires anything, so holding it across the write makes
+                    // the two orders the only two possible.
+                    done.lock()
+                    let stillRunning = !finished
+                    if stillRunning {
+                        ctx.ledger.write(claim)
+                        ctx.ledger.log("run: renewed until \(Formats.hhmm(target))", now: ctx.now)
+                    }
+                    done.unlock()
+                    if !stillRunning { return }
                 }
             }
         }

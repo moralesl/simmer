@@ -101,6 +101,119 @@ import Testing
         #expect(environment.contains(".local/state"))
     }
 
+    /// `run`'s renewer reads `finished`, then builds a context, reads the
+    /// claim and consults the cap — and every one of those is time for
+    /// `cleanup()` to retire the claim underneath it. The write then put the
+    /// claim back, and the guard held the switch on for a dead process until
+    /// the chunk ran out, up to forty-five minutes.
+    ///
+    /// `cleanup` sets `finished` under this same lock BEFORE it retires
+    /// anything, so holding the lock across the write leaves only the two
+    /// orders that are correct. A unit test cannot reach a race; this asserts
+    /// the shape that removes it, which is the only form that survives someone
+    /// tidying the lock away.
+    /// The other half of the bundle has the guard's bug: an app launched from
+    /// the Dock inherits none of the shell's environment, so a shell exporting
+    /// XDG_STATE_HOME put the app on one ledger and the CLI on another — two
+    /// halves settling the same switch against each other, converging never.
+    @Test func theAppIsToldWhichLedgerToRead() throws {
+        let plist = try Self.read("app/Info.plist.template")
+        #expect(plist.contains("SimmerStateHome"))
+        #expect(plist.contains("@STATE_HOME@"))
+
+        let makefile = try Self.read("Makefile")
+        #expect(makefile.contains("@STATE_HOME@|$(STATE_HOME)"),
+                "the placeholder is in the template but nothing substitutes it")
+
+        let appState = try Self.read("Sources/SimmerApp/AppState.swift")
+        #expect(appState.contains("SimmerStateHome"),
+                "the plist carries it and the app never reads it")
+        #expect(appState.contains("XDG_STATE_HOME"))
+    }
+
+    /// A running Simmer.app outlives the files it was launched from, keeps its
+    /// menu bar, and one click re-arms `disablesleep` — with the sudoers rule
+    /// still in place and nothing left on the Mac able to turn it off.
+    @Test func uninstallQuitsTheAppBeforeDeletingIt() throws {
+        let makefile = try Self.read("Makefile")
+        let body = (makefile.components(separatedBy: "\nuninstall:").last ?? "")
+            .components(separatedBy: "\nclean:").first ?? ""
+        #expect(body.contains("to quit"))
+        guard let quit = body.range(of: "to quit"),
+              let removal = body.range(of: "rm -rf $(APP)") else {
+            Issue.record("uninstall no longer quits the app or removes the bundle")
+            return
+        }
+        #expect(quit.lowerBound < removal.lowerBound,
+                "the app is deleted before it is asked to quit")
+    }
+
+    /// **The sweep assertion.** `sudo -nl <command>` answers whether a command
+    /// is permitted, not whether it is permitted WITHOUT a password, so it
+    /// exits 0 on every admin Mac through the stock `(ALL) ALL` entry. It was
+    /// replaced in `doctor` and `uninstall` and left in the installer and the
+    /// setup window — the fourth time in this branch a rule landed at only the
+    /// call sites its author had in hand.
+    ///
+    /// So the rule is asserted over the whole tree rather than at the places
+    /// someone remembered. The listing form — `-nl` with no command — is what
+    /// every caller must use.
+    @Test func nothingAsksSudoAboutASingleCommandAnyMore() throws {
+        var offenders: [String] = []
+        for relative in ["Sources", "bootstrap.sh"] {
+            let root = Self.repoRoot.appendingPathComponent(relative)
+            let files: [URL]
+            if relative.hasSuffix(".sh") {
+                files = [root]
+            } else {
+                files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
+                    .compactMap { $0 as? URL }
+                    .filter { $0.pathExtension == "swift" }) ?? []
+            }
+            for file in files {
+                let raw = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+                // Comments only: `SudoRule` documents the abandoned probe at
+                // length, and that prose is the reason nobody reintroduces it.
+                // Excluding the whole file would blind this to a real call
+                // site in the one place most likely to grow one.
+                let source = raw.split(separator: "\n", omittingEmptySubsequences: false)
+                    .filter { line in
+                        let t = line.trimmingCharacters(in: .whitespaces)
+                        return !t.hasPrefix("//") && !t.hasPrefix("#")
+                    }
+                    .joined(separator: "\n")
+                // `-nl` followed by anything other than the end of the argument
+                // list is a question about one command.
+                if source.contains(#""-nl", "/usr/bin/pmset""#)
+                    || source.range(of: #"sudo -nl [/-]"#, options: .regularExpression) != nil {
+                    offenders.append(file.lastPathComponent)
+                }
+            }
+        }
+        #expect(offenders.isEmpty, "still probing one command: \(offenders)")
+    }
+
+    @Test func theRunRenewerWritesUnderTheLockItChecksUnder() throws {
+        let source = try Self.read("Sources/SimmerCLI/RunCLI.swift")
+        let renewer = source.components(separatedBy: "func startRenewer()").last ?? ""
+        let body = renewer.components(separatedBy: "func cleanup()").first ?? renewer
+
+        guard let write = body.range(of: "ctx.ledger.write(claim)") else {
+            Issue.record("the renewer no longer writes the claim — re-read this test")
+            return
+        }
+        let before = body[..<write.lowerBound]
+        let after = body[write.upperBound...]
+        // A lock is taken before the write and released after it...
+        #expect(before.contains("done.lock()"))
+        #expect(after.contains("done.unlock()"))
+        // ...and `finished` is re-read inside it, not only at the top of the
+        // loop, which is the check that was there and did not help.
+        let insideLock = before.components(separatedBy: "done.lock()").last ?? ""
+        #expect(insideLock.contains("finished"),
+                "the write is under the lock but nothing re-checks finished inside it")
+    }
+
     @Test func uninstallHandsTheMachineBackBeforeRemovingTheMeansToDoIt() throws {
         let makefile = try Self.read("Makefile")
         let recipe = makefile.components(separatedBy: "\nuninstall:").last ?? ""

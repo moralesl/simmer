@@ -74,8 +74,39 @@ extension Commands {
             return scaled / percent
         }
         let floorSeconds = secondsToFloor()
+
+        /// Heat ends everything, unconditionally — CONTRACTS.md guarantee 1,
+        /// and `Tick` releases every claim on the next tick without consulting
+        /// a deadline. So under pressure the guarantee is zero however far away
+        /// the deadline is.
+        let thermalSeconds: Int? = ctx.power.thermalPressure() ? 0 : nil
+
+        /// The deadline that survives the charger being out.
+        ///
+        /// `Tick` retires a `--require-ac` claim the moment the machine goes on
+        /// battery, so a deadline provided by one of those is already over —
+        /// and `budget` went on quoting it. Not a global zero like heat: a
+        /// claim that did not ask for AC keeps holding the machine, so the
+        /// honest number is the furthest deadline among the ones that survive.
+        let requireACSeconds: Int? = {
+            guard onBattery, aggregate.count > 0 else { return nil }
+            let survivors = aggregate.live.filter { !$0.claim.requireAC }
+            guard !survivors.isEmpty else { return 0 }
+            // An open-ended survivor outlasts every epoch, so there is no
+            // ceiling to add here.
+            guard !survivors.contains(where: { $0.effectiveUntil == 0 }) else { return nil }
+            return max((survivors.map(\.effectiveUntil).max() ?? ctx.now) - ctx.now, 0)
+        }()
         // Said out loud on the human surface for the same reason it is a field
         // on the machine one: the deadline is not what is about to end this.
+        if !bareSeconds && !json, aggregate.count > 0, thermalSeconds == 0 {
+            outcome.stderr.append(
+                "simmer: this Mac is under thermal pressure — the next guard tick releases every claim, whatever the deadlines say.")
+        }
+        if !bareSeconds && !json, requireACSeconds == 0 {
+            outcome.stderr.append(
+                "simmer: every live claim asked for --require-ac and the charger is out — the next guard tick ends them.")
+        }
         if !bareSeconds && !json, aggregate.count > 0, onBattery, let percent = battery {
             if percent <= aggregate.minBattery {
                 outcome.stderr.append(
@@ -132,11 +163,39 @@ extension Commands {
         // `seconds_left` keeps its contracted meaning — the deadline clock,
         // -1 for no deadline — and `battery_seconds_left` carries the other,
         // so no existing field changed what it means.
+        /// Every clock that can end this claim, with the words for it. The
+        /// guarantee is the earliest of them, and the verdict has to name
+        /// WHICH — four times now a refusal has reported a shortfall against
+        /// the deadline while something else was the thing running out.
+        func clocks(_ deadlineLeft: Int?) -> [(seconds: Int, why: String?)] {
+            var found: [(Int, String?)] = []
+            if let deadlineLeft { found.append((deadlineLeft, nil)) }   // nil = the deadline
+            if let floorSeconds {
+                found.append((floorSeconds, floorSeconds == 0
+                    ? "the battery is already at its floor"
+                    : "the battery reaches its floor in about \(Durations.human(floorSeconds))"))
+            }
+            if thermalSeconds != nil {
+                found.append((0, "heat ends every claim on the next tick"))
+            }
+            if let requireACSeconds {
+                found.append((requireACSeconds, requireACSeconds == 0
+                    ? "every claim needs the charger, and it is out"
+                    : "the claims that survive the charger being out end in about \(Durations.human(requireACSeconds))"))
+            }
+            return found
+        }
+
         func fitsWithin(_ deadlineLeft: Int?) -> Bool? {
             guard needSeconds > 0 else { return nil }
-            let clocks = [deadlineLeft, floorSeconds].compactMap { $0 }
-            guard let earliest = clocks.min() else { return true }  // no clock at all
+            guard let earliest = clocks(deadlineLeft).map(\.seconds).min() else { return true }
             return earliest >= needSeconds
+        }
+
+        /// The words for whichever clock runs out first, or nil when that is
+        /// the deadline and the ordinary shortfall sentence is right.
+        func bindingReason(_ deadlineLeft: Int?) -> String? {
+            clocks(deadlineLeft).min { $0.seconds < $1.seconds }?.why
         }
 
         if aggregate.until == 0 {
@@ -148,10 +207,8 @@ extension Commands {
             } else {
                 let reasonPart = aggregate.reason.isEmpty ? "" : " · \(aggregate.reason)"
                 outcome.stdout.append("no deadline — running for \(Durations.human(ctx.now - aggregate.since))\(reasonPart)")
-                if let floorSeconds, needSeconds > 0, floorSeconds == 0 {
-                    outcome.stdout.append("❌ \(Durations.human(needSeconds)) does not fit — the battery is already at its floor")
-                } else if let floorSeconds, needSeconds > 0, floorSeconds < needSeconds {
-                    outcome.stdout.append("❌ \(Durations.human(needSeconds)) does not fit — the battery reaches its floor in about \(Durations.human(floorSeconds))")
+                if needSeconds > 0, let why = bindingReason(nil) {
+                    outcome.stdout.append("❌ \(Durations.human(needSeconds)) does not fit — \(why)")
                 }
             }
             if fitsWithin(nil) == false { outcome.exit = 1 }
@@ -174,15 +231,11 @@ extension Commands {
             if let fits {
                 if fits {
                     outcome.stdout.append("✅ \(Durations.human(needSeconds)) fits")
-                } else if let floorSeconds, floorSeconds == 0 {
-                    outcome.stdout.append("❌ \(Durations.human(needSeconds)) does not fit — the battery is already at its floor")
-                } else if let floorSeconds, floorSeconds < left {
-                    // Name the clock that actually runs out first, or the
-                    // reader is told they are short on time they do have.
-                    outcome.stdout.append("❌ \(Durations.human(needSeconds)) does not fit — the battery reaches its floor in about \(Durations.human(floorSeconds)), before the deadline")
+                } else if let why = bindingReason(left) {
+                    outcome.stdout.append("❌ \(Durations.human(needSeconds)) does not fit — \(why)")
                 } else {
                     outcome.stdout.append("❌ \(Durations.human(needSeconds)) does not fit — \(Durations.human(needSeconds - left)) short")
-                }
+                                }
             }
             // The truthful answer to "why can I not have more", so an agent at
             // the ceiling reports it instead of retrying with a bigger number.

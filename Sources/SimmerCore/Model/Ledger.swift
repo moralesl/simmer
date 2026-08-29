@@ -40,6 +40,12 @@ public struct Ledger: Sendable {
             at: claimsDir, includingPropertiesForKeys: nil)) ?? []
         return files
             .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false }
+            // A name a pre-0.2.0 `atomicWrite` left behind. Those releases
+            // staged inside this directory, so a crash between the write and
+            // the rename left a COPY of a real claim — `format=` and all, so
+            // it reads as a record — that goes on holding the switch and that
+            // the guard has no deadline to heal an open-ended one by.
+            .filter { !Ledger.isWriteDebris($0.lastPathComponent) }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
             .compactMap { url in
                 guard let text = try? String(contentsOf: url, encoding: .utf8),
@@ -49,6 +55,37 @@ public struct Ledger: Sendable {
                       Claim.looksLikeRecord(text) else { return nil }
                 return Claim.parse(text, fallbackId: url.lastPathComponent)
             }
+    }
+
+    /// `<id>.tmp.<pid>`, which is what pre-0.2.0 releases staged under before
+    /// renaming into place. Nothing writes this shape any more — the staging
+    /// moved to `stateDir` — so a file wearing it in `claims/` is debris by
+    /// construction, and it is simmer's own to clear away.
+    public static func isWriteDebris(_ name: String) -> Bool {
+        name.range(of: #"\.tmp\.[0-9]+$"#, options: .regularExpression) != nil
+    }
+
+    /// Remove what a crashed write of an older version left behind. Called by
+    /// the guard, because a Mac that has been through one is not going to get
+    /// there by itself: the file holds the switch, and only `down --all` could
+    /// reach it once it was no longer counted as a claim.
+    @discardableResult
+    public func sweepWriteDebris(now: Int) -> Int {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: claimsDir, includingPropertiesForKeys: nil)) ?? []
+        var swept = 0
+        for url in files where Ledger.isWriteDebris(url.lastPathComponent) {
+            guard (try? FileManager.default.removeItem(at: url)) != nil else { continue }
+            log("cleared write debris from an older version: \(url.lastPathComponent)", now: now)
+            swept += 1
+        }
+        return swept
+    }
+
+    /// Every filename in the claims directory, debris included — for tests
+    /// and for `doctor`, both of which need to see what enumeration hides.
+    public func claimFileNamesForTests() -> [String] {
+        ((try? FileManager.default.contentsOfDirectory(atPath: claimsDir.path)) ?? []).sorted()
     }
 
     public func claimFile(owner: String) -> URL {
@@ -69,7 +106,12 @@ public struct Ledger: Sendable {
     /// still a lie, and honesty is not something the next tick can restore.
     @discardableResult
     public func write(_ claim: Claim) -> Bool {
-        atomicWrite(claim.serialized(), to: claimsDir.appendingPathComponent(claim.id))
+        // Re-checked here, not only at birth: every field is a `var` and three
+        // commands move `until` after the initialiser has had its say. This is
+        // the one door onto disk, so it is where the ranges are enforced
+        // rather than trusted.
+        atomicWrite(claim.revalidated().serialized(),
+                    to: claimsDir.appendingPathComponent(claim.id))
     }
 
     /// False when the record is still on disk. A claim that is already gone
@@ -80,8 +122,26 @@ public struct Ledger: Sendable {
     /// swallowed this failure and announced a release anyway, so the response
     /// contradicted itself in one line — "released" beside `claim_count: 1` —
     /// while the Mac stayed awake against an explicit instruction to let go.
-    public func removeClaim(id: String) -> Bool {
+    /// Remove a claim, optionally only while it is still the claim that was
+    /// read.
+    ///
+    /// A tick reads `claims()` once and then unlinks by filename, so an
+    /// `extend` landing in between was deleted by a decision taken before it
+    /// existed — `extend` returned exit 0 and the renewed claim was gone. The
+    /// snapshot is unavoidable; acting on it without looking again is not.
+    ///
+    /// `until` and `started` are the comparison because they are what a
+    /// renewal moves. Comparing whole records would refuse to delete anything
+    /// a newer version had added a field to, which is the opposite failure.
+    public func removeClaim(id: String, ifStillMatching expected: Claim? = nil) -> Bool {
         let url = claimsDir.appendingPathComponent(id)
+        if let expected,
+           let text = try? String(contentsOf: url, encoding: .utf8) {
+            let current = Claim.parse(text, fallbackId: id)
+            guard current.until == expected.until, current.started == expected.started else {
+                return false
+            }
+        }
         do {
             try FileManager.default.removeItem(at: url)
             return true
@@ -98,11 +158,11 @@ public struct Ledger: Sendable {
     /// happen — the log carries the failure, because inventing an event kind
     /// for it would change a contracted surface.
     public func retire(_ claim: Claim, why: String, now: Int) -> Bool {
-        if claim.legacyCaffeinatePid > 0 {
-            kill(pid_t(claim.legacyCaffeinatePid), SIGTERM)
-        }
-        guard removeClaim(id: claim.id) else {
-            log("ERROR: could not retire \(claim.owner) · \(why) — \(claimsDir.appendingPathComponent(claim.id).path) is still there",
+        Ledger.endLegacyCaffeinate(claim)
+        // Retire what was actually read: if it moved under us, the decision
+        // to end it was taken about a claim that no longer exists.
+        guard removeClaim(id: claim.id, ifStillMatching: claim) else {
+            log("ERROR: could not retire \(claim.owner) · \(why) — it changed under us, or \(claimsDir.appendingPathComponent(claim.id).path) is still there",
                 now: now)
             return false
         }
@@ -115,6 +175,29 @@ public struct Ledger: Sendable {
             ("why", .string(why)),
         ])
         return true
+    }
+
+    /// Signal the caffeinate a v0.1 spike claim recorded — **only if the pid
+    /// still belongs to a caffeinate.**
+    ///
+    /// It was an unchecked `kill`, and a pid is reused. The record can outlive
+    /// the process by weeks (a claim whose machine was hard-powered-off), and
+    /// by then the number names whatever the kernel handed it out to next —
+    /// somebody's editor, somebody's build. simmer would have SIGTERMed it and
+    /// called that cleaning up.
+    ///
+    /// Two callers, one implementation: the same rule landing at only the call
+    /// sites its author had in hand is how four of these came back.
+    static func endLegacyCaffeinate(_ claim: Claim) {
+        guard claim.legacyCaffeinatePid > 0 else { return }
+        let pid = pid_t(claim.legacyCaffeinatePid)
+        // `ps -o comm=` is the identity this can actually establish. A pid
+        // that is not running answers nothing, which is also a refusal.
+        let name = Shell.run("/bin/ps", ["-p", String(pid), "-o", "comm="])
+        guard name.status == 0,
+              name.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                  .hasSuffix("caffeinate") else { return }
+        kill(pid, SIGTERM)
     }
 
     // MARK: the cap

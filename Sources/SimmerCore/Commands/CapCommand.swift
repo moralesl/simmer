@@ -70,8 +70,25 @@ extension Commands {
                 return outcome
             }
             let target: Int
-            if let parsed = Durations.parseUntil(argument, now: ctx.now) {
-                target = parsed
+            if let parsed = Durations.parseUntilRolling(argument, now: ctx.now) {
+                // A time that has already gone today rolls to tomorrow, which
+                // is right for a deadline and wrong for a ceiling: "nothing
+                // past 22:00" clicked at 22:30 — the menu offers exactly that
+                // button — set a cap twenty-three and a half hours out, at
+                // exit 0, with no hint. A cap is a decision about tonight.
+                //
+                // Refused rather than snapped to now: the caller asked for a
+                // time, and guessing which of the two they meant is how the
+                // menu got here. The duration form says it without ambiguity
+                // and the refusal names it.
+                if parsed.rolled, parsed.epoch - ctx.now > Durations.maxRolloverSeconds {
+                    let ago = Durations.human(ctx.now - (parsed.epoch - 86_400))
+                    outcome.merge(.failure(
+                        "\(argument) was \(ago) ago, so that would cap \(Durations.human(parsed.epoch - ctx.now)) from now — longer than a night. For tomorrow, say the duration: 'simmer cap \((parsed.epoch - ctx.now) / 3600)h'",
+                        json: json))
+                    return outcome
+                }
+                target = parsed.epoch
             } else if let seconds = Durations.parse(argument) {
                 target = ctx.now + seconds
             } else {

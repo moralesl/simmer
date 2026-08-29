@@ -165,7 +165,15 @@ sudo_rule() {
     "$(id -un) ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0"
 }
 
-have_capability() { sudo -nl /usr/bin/pmset -a disablesleep 0 >/dev/null 2>&1; }
+# `sudo -nl <command>` answers whether the command is PERMITTED, not whether it
+# is permitted WITHOUT a password — so through the stock `(ALL) ALL` entry it
+# exits 0 on every admin Mac, with or without simmer's rule. It reported a
+# grant on machines that granted nothing, and a second admin then got no rule
+# installed at all. The listing form needs no password on macOS and names the
+# entries that actually carry NOPASSWD; SudoRule.grants parses the same text.
+have_capability() {
+  sudo -nl 2>/dev/null | grep -qE 'NOPASSWD:.*/usr/bin/pmset -a disablesleep 0'
+}
 
 install_sudo_rule() {
   step "the sleep switch needs one administrator password"

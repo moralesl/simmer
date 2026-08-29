@@ -77,7 +77,20 @@ public enum Durations {
     /// Computed from `now` (fake-aware); the wall-clock date it lands on uses
     /// the real local timezone, which is the absolute-formatting half of the
     /// SIMMER_FAKE_NOW contract.
-    public static func parseUntil(_ text: String, now: Int) -> Int? {
+    /// How far past a rolled-over `HH:MM` a caller is allowed to be pushed.
+    ///
+    /// "Nothing past 22:00" typed at 22:30 is a statement about a time that
+    /// has just gone, and rolling it to tomorrow turns a ceiling into
+    /// permission for another twenty-three hours — the inverse of the safety a
+    /// cap exists for. Half a day is the line past which "tomorrow" stopped
+    /// being what anybody meant by a time of day.
+    public static let maxRolloverSeconds = 12 * 3600
+
+    /// `parseUntil`, plus whether the time asked for had already gone today.
+    /// The caller needs to tell "23:00, nine hours out" from "23:00, which was
+    /// half an hour ago, so tomorrow" — the epochs alone cannot: `cap 22:00`
+    /// at 09:00 is thirteen hours away and perfectly ordinary.
+    public static func parseUntilRolling(_ text: String, now: Int) -> (epoch: Int, rolled: Bool)? {
         let parts = text.split(separator: ":", omittingEmptySubsequences: false)
         guard parts.count == 2,
               (1...2).contains(parts[0].count), parts[1].count == 2,
@@ -91,21 +104,18 @@ public enum Durations {
         components.minute = m
         components.second = 0
         guard let target = calendar.date(from: components) else { return nil }
-        // Tomorrow is the same wall clock on the next calendar day, which is
-        // not always 86,400 seconds later. Adding the constant meant that on
-        // the evening the clocks go forward, `--until 23:00` landed at 00:00
-        // the day AFTER tomorrow; on the evening they go back, it landed at
-        // 22:00 — an hour less awake time than was asked for, silently, which
-        // CONTRACTS.md calls the one failure this tool exists to prevent.
-        //
-        // Twice a year, on the two nights of the year when an overnight run is
-        // least likely to be watched.
-        if Int(target.timeIntervalSince1970) <= now {
-            guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: target)
-            else { return nil }
-            return Int(tomorrow.timeIntervalSince1970)
+        guard Int(target.timeIntervalSince1970) <= now else {
+            return (Int(target.timeIntervalSince1970), false)
         }
-        return Int(target.timeIntervalSince1970)
+        // Tomorrow is the same wall clock on the next calendar day, which is
+        // not always 86,400 seconds later.
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: target)
+        else { return nil }
+        return (Int(tomorrow.timeIntervalSince1970), true)
+    }
+
+    public static func parseUntil(_ text: String, now: Int) -> Int? {
+        parseUntilRolling(text, now: now)?.epoch
     }
 
     /// "1 h 20 min" · "45 min" · "under 1 min"

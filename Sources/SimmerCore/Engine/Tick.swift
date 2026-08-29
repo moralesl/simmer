@@ -31,6 +31,12 @@ public enum Tick {
                 ("set_by", .string(stale.setBy)),
             ])
         }
+        // Before anything reads the claims: a pre-0.2.0 crash left copies of
+        // real records in `claims/`, and once they stopped being counted as
+        // claims nothing could reach them but `down --all`. The guard is the
+        // thing that runs on a Mac nobody is looking at.
+        ledger.sweepWriteDebris(now: ctx.now)
+
         let cap = ledger.readCap(now: ctx.now)
 
         if ledger.claims().isEmpty {

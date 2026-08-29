@@ -117,7 +117,7 @@ public enum Commands {
         // predecessor gets its recorded caffeinate child cleaned up.
         var started = ctx.now
         if let existing = ctx.ledger.claim(owner: ctx.owner) {
-            if existing.legacyCaffeinatePid > 0 { kill(pid_t(existing.legacyCaffeinatePid), SIGTERM) }
+            Ledger.endLegacyCaffeinate(existing)
             started = existing.started
 
             // A replacement that ENDS SOONER costs whoever held it the
@@ -337,6 +337,17 @@ public enum Commands {
         // extended nothing.
         let base = max(claim.until, ctx.now)
         var target = base + seconds
+        // The ledger re-checks the ranges and would fold an over-max deadline
+        // to expired — correctly, and silently. Refused here so the sentence
+        // the caller reads is the one the ledger holds: walking a claim past
+        // 2100 one extension at a time used to print "extended until …" at
+        // exit 0 and move the deadline BACKWARDS.
+        guard target <= Claim.maxEpoch else {
+            outcome.merge(.failure(
+                "that would extend past the year 2100, which is further than this tool will hold a deadline",
+                json: json))
+            return outcome
+        }
         var clippedByCap = false
         var capUntil = 0
         if let cap = ctx.ledger.readCap(now: ctx.now) {
