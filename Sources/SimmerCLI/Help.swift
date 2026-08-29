@@ -75,7 +75,7 @@ CHECKING ON IT
   simmer doctor              is everything wired up? fires a test notification
   simmer notify-test         queue one banner and say whether it can arrive —
                              banners come from Simmer.app or not at all
-  simmer render swiftbar     draw a launcher surface (also: raycast, alfred)
+  simmer render swiftbar     draw a launcher surface (also: raycast)
   simmer --version
 
 REMOVING IT

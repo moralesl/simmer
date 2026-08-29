@@ -116,7 +116,7 @@ cd integrations/raycast && npm ci && npm run dev   # then ⌃C — it stays regi
 
 Then press ↵ on **Simmer Status** once — Raycast keeps background refresh off until a command is opened, so the countdown is blank until you do.
 [integrations/raycast/README.md](integrations/raycast/README.md) has the rest.
-Alfred is on the [roadmap](docs/ROADMAP.md); a SwiftBar plugin is not — the app is the menu bar.
+Alfred is not supported and a SwiftBar plugin is not planned — the app is the menu bar.
 
 ## Uninstall
 

@@ -102,7 +102,7 @@ Human sentences may be reworded at any time.
 **Is there a Raycast extension?** Yes — [`integrations/raycast/`](../integrations/raycast/), six commands, install in one `npm ci && npm run dev`.
 It shows the claims list, which is the thing a one-line launcher cannot: who holds the lid, until when, and why.
 It reads `status --json` for the list, so it can never disagree with the CLI about what is held, and `simmer render raycast` for the countdown it shows under the command title in the root search — the same one-line surface a script command would use.
-Alfred is still on the roadmap ([ROADMAP.md](ROADMAP.md)) — `simmer render alfred` is in the core and tested, waiting on someone with the paid Powerpack.
+Alfred is not supported. The Raycast extension is the launcher surface, and one that is used beats two that are half-kept.
 A SwiftBar plugin is deliberately never coming — the app is the menu bar.
 
 **Where is the bash version?** In the maintainer's development archive, at its `v0.1` tag — a complete, tested implementation of the same contract that proved the model and bought the platform facts.

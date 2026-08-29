@@ -250,24 +250,20 @@ struct LogCLI: ParsableCommand {
 struct RenderCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "render",
-        abstract: "Draw a launcher surface from the ledger: swiftbar, raycast or alfred.")
+        abstract: "Draw a launcher surface from the ledger: swiftbar or raycast.")
 
-    @Argument(help: "swiftbar | raycast | alfred")
+    @Argument(help: "swiftbar | raycast")
     var surface: String
-
-    @Argument(parsing: .remaining, help: "Query text (alfred).")
-    var query: [String] = []
 
     @OptionGroup var common: CommonOptions
 
     func run() throws {
-        // render's surfaces ARE its machine output — swiftbar, raycast and
-        // alfred each have their own contract. A fourth one nobody asked for
-        // would be the drift the append-only rule exists to stop.
+        // render's surfaces ARE its machine output — swiftbar and raycast each
+        // have their own contract. A third one nobody asked for would be the
+        // drift the append-only rule exists to stop.
         common.refuseJSON("render", insteadUse: "simmer status --json")
         let ctx = Runtime.context(ownerFlag: common.owner)
-        Runtime.deliver(Commands.render(surface: surface,
-                                        query: query.joined(separator: " "), ctx: ctx))
+        Runtime.deliver(Commands.render(surface: surface, ctx: ctx))
     }
 }
 

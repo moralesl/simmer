@@ -23,7 +23,7 @@ simmer                                          human status, listing every clai
 simmer status --machine | --json                machine status
 simmer budget [--need D] [--seconds] [--json]   room to start something?
 simmer log [n] · doctor · notify-test · --version · --help
-simmer render swiftbar|raycast|alfred [query]   surfaces, drawn by the core
+simmer render swiftbar|raycast                 surfaces, drawn by the core
 ```
 
 Durations: `90`, `90m`, `2h`, `1h30m`, `45min`, `30s`, `2H`, `1d`, `1d12h`.
@@ -34,7 +34,7 @@ Days exist because overnight is a first-class case — `--require-ac` was added 
 It used to mean "stamp over someone else's lease"; the claims model removed the conflict it resolved.
 It stays in the surface because launcher shims and other people's scripts pass it, and it prints a line saying it is inert rather than being silently ignored.
 
-Every command reachable from a launcher also tolerates a trailing `-r <reason> --owner <name>`, because the Alfred action appends both to whatever the filter produced whether the command has any use for a reason or not.
+Every command reachable from a launcher also tolerates a trailing `-r <reason> --owner <name>`, because a launcher action appends both to whatever it produced whether the command has any use for a reason or not.
 
 ## Exit codes are API
 

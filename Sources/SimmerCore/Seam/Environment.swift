@@ -114,7 +114,7 @@ public struct SimmerEnvironment: Sendable {
     /// reading it as a different, non-human actor is what let a capitalised
     /// name outrank the human it shares a claim file with on APFS.
     public static func isHumanOwnerName(_ owner: String) -> Bool {
-        ["terminal", "menubar", "raycast", "alfred"].contains(owner.lowercased())
+        ["terminal", "menubar", "raycast"].contains(owner.lowercased())
     }
 
     // MARK: run's renewal clocks

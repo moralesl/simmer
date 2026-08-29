@@ -112,8 +112,7 @@ import Testing
         #expect(Owners.glyph("menubar") == "🖥️")
         #expect(Owners.glyph("terminal") == "⌨️")
         #expect(Owners.glyph("raycast") == "🚀")
-        #expect(Owners.glyph("alfred") == "🚀")
-        #expect(Owners.glyph("run:4821") == "⚙️")
+                #expect(Owners.glyph("run:4821") == "⚙️")
         #expect(Owners.glyph("agent:evals") == "🤖")
         // The anonymous non-tty fallback is its own thing: an actor that did
         // not name itself, which a robot face would hide.
@@ -124,7 +123,7 @@ import Testing
         #expect(Owners.glyph("jenkins-worker-3") == "🤖")
         // Every human owner name must be visually distinct from every
         // non-human one — the whole point of splitting 👤 apart.
-        let humanFaces = Set(["terminal", "menubar", "raycast", "alfred"].map(Owners.glyph))
+        let humanFaces = Set(["terminal", "menubar", "raycast"].map(Owners.glyph))
         let otherFaces = Set(["agent:x", "run:1", "script", "whatever"].map(Owners.glyph))
         #expect(humanFaces.isDisjoint(with: otherFaces))
     }

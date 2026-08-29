@@ -216,6 +216,11 @@ uninstall:
 	# files it was launched from, keeps its menu bar, and one click on
 	# "Stay awake for…" re-arms disablesleep — with the sudoers rule still
 	# in place and nothing left on the Mac able to turn it off again.
+	# Only the app itself can unregister its own login item (SMAppService is
+	# bundle-scoped, like the notification grant), so ask it before the bundle
+	# goes — otherwise System Settings keeps listing a login item pointing at
+	# an app that no longer exists.
+	-[ -x $(APP)/Contents/MacOS/simmer-app ] && $(APP)/Contents/MacOS/simmer-app --uninstall
 	-osascript -e 'tell application id "$(BUNDLE_ID)" to quit' 2>/dev/null
 	-[ -d $(APP) ] && $(LSREGISTER) -u $(APP)
 	rm -rf $(APP)

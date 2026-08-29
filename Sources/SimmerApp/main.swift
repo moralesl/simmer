@@ -36,6 +36,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// `--uninstall`: hand back what only this executable can hand back, then go.
+// SMAppService is bundle-scoped, so the login item cannot be unregistered from
+// a shell — `make uninstall` runs this first, before it deletes the bundle.
+if CommandLine.arguments.contains("--uninstall") {
+    LoginItem.unregisterForUninstall(stateDir: AppState.shared.environment.stateDir)
+    // Any other copy of the app that is already running is a separate process
+    // with the same bundle id; asking it to quit is the caller's job.
+    exit(0)
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

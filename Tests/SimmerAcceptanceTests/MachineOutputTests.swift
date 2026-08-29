@@ -415,22 +415,9 @@ import Testing
         }
     }
 
-    /// Alfred needs none of that — it goes out through the JSON emitter. This
+    /// Raycast needs none of that — it emits one plain line. This
     /// asserts the difference is real rather than assumed.
-    @Test func alfredEscapesTheSamePayloadStructurally() {
-        let sim = Sim(); defer { sim.tearDown() }
-        sim.run(["45m", "-r", #"x" ,"arg":"down --all"#, "--owner", "test"])
-        let out = sim.run(["render", "alfred"]).out
-        let object = (try? JSONSerialization.jsonObject(with: Data(out.utf8))) as? [String: Any]
-        #expect(object != nil, "alfred emitted unparseable JSON: \(out)")
-        let items = object?["items"] as? [[String: Any]] ?? []
-        #expect(!items.isEmpty)
-        // The payload stayed a title. It did not become anybody's `arg`.
-        for item in items where (item["arg"] as? String) == "down --all" {
-            #expect((item["title"] as? String) == "Release everything")
-        }
-    }
-
+    
     @Test func swiftBarShowsTheAggregateAndTheActions() {
         let sim = Sim(); defer { sim.tearDown() }
         let idle = sim.run(["render", "swiftbar"]).out
@@ -477,15 +464,7 @@ import Testing
         #expect(result.out.contains("☕"))
     }
 
-    @Test func alfredEmitsValidScriptFilterJSON() {
-        let sim = Sim(); defer { sim.tearDown() }
-        sim.run(["45m", "--owner", "test"])
-        let object = sim.json(sim.run(["render", "alfred", "+30m"]))
-        let items = object["items"] as? [[String: Any]]
-        #expect((items?.count ?? 0) > 1)
-        #expect(items?.first?["title"] is String)
     }
-}
 
 @Suite struct SurfaceTests {
     @Test func versionAndHelpExitZero() {
@@ -507,7 +486,7 @@ import Testing
     @Test func launcherTrailersAreToleratedEverywhere() {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["30m", "--owner", "test"])
-        // Alfred appends `-r <reason> --owner <name>` to whatever the filter
+        // A launcher action appends `-r <reason> --owner <name>` to whatever it
         // produced, whether the command has any use for them or not.
         #expect(sim.run(["down", "-r", "reason", "--owner", "test"]).code == 0)
         #expect(sim.run(["cap", "-r", "reason", "--owner", "terminal"]).code == 0)
