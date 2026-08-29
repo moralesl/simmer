@@ -188,9 +188,23 @@ public enum Commands {
                 json: input.json))
             return outcome
         }
+        // Everything below renders `claim.reason` — the folded copy the ledger
+        // actually holds — and never `input.reason`, which is still the
+        // caller's raw argv. Folding in `Claim`'s initialiser was meant to make
+        // "what a surface prints is what the ledger holds" true, and this
+        // function never re-read the claim it had just built, so it printed and
+        // logged the unfolded string instead.
+        //
+        // `simmer.log` is newline-delimited with a fixed timestamp prefix, so a
+        // reason carrying a newline and a plausible timestamp forged whole log
+        // records — which `simmer log --json` then handed to machine readers as
+        // separate elements of `lines`. On stdout the same text could
+        // impersonate simmer's own indented notes. And the event stream carried
+        // a reason the claim file did not, so the two disagreed about the same
+        // claim.
         ctx.ledger.event("claim", now: ctx.now, [
             ("owner", .string(ctx.owner)),
-            ("reason", .string(input.reason)),
+            ("reason", .string(claim.reason)),
             ("until", .int(untilEpoch)),
             ("min_battery", .int(input.minBattery)),
             ("require_ac", .bool(input.requireAC)),
@@ -198,14 +212,14 @@ public enum Commands {
         ])
 
         let after = ctx.aggregate()
-        let reasonPart = input.reason.isEmpty ? "" : " · \(input.reason)"
+        let reasonPart = claim.reason.isEmpty ? "" : " · \(claim.reason)"
 
         if untilEpoch == 0 {
-            ctx.ledger.log("claim \(ctx.owner): no deadline\(input.reason.isEmpty ? "" : " (\(input.reason))"), battery floor \(input.minBattery)%", now: ctx.now)
+            ctx.ledger.log("claim \(ctx.owner): no deadline\(claim.reason.isEmpty ? "" : " (\(claim.reason))"), battery floor \(input.minBattery)%", now: ctx.now)
             outcome.stdout.append("☕ simmering, no deadline\(reasonPart)")
             outcome.stdout.append("   reminder every 30 min · releases below \(input.minBattery)% battery · 'simmer down' ends it")
         } else {
-            ctx.ledger.log("claim \(ctx.owner): until \(Formats.hhmm(untilEpoch))\(input.reason.isEmpty ? "" : " (\(input.reason))"), battery floor \(input.minBattery)%", now: ctx.now)
+            ctx.ledger.log("claim \(ctx.owner): until \(Formats.hhmm(untilEpoch))\(claim.reason.isEmpty ? "" : " (\(claim.reason))"), battery floor \(input.minBattery)%", now: ctx.now)
             outcome.stdout.append("☕ simmering until \(Formats.hhmmDated(untilEpoch, now: ctx.now)) (\(Durations.human(untilEpoch - ctx.now)))\(reasonPart)")
             outcome.stdout.append("   lid may close · \(Present.batteryLine(ctx.power)) · releases below \(input.minBattery)%")
             if clippedByCap {
@@ -251,13 +265,13 @@ public enum Commands {
                 outcome.notifications.append(NotificationRequest(
                     title: "☕ Simmering, no deadline",
                     subtitle: "reminder every 30 min · floor \(input.minBattery)%",
-                    body: input.reason.isEmpty ? "Ends with simmer down." : input.reason,
+                    body: claim.reason.isEmpty ? "Ends with simmer down." : claim.reason,
                     actionable: true))
             } else {
                 outcome.notifications.append(NotificationRequest(
                     title: "☕ Simmering until \(Formats.hhmm(after.until))",
                     subtitle: "\(Durations.human(after.until - ctx.now)) · lid may close",
-                    body: input.reason, actionable: true))
+                    body: claim.reason, actionable: true))
             }
         }
 

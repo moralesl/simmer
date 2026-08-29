@@ -159,10 +159,18 @@ public struct Ledger: Sendable {
     /// keeps the expiry it was set with even if the constant later moves.
     @discardableResult
     public func writeCap(until: Int, setBy: String, now: Int) -> Bool {
+        // `set_by` is free text copied into a newline-delimited record whose
+        // parser is last-key-wins — the same shape, in the same format, that a
+        // reason had. `Claim.singleLine` was put in `Claim`'s initialiser so
+        // every path into a CLAIM goes through it; the cap is not a claim, so
+        // it went around. `--owner $'terminal\nuntil=0'` printed "⛔ nothing
+        // past 23:00" at exit 0 and recorded no ceiling at all; a past epoch
+        // instead recorded a lockout, announced identically.
+        let owner = Claim.singleLine(setBy, limit: Claim.maxOwnerLength)
         let text = """
             format=\(Claim.format)
             until=\(until)
-            set_by=\(setBy)
+            set_by=\(owner)
             set_at=\(now)
             expires=\(Cap.rollover(after: until))
 
@@ -351,6 +359,98 @@ public struct Ledger: Sendable {
             ("owner", .string(claim.owner)),
             ("until", .int(claim.until)),
         ])
+    }
+
+    /// Claim files the previous release wrote under a name this one no longer
+    /// resolves to.
+    ///
+    /// `sanitizedId` folds case before deciding whether an owner is already
+    /// filename-safe, because APFS reads `Terminal` and `terminal` as one file
+    /// and the ledger is the same filesystem. That was right. What it did not
+    /// account for is that 0.1.0 had already written claims under mixed-case
+    /// owners: `agent:CI-nightly` was filename-safe then and resolves to
+    /// `agent:ci-nightly-<fingerprint>` now — a different NAME, not a case
+    /// variant, so the filesystem does not reunite them.
+    ///
+    /// The orphan kept enumerating and kept holding the switch while its own
+    /// owner got "you hold no claim"; `guard` had no deadline to heal an
+    /// open-ended one by, and `doctor` stayed green. The same owner's next
+    /// claim did not replace it, it doubled it.
+    ///
+    /// So the file moves to the name its owner resolves to now. One claim per
+    /// owner is the rule, so a collision keeps the later deadline rather than
+    /// either file in particular — no path through a migration may cost a
+    /// caller awake time it already holds (AGENTS.md).
+    ///
+    /// Same discipline as `migrateLease`: the old file goes only once the new
+    /// one is on disk, and a failed write leaves both in place to be tried
+    /// again next run rather than logging a success about a claim that went
+    /// nowhere. `migrate` is reused rather than a new event kind invented on a
+    /// contracted stream.
+    public func migrateClaimIds(now: Int) {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: claimsDir, includingPropertiesForKeys: nil)) ?? []
+        for url in files {
+            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false,
+                  let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            let name = url.lastPathComponent
+            var claim = Claim.parse(text, fallbackId: name)
+            let resolved = Claim.sanitizedId(claim.owner)
+            // Move only files the PREVIOUS algorithm would have written for
+            // this owner. "the name is not what we would write now" is the
+            // tempting condition and it is wrong: `owner` is stored truncated
+            // to `maxOwnerLength` while the id is fingerprinted over the whole
+            // string, so a long owner's record cannot reconstruct its own id
+            // and would be renamed to a name nobody can address. Asking what
+            // 0.1.0 would have produced is the question that has an answer.
+            guard !resolved.isEmpty, resolved != name, Ledger.legacyId(claim.owner) == name
+            else { continue }
+
+            claim.id = resolved
+            var keep = claim
+            let target = claimsDir.appendingPathComponent(resolved)
+            if let rivalText = try? String(contentsOf: target, encoding: .utf8) {
+                let rival = Claim.parse(rivalText, fallbackId: resolved)
+                if Ledger.outlasts(rival, claim) { keep = rival }
+            }
+            guard write(keep) else {
+                log("ERROR: could not migrate claim \(name) to \(resolved) — it is left in place, and will be tried again",
+                    now: now)
+                continue
+            }
+            try? FileManager.default.removeItem(at: url)
+            log("migrated claim \(name) into \(resolved)", now: now)
+            event("migrate", now: now, [
+                ("owner", .string(keep.owner)),
+                ("until", .int(keep.until)),
+            ])
+        }
+    }
+
+    /// `Claim.sanitizedId` exactly as 0.1.0 shipped it — no case folding, and
+    /// that release's stem budget, which was one character wider because the
+    /// temp file had not yet gained its leading dot.
+    ///
+    /// **Frozen. Never refactor this to share code with the current one**: its
+    /// whole job is to disagree with it, and the day the two are made to agree
+    /// is the day the migration silently stops recognising anything.
+    static func legacyId(_ owner: String) -> String {
+        let flattened = String(owner.map { char in
+            char.isASCII && (char.isLetter || char.isNumber || "._:-".contains(char)) ? char : "_"
+        })
+        let stemBudget = 255 - (".tmp.".count + 8) - 1 - 8
+        let overlong = flattened.count > stemBudget
+        guard flattened != owner || overlong else { return flattened }
+        let stem = overlong ? String(flattened.prefix(stemBudget)) : flattened
+        return "\(stem)-\(Claim.fingerprint(owner))"
+    }
+
+    /// An open-ended claim outlasts every dated one, and ties with another
+    /// open-ended one rather than displacing it.
+    static func outlasts(_ a: Claim, _ b: Claim) -> Bool {
+        if a.until == 0 { return b.until != 0 }
+        if b.until == 0 { return false }
+        return a.until > b.until
     }
 
     // MARK: primitives

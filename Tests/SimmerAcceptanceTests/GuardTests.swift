@@ -57,6 +57,53 @@ import Testing
         #expect(sim.events(named: "thermal_release").count == 1)
     }
 
+    /// "Thermal ends everything, unconditionally" (CONTRACTS.md) — so when a
+    /// claim file will not unlink, the one thing the guard may not do is say
+    /// it did. It stayed at exit 0 and appended `thermal_release` every tick
+    /// while the Mac was held awake under heat, which for an open-ended claim
+    /// is indefinitely.
+    @Test func thermalPressureThatEndsNothingSaysNothing() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["forever", "--owner", "terminal", "-r", "overnight training"])
+        #expect(sim.switchValue == "1")
+        sim.freezeClaims()
+
+        for _ in 0..<3 {
+            let tick = sim.run(["guard"], env: ["SIMMER_FAKE_THERMAL": "3"])
+            #expect(tick.code == 1, "a guard that ended nothing under heat exited \(tick.code)")
+        }
+        #expect(sim.switchValue == "1", "the switch moved with a claim still live")
+        #expect(sim.events(named: "thermal_release").isEmpty,
+                "a release that did not happen was announced \(sim.events(named: "thermal_release").count) time(s)")
+
+        // And once the claim can actually go, it goes — and is announced once.
+        sim.unfreezeClaims()
+        #expect(sim.run(["guard"], env: ["SIMMER_FAKE_THERMAL": "3"]).code == 0)
+        #expect(sim.claimCount == 0)
+        #expect(sim.switchValue == "0")
+        #expect(sim.events(named: "thermal_release").count == 1)
+    }
+
+    /// The same rule one branch over. A missing sudo rule is a persistent
+    /// state, not a transient one, so an `orphan_heal` per failed tick is a
+    /// false event every thirty seconds for as long as the Mac runs.
+    @Test func anOrphanHealThatFailedIsNotRecorded() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.setSwitch(true)                   // the switch on with nothing claiming it
+        sim.freezeSwitch()                    // and no sudo rule to move it back
+
+        for _ in 0..<3 {
+            #expect(sim.run(["guard"]).code == 1)
+        }
+        #expect(sim.switchValue == "1")
+        #expect(sim.events(named: "orphan_heal").isEmpty)
+
+        sim.unfreezeSwitch()
+        #expect(sim.run(["guard"]).code == 0)
+        #expect(sim.switchValue == "0")
+        #expect(sim.events(named: "orphan_heal").count == 1)
+    }
+
     @Test func preFloorWarnsOnceAndReArms() {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["2h", "--owner", "test"]) // floor 20, warning window below 30

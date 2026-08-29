@@ -44,7 +44,9 @@ $ simmer down --owner agent:evals --json
 # exit 0
 ```
 
-`simmer run --max 2h -- npm test` sidesteps all five steps for anything expressible as one command: the claim lives exactly as long as the process, renews while it runs, and is released on any exit — even SIGKILL.
+`simmer run --max 2h -- npm test` sidesteps all five steps for anything expressible as one command: the claim lives as long as the process, renews while it runs, and is released when the command exits.
+
+A killed runner cannot release anything — nothing runs after `SIGKILL` — so the claim is instead **self-revoking**: it is written one chunk at a time and simply stops being renewed, and the guard retires it at that chunk's deadline. The switch always comes back; after a kill it comes back within a chunk rather than immediately.
 
 ## The exit codes are the contract
 
@@ -98,6 +100,8 @@ Asking for `8h` under a one-hour cap gives you one hour, and only that field say
 
 **`budget`'s `seconds_left`** is a number when there is a deadline, `-1` when there is none, and `null` when nothing is claimed at all.
 Switch on the exit code and the type never comes up.
+
+**And `-1` no longer means "anything fits".** `budget` answers about the earliest clock, which is the deadline *or* the battery floor the claim was taken with — so an open-ended claim on a draining battery can answer exit 1 with `seconds_left: -1`. `battery_seconds_left` is the other clock: seconds until the floor, `0` once it is reached, `null` on AC, while the estimate is calibrating, or when nothing is claimed. This is exactly the "ask again while you work" case arriving in a single call.
 
 ## When simmer is not installed
 

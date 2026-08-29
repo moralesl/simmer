@@ -25,6 +25,12 @@ BUILD         = .build/release
 STAGED_APP    = .build/Simmer.app
 LSREGISTER    = /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 AGENT_PLIST   = $(HOME)/Library/LaunchAgents/$(GUARD_LABEL).plist
+# The ledger's location, resolved HERE and baked into the LaunchAgent, because
+# launchd hands an agent none of the installing shell's environment. Someone
+# who exports XDG_STATE_HOME otherwise gets a guard reading a different ledger
+# than their CLI writes, and the two settle one switch against each other
+# forever. Same default as SimmerEnvironment.stateDir — keep them in step.
+STATE_HOME   ?= $(if $(XDG_STATE_HOME),$(XDG_STATE_HOME),$(HOME)/.local/state)
 BIN_DIR      ?= $(HOME)/.local/bin
 # Where a Claude Code agent looks for skills. The protocol an agent needs is the
 # first half of AGENTS.md, so the skill is GENERATED from it rather than kept as
@@ -145,6 +151,7 @@ install: app
 	mkdir -p $(HOME)/Library/LaunchAgents
 	sed -e 's|@CLI@|$(APP)/Contents/MacOS/simmer|g' \
 	    -e 's|@LABEL@|$(GUARD_LABEL)|g' \
+	    -e 's|@STATE_HOME@|$(STATE_HOME)|g' \
 	    launchd/guard.plist.template > $(AGENT_PLIST)
 	# bootout returns before the job is gone — poll until it is
 	launchctl bootout gui/$$(id -u)/$(GUARD_LABEL) 2>/dev/null || true

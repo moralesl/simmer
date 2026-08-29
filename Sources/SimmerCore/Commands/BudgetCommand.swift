@@ -43,13 +43,34 @@ extension Commands {
         ///
         /// Linear, which is the same assumption the system's own estimate
         /// already embodies; refining it would be a second discharge model
-        /// disagreeing with the first. nil whenever there is nothing to be
-        /// honest with: on AC, while pmset is still calibrating, or when the
-        /// battery is already at or under the floor.
+        /// disagreeing with the first. nil only where there is genuinely no
+        /// clock to read: on AC, or while pmset is still calibrating.
+        ///
+        /// **At or below the floor it is `0`, not nil.** Returning nil there
+        /// dropped the battery clock at the exact moment it had run out, so
+        /// `fitsWithin` fell back to the deadline alone and the answer went
+        /// non-monotonic: 21% said "does not fit" at exit 1, and 20% and 5%
+        /// said "fits" at exit 0 about a claim the very next guard tick ends.
+        /// The human surface printed "the claim ends there, whatever the
+        /// deadline says" and "✅ 3 h 0 min fits" in one breath.
+        ///
+        /// Overflow-checked, because this is a multiply on a number that comes
+        /// in from outside — the seam directly, `pmset` in production — and an
+        /// unchecked one here traps the process with exit 133, which is the
+        /// exact class the duration ceiling was added to close.
         func secondsToFloor() -> Int? {
+            // With nothing claimed there is no floor: `aggregate.minBattery`
+            // is the struct's default, not any claim's choice, so a number
+            // here would describe a guarantee nobody asked for — beside a
+            // `seconds_left` of null, which exists precisely to avoid that.
+            guard aggregate.count > 0 else { return nil }
             guard onBattery, let percent = battery, let toEmpty = ctx.power.batterySecondsRemaining(),
-                  percent > aggregate.minBattery, percent > 0 else { return nil }
-            return toEmpty * (percent - aggregate.minBattery) / percent
+                  percent > 0, toEmpty >= 0 else { return nil }
+            guard percent > aggregate.minBattery else { return 0 }
+            let (scaled, overflowed) = toEmpty.multipliedReportingOverflow(
+                by: percent - aggregate.minBattery)
+            guard !overflowed else { return nil }
+            return scaled / percent
         }
         let floorSeconds = secondsToFloor()
         // Said out loud on the human surface for the same reason it is a field

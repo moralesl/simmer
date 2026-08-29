@@ -32,6 +32,7 @@ final class AppState {
         let ledger = Ledger(stateDir: environment.stateDir)
         let now = environment.now()
         ledger.migrateLease(now: now)
+        ledger.migrateClaimIds(now: now)
         return Context(now: now,
                        power: SeamPowerSystem(env: environment.env, allowInteractiveSudo: false),
                        ledger: ledger,

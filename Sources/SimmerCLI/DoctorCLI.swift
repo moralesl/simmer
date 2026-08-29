@@ -41,6 +41,28 @@ struct DoctorCLI: ParsableCommand {
         return nil
     }
 
+    /// The state directory the installed LaunchAgent will actually use: its
+    /// own `EnvironmentVariables`, or the default it would fall back to.
+    ///
+    /// nil when no guard is installed — there is then nothing to disagree
+    /// with, and a row about it would be a row about nothing. Uses
+    /// `homeDirectoryForCurrentUser` for both the plist path and the fallback
+    /// because launchd resolves the agent's `~` from the passwd entry, not
+    /// from anybody's exported HOME.
+    static func guardLedger() -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let plist = home.appendingPathComponent(
+            "Library/LaunchAgents/\(Runtime.guardLabel).plist")
+        guard let data = FileManager.default.contents(atPath: plist.path),
+              let root = try? PropertyListSerialization.propertyList(
+                  from: data, options: [], format: nil) as? [String: Any]
+        else { return nil }
+        let declared = (root["EnvironmentVariables"] as? [String: String])?["XDG_STATE_HOME"]
+        let base = declared.flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+            ?? home.appendingPathComponent(".local/state")
+        return base.appendingPathComponent("simmer").path
+    }
+
     func run() throws {
         let env = Runtime.environment()
         let ctx = Runtime.context(ownerFlag: common.owner)
@@ -51,10 +73,37 @@ struct DoctorCLI: ParsableCommand {
         let seamed = env.env["SIMMER_FAKE_PMSET"] != nil
         var rows: [Row] = []
 
-        let guardLoaded = Shell.run("/bin/launchctl",
-                                    ["print", "gui/\(getuid())/\(Runtime.guardLabel)"]).status == 0
-        rows.append(Row(id: "guard_loaded",
-                        label: "guard loaded (\(Runtime.guardLabel))", ok: guardLoaded))
+        // Both of these are facts about the LaunchAgent installed on THIS Mac,
+        // so they are seam-gated the way `app_running` is. Reporting
+        // "✅ guard loaded" from the real launchctl during a fully seamed run
+        // is an answer about a different machine than the one the rest of the
+        // report describes.
+        if seamed {
+            rows.append(Row(id: "guard_loaded",
+                            label: "SIMMER_FAKE_PMSET is set — the guard is not being checked",
+                            ok: nil))
+        } else {
+            let guardLoaded = Shell.run("/bin/launchctl",
+                                        ["print", "gui/\(getuid())/\(Runtime.guardLabel)"]).status == 0
+            rows.append(Row(id: "guard_loaded",
+                            label: "guard loaded (\(Runtime.guardLabel))", ok: guardLoaded))
+
+            // A LaunchAgent inherits nothing from the shell that installed it,
+            // so the ledger it reads is whatever its own plist says. When that
+            // disagrees with the one this process is using, the two settle the
+            // same global switch against each other every thirty seconds and
+            // never converge — `down` says "sleep allowed again" and the next
+            // tick turns it back on — while every other row here stays green.
+            if let theirs = Self.guardLedger() {
+                let ours = env.stateDir.path
+                rows.append(Row(
+                    id: "guard_ledger",
+                    label: theirs == ours
+                        ? "guard reads the same ledger as this shell"
+                        : "guard reads a DIFFERENT ledger — it has \(theirs), this shell has \(ours). Re-run 'make install' from this shell, or unset XDG_STATE_HOME",
+                    ok: theirs == ours))
+            }
+        }
 
         // The sudoers check looks for simmer's OWN file AND the capability,
         // and reports the difference. Checking only the capability is how the

@@ -101,8 +101,16 @@ extension Commands {
                 // lands inside the window — where a person setting the cap has
                 // just been told, by the cap's own output, what it means.
                 claim.warned = target - ctx.now <= Tick.warnSeconds
-                ctx.ledger.write(claim)
-                clipped += 1
+                // The one unchecked write in a file whose every sibling checks,
+                // twelve lines under the comment saying why. A clip that did
+                // not reach disk was still counted, and `clipped` is on stdout,
+                // in `--json` and on the event stream: the human was told time
+                // had been taken off a claim that still had it. The ceiling
+                // holds either way, because `cappedUntil` applies it at read
+                // time — right up until the cap is lifted or rolls over at
+                // 09:00, when the claim springs back to the deadline the human
+                // was told was gone.
+                if ctx.ledger.write(claim) { clipped += 1 }
             }
             ctx.ledger.event("cap_set", now: ctx.now, [
                 ("by", .string(ctx.owner)),

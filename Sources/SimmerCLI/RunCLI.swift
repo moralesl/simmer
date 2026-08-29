@@ -213,8 +213,25 @@ final class RunCoordinator {
         guard !already else { return }
         let ctx = Runtime.context(ownerFlag: owner)
         if let claim = ctx.ledger.claim(owner: owner) {
-            _ = ctx.ledger.retire(claim, why: "run finished", now: ctx.now)
-            let (_, outcome) = Engine.settle(ctx: ctx, why: "run finished")
+            // The guard's exemption from "a removal that did not happen may
+            // not be announced" does not reach here. `run` is a one-shot,
+            // user-facing command that AGENTS.md sells as "released on any
+            // exit — even SIGKILL", and it already uses stderr for exactly
+            // this kind of commentary. Swallowing the failure meant `simmer
+            // run` finished at exit 0 with empty stderr, the claim still on
+            // disk and the Mac still awake — the wrapped command's own exit
+            // code passed through, saying nothing about the machine.
+            var outcome = Outcome()
+            if !ctx.ledger.retire(claim, why: "run finished", now: ctx.now) {
+                // Epoch 0 must never be formatted as a time — it reads 01:00.
+                // A run claim always carries a deadline, so this is belt and
+                // braces rather than a live case.
+                let held = claim.until == 0 ? "" : " until \(Formats.hhmm(claim.until))"
+                outcome.stderr.append(
+                    "simmer: could not release \(claim.id) — the Mac is STILL being held awake\(held). Run 'simmer doctor'")
+            }
+            let (_, settled) = Engine.settle(ctx: ctx, why: "run finished")
+            outcome.merge(settled)
             Runtime.emit(outcome, human: .stderr)
         }
     }

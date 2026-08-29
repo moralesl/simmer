@@ -78,6 +78,29 @@ import Testing
     /// and every path out of here names the manual revert. Asserted because a
     /// Makefile has no type system and this is one line away from being true
     /// again.
+    /// launchd hands an agent none of the installing shell's environment, so
+    /// the ledger's location has to be written into the plist. Without it a
+    /// shell exporting XDG_STATE_HOME gave the guard one ledger and the CLI
+    /// another, settling one switch against each other every thirty seconds,
+    /// converging never — and no check anywhere went red. Three lines have to
+    /// agree for that not to come back, and none of them is type-checked.
+    @Test func theGuardIsToldWhichLedgerToRead() throws {
+        let template = try Self.read("launchd/guard.plist.template")
+        #expect(template.contains("EnvironmentVariables"))
+        #expect(template.contains("XDG_STATE_HOME"))
+        #expect(template.contains("@STATE_HOME@"))
+
+        let makefile = try Self.read("Makefile")
+        #expect(makefile.contains("@STATE_HOME@|$(STATE_HOME)"),
+                "the placeholder is in the template but nothing substitutes it")
+        #expect(makefile.contains("STATE_HOME   ?="))
+        // The same default as SimmerEnvironment.stateDir, which is the whole
+        // point: a guard that falls back differently is the original bug.
+        #expect(makefile.contains("$(HOME)/.local/state"))
+        let environment = try Self.read("Sources/SimmerCore/Seam/Environment.swift")
+        #expect(environment.contains(".local/state"))
+    }
+
     @Test func uninstallHandsTheMachineBackBeforeRemovingTheMeansToDoIt() throws {
         let makefile = try Self.read("Makefile")
         let recipe = makefile.components(separatedBy: "\nuninstall:").last ?? ""

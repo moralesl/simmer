@@ -841,3 +841,65 @@ import Testing
         #expect(object["battery_seconds_left"] is NSNull)
     }
 }
+
+/// `budget` answers about the earliest clock there is. The battery clock has
+/// to behave like a clock at both ends — including the end where it has
+/// already run out, which is where it used to disappear.
+@Suite struct BatteryClockEdgeTests {
+    /// The answer must not get BETTER as the battery gets worse. Dropping the
+    /// clock at or below the floor made 20% and 5% answer "fits" at exit 0
+    /// while 21% answered "does not fit" at exit 1.
+    @Test func theAnswerIsMonotonicAcrossTheFloor() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "--owner", "agent:evals", "-r", "long eval"])
+
+        for percent in [25, 21, 20, 12, 5] {
+            let result = sim.run(["budget", "--need", "3h", "--json"],
+                                 env: ["SIMMER_FAKE_BATTERY": "\(percent):1",
+                                       "SIMMER_FAKE_BATTERY_TIME": "900"])
+            let object = sim.json(result)
+            #expect(object["fits"] as? Bool == false,
+                    "at \(percent)% on battery with a 20% floor: \(result.out)")
+            #expect(result.code == 1, "at \(percent)%: exit \(result.code)")
+            #expect(object["battery_seconds_left"] != nil)
+        }
+    }
+
+    /// At or below the floor the clock has run out; that is `0`, not absent.
+    @Test func atTheFloorTheBatteryClockIsZeroRatherThanMissing() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "--owner", "agent:evals"])
+        let object = sim.json(sim.run(["budget", "--need", "1m", "--json"],
+                                      env: ["SIMMER_FAKE_BATTERY": "20:1",
+                                            "SIMMER_FAKE_BATTERY_TIME": "900"]))
+        #expect(object["battery_seconds_left"] as? Int == 0)
+    }
+
+    /// With nothing claimed there is no floor to be a number of seconds from —
+    /// `min_battery` is the default, not a decision anybody made.
+    @Test func anIdleMacHasNoBatteryClock() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["budget", "--need", "10m", "--json"],
+                             env: ["SIMMER_FAKE_BATTERY": "60:1",
+                                   "SIMMER_FAKE_BATTERY_TIME": "3600"])
+        #expect(result.code == 3)
+        #expect(sim.json(result)["battery_seconds_left"] is NSNull)
+    }
+
+    /// The estimate arrives from outside the process, so the arithmetic on it
+    /// is checked. This trapped with SIGTRAP and exit 133 — a code outside the
+    /// published table — which is the class the duration ceiling closed.
+    @Test(arguments: ["9223372036854775807", "999999999999999999", "-3600"])
+    func aHostileBatteryEstimateNeverTrapsAndNeverGoesNegative(_ estimate: String) {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["4h", "--owner", "agent:evals"])
+        let result = sim.run(["budget", "--need", "1h", "--json"],
+                             env: ["SIMMER_FAKE_BATTERY": "60:1",
+                                   "SIMMER_FAKE_BATTERY_TIME": estimate])
+        #expect(result.code != 133, "exit 133 for \(estimate)")
+        #expect(result.code == 0 || result.code == 1, "exit \(result.code) for \(estimate)")
+        if let seconds = sim.json(result)["battery_seconds_left"] as? Int {
+            #expect(seconds >= 0, "\(seconds) seconds for \(estimate)")
+        }
+    }
+}

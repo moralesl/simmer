@@ -448,3 +448,111 @@ import Testing
         #expect(!out.contains("note:"), "\(out)")
     }
 }
+
+/// Upgrading from 0.1.0, whose `sanitizedId` did not fold case.
+///
+/// A mixed-case owner was filename-safe then and is fingerprinted now, so its
+/// claim file kept enumerating under a name the same owner no longer resolves
+/// to: it held the switch, `down` said "you hold no claim", `guard` had no
+/// deadline to heal an open-ended one by, and `doctor` stayed green. The next
+/// claim by that owner doubled it instead of replacing it.
+@Suite struct ClaimIdMigrationTests {
+    /// The blocker, end to end: the orphan is reachable again by its owner.
+    @Test func aClaimWrittenUnderTheOldIdIsReachableByItsOwnerAgain() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.plantLegacyClaim(named: "agent:CI-nightly", owner: "agent:CI-nightly",
+                             until: 0, reason: "nightly release build")
+        sim.setSwitch(true)
+
+        // Any invocation migrates; status is the most innocuous one.
+        let status = sim.run(["status", "--json"])
+        #expect(status.code == 0)
+        #expect(!sim.hasClaim("agent:CI-nightly"), "the old name survived the migration")
+        #expect(sim.claimCount == 1, "the claim was duplicated or lost")
+
+        let released = sim.run(["down", "--owner", "agent:CI-nightly"])
+        #expect(released.code == 0, "\(released.combined)")
+        #expect(sim.claimCount == 0)
+        #expect(sim.switchValue == "0")
+    }
+
+    /// The same owner claiming again must MOVE its deadline, not run up a
+    /// second parallel claim — one live claim per owner is the rule the
+    /// orphaned file broke.
+    @Test func theSameOwnerReplacesItsMigratedClaimRatherThanDoublingIt() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.plantLegacyClaim(named: "agent:Build", owner: "agent:Build", until: 0)
+
+        let again = sim.run(["30m", "--owner", "agent:Build"])
+        #expect(again.code == 0, "\(again.combined)")
+        #expect(sim.claimCount == 1, "two files for one owner")
+        #expect(sim.json(sim.run(["status", "--json"]))["claim_count"] as? Int == 1)
+    }
+
+    /// A migration may never cost a caller awake time it already holds
+    /// (AGENTS.md), so a collision keeps the later deadline — here the legacy
+    /// file's, which outlasts the one already at the new name.
+    @Test func aCollisionKeepsTheLaterDeadline() {
+        let sim = Sim(); defer { sim.tearDown() }
+        // The current-format claim first, short.
+        #expect(sim.run(["30m", "--owner", "agent:Build", "-r", "short"]).code == 0)
+        // Then the long claim 0.1.0 had already written for the same owner.
+        let far = Sim.epoch + 4 * 3600
+        sim.plantLegacyClaim(named: "agent:Build", owner: "agent:Build",
+                             until: far, reason: "four hour legacy claim")
+
+        let status = sim.run(["status", "--json"])
+        #expect(sim.claimCount == 1)
+        let claims = sim.json(status)["claims"] as? [[String: Any]] ?? []
+        #expect(claims.count == 1)
+        #expect(claims.first?["until"] as? Int == far, "the longer claim was discarded")
+        #expect(claims.first?["reason"] as? String == "four hour legacy claim")
+    }
+
+    /// An open-ended claim outlasts a dated one in either direction, so the
+    /// merge cannot depend on which file the migration happened to read first.
+    @Test func anOpenEndedClaimSurvivesACollisionWithADatedOne() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["forever", "--owner", "agent:Build", "-r", "open"]).code == 0)
+        sim.plantLegacyClaim(named: "agent:Build", owner: "agent:Build",
+                             until: Sim.epoch + 600, reason: "ten minutes")
+
+        #expect(sim.run(["status", "--json"]).code == 0)
+        #expect(sim.claimCount == 1)
+        #expect(sim.json(sim.run(["status", "--json"]))["state"] as? String == "forever")
+    }
+
+    /// The `migrateLease` discipline: the old file goes only once the new one
+    /// is on disk. A frozen directory must leave BOTH the claim and the awake
+    /// time it carries alone, and say so in the log rather than on a surface.
+    @Test func aMigrationThatCannotWriteLosesNothingAndAnnouncesNothing() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.plantLegacyClaim(named: "agent:CI-nightly", owner: "agent:CI-nightly", until: 0)
+        sim.freezeClaims()
+
+        #expect(sim.run(["status", "--json"]).code == 0)
+        #expect(sim.hasClaim("agent:CI-nightly"), "the claim was lost on the failure path")
+        #expect(sim.events(named: "migrate").isEmpty, "a migration that did not happen was announced")
+
+        // And it is tried again, successfully, once the directory is writable.
+        sim.unfreezeClaims()
+        #expect(sim.run(["status", "--json"]).code == 0)
+        #expect(!sim.hasClaim("agent:CI-nightly"))
+        #expect(sim.events(named: "migrate").count == 1)
+    }
+
+    /// Idempotent, and it must leave alone every name the current writer
+    /// produces — a migration that keeps moving files is a migration that
+    /// rewrites the ledger on every invocation.
+    @Test func currentNamesAreNeverTouched() {
+        let sim = Sim(); defer { sim.tearDown() }
+        for owner in ["terminal", "agent:evals", "agent:a/b", "Terminal", "agent:über"] {
+            #expect(sim.run(["1h", "--owner", owner]).code == 0)
+        }
+        let before = (try? FileManager.default.contentsOfDirectory(atPath: sim.claimsDir.path))?.sorted()
+        for _ in 0..<3 { #expect(sim.run(["status", "--json"]).code == 0) }
+        let after = (try? FileManager.default.contentsOfDirectory(atPath: sim.claimsDir.path))?.sorted()
+        #expect(before == after, "a current name was migrated")
+        #expect(sim.events(named: "migrate").isEmpty)
+    }
+}

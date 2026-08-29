@@ -66,6 +66,7 @@ enum Runtime {
         let ledger = Ledger(stateDir: env.stateDir)
         let now = env.now()
         ledger.migrateLease(now: now)
+        ledger.migrateClaimIds(now: now)
         let power: PowerSystem = interactive
             ? env.makePowerSystem()
             : SeamPowerSystem(env: env.env, allowInteractiveSudo: false)

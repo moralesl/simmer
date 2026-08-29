@@ -41,8 +41,17 @@ public enum Tick {
                 let (ok, settleOutcome) = Engine.settle(
                     ctx: ctx, why: "found disablesleep with nothing claiming it")
                 outcome.merge(settleOutcome)
-                ledger.event("orphan_heal", now: ctx.now, [])
-                if !ok { outcome.exit = 1 }
+                // Only where the switch actually moved. `settle` has already
+                // logged the failure and posted its banner; appending
+                // `orphan_heal` beside it recorded a transition that did not
+                // happen — and in the ordinary missing-sudo-rule state, which
+                // is persistent rather than transient, that is one false event
+                // every thirty seconds for as long as the Mac runs.
+                if ok {
+                    ledger.event("orphan_heal", now: ctx.now, [])
+                } else {
+                    outcome.exit = 1
+                }
             }
             return outcome
         }
@@ -55,13 +64,30 @@ public enum Tick {
         // and it announces nothing to anybody. Every caller that speaks —
         // `down`, `cap off` — must check, because the speaking is the harm.
         if ctx.power.thermalPressure() {
-            for claim in ledger.claims() {
-                _ = ledger.retire(claim, why: "thermal pressure", now: ctx.now)
+            var stuck = 0
+            for claim in ledger.claims() where !ledger.retire(claim, why: "thermal pressure", now: ctx.now) {
+                stuck += 1
             }
-            ledger.event("thermal_release", now: ctx.now, [])
+            // The guard may ignore a retire that failed — it runs again in
+            // thirty seconds. What it may not do is ANNOUNCE one. A claim
+            // whose file will not unlink is still live, so `settle` correctly
+            // leaves the switch on, and `thermal_release` on the contracted
+            // stream beside it said the opposite: "Thermal ends everything,
+            // unconditionally" (CONTRACTS.md) reported about a Mac still being
+            // held awake under heat, indefinitely for an open-ended claim.
+            //
+            // `settle` cannot see it either — with a claim left standing it
+            // takes the "switch already on, nothing to do" path and reports
+            // ok — so the exit code has to come from the count, not from it.
+            if stuck == 0 {
+                ledger.event("thermal_release", now: ctx.now, [])
+            } else {
+                ledger.log("ERROR: thermal pressure could not end \(stuck) claim(s) — the Mac is still held awake",
+                           now: ctx.now)
+            }
             let (ok, settleOutcome) = Engine.settle(ctx: ctx, why: "thermal pressure — letting it cool")
             outcome.merge(settleOutcome)
-            if !ok { outcome.exit = 1 }
+            if !ok || stuck > 0 { outcome.exit = 1 }
             return outcome
         }
 

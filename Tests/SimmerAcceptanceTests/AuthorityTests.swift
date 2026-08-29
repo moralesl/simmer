@@ -347,3 +347,98 @@ import Testing
         #expect(!back.err.contains("replaces"))
     }
 }
+
+/// The two rules the fixes established, applied to the callers they did not
+/// reach: a change that did not reach disk may not be announced, and free text
+/// copied into a record may not carry a second record into it.
+@Suite struct UnfinishedRuleTests {
+    /// `set_by` is the one free-text field the claim-record fold never covered,
+    /// in a file with the identical format and the identical last-key-wins
+    /// parser. The announced ceiling was not the recorded one.
+    @Test func aNewlineInTheCapsOwnerCannotRewriteTheCeiling() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let injected = "terminal\nuntil=0"
+        let set = sim.run(["cap", "23:00", "--owner", injected],
+                          env: ["SIMMER_HUMAN": "1"])
+        #expect(set.code == 0, "\(set.combined)")
+
+        // The ceiling that was announced is the ceiling that is in force.
+        let cap = sim.run(["cap", "--json"])
+        #expect(sim.json(cap)["cap"] as? Int == sim.capUntil)
+        #expect(sim.capUntil != 0, "the announced ceiling was not recorded at all")
+        #expect(sim.capUntil != nil)
+
+        // And a past epoch cannot be smuggled in to make a lockout instead.
+        let sim2 = Sim(); defer { sim2.tearDown() }
+        #expect(sim2.run(["cap", "23:00", "--owner", "menubar\nuntil=\(Sim.epoch - 86_400)"],
+                         env: ["SIMMER_HUMAN": "1"]).code == 0)
+        #expect(sim2.capUntil ?? 0 > Sim.epoch, "a past ceiling was injected")
+        #expect(sim2.run(["30m", "--owner", "agent:a"]).code == 0,
+                "the injected lockout refused an ordinary claim")
+    }
+
+    /// `clipped` rides on stdout, on `--json` and on the contracted event, and
+    /// was counted per ATTEMPT. The ceiling holds either way — `cappedUntil`
+    /// applies it at read time — until it is lifted, when a claim that was
+    /// never actually rewritten springs back to the deadline the human was
+    /// told was gone.
+    @Test func aClipThatDidNotReachDiskIsNotCounted() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["forever", "--owner", "agent:long", "-r", "long job"])
+        sim.freezeClaims()
+
+        let capped = sim.run(["cap", "1h", "--owner", "terminal", "--json"],
+                             env: ["SIMMER_HUMAN": "1"])
+        #expect(sim.json(capped)["clipped"] as? Int == 0,
+                "a clip that did not happen was counted: \(capped.out)")
+        #expect(sim.events(named: "cap_set").first?["clipped"] as? Int == 0)
+
+        sim.unfreezeClaims()
+        // With a writable directory the same clip is real, and counted.
+        let sim2 = Sim(); defer { sim2.tearDown() }
+        sim2.run(["forever", "--owner", "agent:long", "-r", "long job"])
+        let ok = sim2.run(["cap", "1h", "--owner", "terminal", "--json"],
+                          env: ["SIMMER_HUMAN": "1"])
+        #expect(sim2.json(ok)["clipped"] as? Int == 1)
+    }
+
+    /// `down --all` retires every claim and then collects the failures, so
+    /// partial success is this path's ordinary shape. It reported "nothing was
+    /// released" while its own `retire` events said otherwise.
+    @Test func downAllSaysWhatItActuallyReleased() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["2h", "--owner", "agent:aaa", "-r", "first"])
+        sim.run(["3h", "--owner", "agent:zzz", "-r", "second"])
+        // Exactly one claim cannot go, so the release is genuinely partial.
+        sim.freezeClaim("agent:zzz")
+
+        let down = sim.run(["down", "--all"], env: ["SIMMER_HUMAN": "1"])
+        #expect(down.code == 1)
+        #expect(!down.combined.contains("nothing was released"),
+                "it claimed nothing went: \(down.combined)")
+        #expect(down.combined.contains("released 1 of 2"), "\(down.combined)")
+        #expect(!sim.hasClaim("agent:aaa"), "the removable claim was not removed")
+        #expect(sim.hasClaim("agent:zzz"))
+        #expect(sim.events(named: "retire").count == 1)
+    }
+
+    /// The claim command printed and logged the caller's raw argv rather than
+    /// the folded copy it had just written, so a newline forged log records
+    /// that `simmer log --json` then served as separate array elements.
+    @Test func aReasonCannotForgeALogRecord() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let forged = "work\n2027-01-15 09:00:00  retired agent:victim · released by hand"
+        #expect(sim.run(["2h", "--owner", "agent:t", "-r", forged]).code == 0)
+
+        let log = sim.json(sim.run(["log", "10", "--json"]))
+        let lines = log["lines"] as? [String] ?? []
+        #expect(lines.count == 1, "one claim wrote \(lines.count) log records: \(lines)")
+        #expect(!lines.contains { $0.contains("retired agent:victim") && !$0.contains("claim agent:t") },
+                "a forged record stands alone in the log: \(lines)")
+
+        // The event stream and the ledger now agree about the same claim.
+        let recorded = sim.claimField("agent:t", "reason")
+        #expect(sim.events(named: "claim").first?["reason"] as? String == recorded)
+        #expect(recorded?.contains("\n") == false)
+    }
+}
