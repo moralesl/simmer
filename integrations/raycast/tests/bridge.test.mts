@@ -38,6 +38,13 @@ function seam(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
     SIMMER_FAKE_BATTERY: "80:0",
     SIMMER_FAKE_THERMAL: "0",
     SIMMER_FAKE_LOCKDELAY: "0",
+    // The clock, pinned — the Swift harness has always done this and this
+    // suite never did, so its results depended on the time of day CI ran.
+    // A `cap 22:00` test passed for months and failed at 22:22, because a
+    // wall-clock ceiling that has already gone rolls to tomorrow and is
+    // refused. 2027-01-15 09:00 Europe/Berlin, the same fixed point
+    // `Sim.epoch` uses, so the two suites cannot disagree about "now".
+    SIMMER_FAKE_NOW: "1800000000",
     SIMMER_NOTIFY: "none",
     ...extra,
   };
@@ -111,6 +118,10 @@ test("extend moves the deadline forward, never backward", { skip }, async () => 
 
 test("a ceiling clips a claim without refusing it", { skip }, async () => {
   const env = seam();
+  // A wall-clock ceiling, which only works because the seam pins the clock:
+  // `cap 22:00` is refused once 22:00 has gone, since rolling to tomorrow
+  // makes it twenty-three hours out — the inverse of what a cap is for. This
+  // passed for months and failed at 22:22.
   await run<SimmerMutation>(bin!, capArgs("22:00"), env);
   const status = await run<SimmerStatus>(bin!, statusArgs(), env);
   assert.ok(status.cap > 0, "the ceiling is reported as an epoch");
