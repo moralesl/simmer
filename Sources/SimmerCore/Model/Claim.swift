@@ -39,22 +39,53 @@ public struct Claim: Sendable, Equatable {
     /// case, which is why `--require-ac` exists.
     public static let longHaulSeconds = 12 * 3600
 
+    /// The far end of any epoch this tool will believe. A claim is bounded by
+    /// `Durations.maxSeconds` when it is taken, so nothing legitimate comes
+    /// near 2100 — and a number past it is not a deadline, it is damage.
+    public static let maxEpoch = 4_102_444_800   // 2100-01-01
+
+    /// **Every numeric field is range-checked here, because this is the one
+    /// place a Claim is born** — `parse` calls it, so a corrupt record on disk
+    /// cannot get a value past it either.
+    ///
+    /// Swift's arithmetic traps rather than wrapping, so a field read straight
+    /// out of a file and then added to, subtracted from, or narrowed is a
+    /// crash waiting on whichever surface touches it first. `started=<Int.min>`
+    /// took `budget` down with exit 133 through `now - since`, and
+    /// `caffeinate=<Int.max>` took `guard` and `down --all` down through
+    /// `pid_t(…)`, which is Int32. Exit 133 is not in the contract's published
+    /// table, and a guard that dies on a tick stops handing the machine back.
+    ///
+    /// Out of range is treated as "this field is not a value", never clamped
+    /// to the nearest plausible one — a deadline of 2099 invented out of
+    /// `Int.max` would be a guarantee nobody asked for. `until` is the one
+    /// with a direction to choose, and it expires: a record this tool cannot
+    /// read must not be able to hold the machine awake, and the guard retires
+    /// it on the next tick.
     public init(owner: String, until: Int, started: Int, reason: String = "",
                 minBattery: Int = Claim.defaultMinBattery, requireAC: Bool = false,
                 displayOn: Bool = false, warned: Bool = false, prewarned: Bool = false,
                 reminded: Int = 0, legacyCaffeinatePid: Int = 0) {
+        func epoch(_ value: Int, orElse fallback: Int) -> Int {
+            (0...Claim.maxEpoch).contains(value) ? value : fallback
+        }
         self.id = Claim.sanitizedId(owner)
         self.owner = Claim.singleLine(owner, limit: Claim.maxOwnerLength)
-        self.until = until
-        self.started = started
+        // 1 rather than 0: 0 means "no deadline" and would turn damage into
+        // the strongest claim there is. 1 is 1970, so it is already over.
+        self.until = epoch(until, orElse: 1)
+        self.started = epoch(started, orElse: 0)
         self.reason = Claim.singleLine(reason, limit: Claim.maxReasonLength)
-        self.minBattery = minBattery
+        self.minBattery = (0...100).contains(minBattery) ? minBattery : Claim.defaultMinBattery
         self.requireAC = requireAC
         self.displayOn = displayOn
         self.warned = warned
         self.prewarned = prewarned
-        self.reminded = reminded
-        self.legacyCaffeinatePid = legacyCaffeinatePid
+        self.reminded = epoch(reminded, orElse: 0)
+        // Narrowed to pid_t (Int32) by every caller that uses it, and a pid is
+        // positive. Out of range means there is no child to clean up.
+        self.legacyCaffeinatePid =
+            (1...Int(Int32.max)).contains(legacyCaffeinatePid) ? legacyCaffeinatePid : 0
     }
 
     /// Anything not filename-safe becomes an underscore. The owner is echoed

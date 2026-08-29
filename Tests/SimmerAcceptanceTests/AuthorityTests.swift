@@ -442,3 +442,42 @@ import Testing
         #expect(recorded?.contains("\n") == false)
     }
 }
+
+/// The plaintext surfaces beside the ledger, which the folding rule reached
+/// later than the claim file did.
+@Suite struct LogAndMessageHonesty {
+    /// `simmer.log` is newline-delimited plaintext and the cap record is
+    /// newline-delimited key=value, and both interpolate the caller's owner.
+    /// The claim FILE was safe because `Claim` folds its own copy; the owner
+    /// the command carried around was not, so a newline in `--owner` wrote a
+    /// second log entry that `simmer log --json` served as its own record.
+    @Test func anOwnerCannotForgeAnEntryInTheLog() {
+        let sim = Sim(); defer { sim.tearDown() }
+        // Taking a claim needs no authority at all, which makes it the
+        // reachable path; `cap` can be forged the same way but only by a
+        // caller who already counts as human.
+        let forged = "agent:x\n2026-01-01 00:00:00  FORGED ENTRY"
+        #expect(sim.run(["30m", "-r", "work", "--owner", forged]).code == 0)
+
+        let log = (try? String(contentsOf: sim.stateDir.appendingPathComponent("simmer.log"),
+                               encoding: .utf8)) ?? ""
+        let entries = log.split(separator: "\n").filter { !$0.isEmpty }
+        #expect(entries.count == 1, "the owner wrote \(entries.count) entries: \(log)")
+        #expect(!log.contains("\nFORGED"), "a line began with the forged text")
+    }
+
+    /// On a write failure the claim command described a machine where nothing
+    /// held the switch. Somebody else's claim keeps it on — correctly — and a
+    /// caller who believed that sentence and closed the lid got the opposite.
+    @Test func aFailedClaimDescribesTheMachineItActuallyLeft() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(sim.run(["2h", "-r", "theirs", "--owner", "agent:other"]).code == 0)
+        sim.freezeClaims()
+        let mine = sim.run(["30m", "-r", "mine", "--owner", "agent:me"])
+        #expect(mine.code == 1)
+        #expect(mine.err.contains("still hold it awake"))
+        #expect(!mine.err.contains("nothing is holding the Mac awake"))
+        #expect(sim.switchValue == "1")
+        sim.unfreezeClaims()
+    }
+}

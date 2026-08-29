@@ -25,7 +25,16 @@ public struct Context {
         self.now = now
         self.power = power
         self.ledger = ledger
-        self.owner = owner
+        // Folded here for the same reason `Claim` folds its own copy: this
+        // string is interpolated into `simmer.log`, which is newline-delimited
+        // plaintext, and into the cap record, which is newline-delimited
+        // key=value. The claim FILE was safe and the log was not, so a newline
+        // in --owner forged whole entries that `simmer log --json` then served
+        // to machine readers as separate records. One place, because the last
+        // rule that landed with only its author's call sites in hand missed
+        // four. `sanitizedId` maps a newline and a space to the same
+        // underscore, so no claim id moves.
+        self.owner = Claim.singleLine(owner, limit: Claim.maxOwnerLength)
         self.ownerExplicit = ownerExplicit
         self.isHuman = isHuman
         self.isTTY = isTTY

@@ -300,6 +300,18 @@ public struct Ledger: Sendable {
         /// `unknown` when written by a version that predates the field.
         public var login: String
         public var ts: Int
+
+        /// A pid alone vouches for whatever holds that pid NOW. `app.status`
+        /// is never removed on exit, so after a crash or a reboot the number
+        /// in it belongs to some other process — pid 1 among them — and every
+        /// row underneath reported the dead app's last known verdict as
+        /// current. The app rewrites this file every three seconds, so a
+        /// minute is a long time in its own terms.
+        public static let maxHeartbeatAge = 60
+
+        public func heartbeatIsFresh(now: Int) -> Bool {
+            now - ts <= Self.maxHeartbeatAge && ts > 0
+        }
     }
 
     public func readAppStatus() -> AppStatus? {
@@ -546,7 +558,11 @@ public struct Ledger: Sendable {
     /// LaunchAgent tick may append concurrently, and only kernel-level append
     /// keeps their lines whole.
     private func append(_ text: String, to url: URL) {
-        let fd = open(url.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
+        // O_NOFOLLOW: these are append-only records inside a directory the
+        // user owns, and a symlink dropped in their place would redirect every
+        // future line somewhere else entirely — silently, since the failure
+        // path here is deliberately quiet.
+        let fd = open(url.path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0o600)
         guard fd >= 0 else { return }
         defer { close(fd) }
         let data = Array(text.utf8)

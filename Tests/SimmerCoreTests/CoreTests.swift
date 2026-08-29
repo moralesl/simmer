@@ -699,3 +699,110 @@ import Testing
         #expect(ledger.unsoundClaimFiles().isEmpty)
     }
 }
+
+/// Swift's arithmetic traps rather than wrapping, so a number read straight
+/// out of a file and then added to, subtracted from, or narrowed is a crash
+/// waiting on whichever surface touches it first. `Claim`'s initialiser is
+/// where every claim is born — `parse` included — so it is where the ranges
+/// are, rather than at the sites that would have trapped.
+@Suite struct CorruptRecordRanges {
+    @Test func anEpochOutsideAnyPlausibleRangeExpiresRatherThanPersists() {
+        // 1, not 0: 0 means "no deadline" and would turn damage into the
+        // strongest claim there is.
+        for bad in [Int.max, Int.min, -1, Claim.maxEpoch + 1] {
+            let claim = Claim(owner: "agent:x", until: bad, started: 0)
+            #expect(claim.until == 1, "until=\(bad)")
+        }
+        // And the ordinary values are untouched, including "forever".
+        #expect(Claim(owner: "a", until: 0, started: 0).until == 0)
+        #expect(Claim(owner: "a", until: 1_800_000_000, started: 0).until == 1_800_000_000)
+    }
+
+    @Test func aStartedOrRemindedOutsideRangeFallsBackToZero() {
+        for bad in [Int.max, Int.min, -1] {
+            #expect(Claim(owner: "a", until: 100, started: bad).started == 0)
+            #expect(Claim(owner: "a", until: 100, started: 0, reminded: bad).reminded == 0)
+        }
+    }
+
+    /// Narrowed to pid_t — Int32 — by both callers that use it, and a pid is
+    /// positive. This is what took `guard` and `down --all` down with exit 133.
+    @Test func aCaffeinatePidOutsidePidRangeMeansThereIsNoChild() {
+        for bad in [Int.max, Int.min, 0, -1, Int(Int32.max) + 1] {
+            #expect(Claim(owner: "a", until: 100, started: 0,
+                          legacyCaffeinatePid: bad).legacyCaffeinatePid == 0, "\(bad)")
+        }
+        #expect(Claim(owner: "a", until: 100, started: 0,
+                      legacyCaffeinatePid: 4821).legacyCaffeinatePid == 4821)
+    }
+
+    @Test func aBatteryFloorOutsideZeroToHundredFallsBackToTheDefault() {
+        for bad in [Int.max, Int.min, -1, 101] {
+            #expect(Claim(owner: "a", until: 100, started: 0,
+                          minBattery: bad).minBattery == Claim.defaultMinBattery, "\(bad)")
+        }
+        #expect(Claim(owner: "a", until: 100, started: 0, minBattery: 0).minBattery == 0)
+        #expect(Claim(owner: "a", until: 100, started: 0, minBattery: 100).minBattery == 100)
+    }
+
+    /// The whole point of putting it in the initialiser: a record on disk
+    /// cannot get a value past it either.
+    @Test func aParsedRecordGoesThroughTheSameRanges() {
+        let text = """
+            format=2
+            id=agent:x
+            owner=agent:x
+            until=9223372036854775807
+            started=-9223372036854775808
+            min_battery=9223372036854775807
+            caffeinate=2147483648
+            """
+        let claim = Claim.parse(text, fallbackId: "agent:x")
+        #expect(claim.until == 1)
+        #expect(claim.started == 0)
+        #expect(claim.minBattery == Claim.defaultMinBattery)
+        #expect(claim.legacyCaffeinatePid == 0)
+    }
+}
+
+/// The records beside the claims: what goes into them, and what reading them
+/// is allowed to conclude.
+@Suite struct RecordsBesideTheClaims {
+    func makeLedger() -> (Ledger, URL) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-side-\(UUID().uuidString)")
+        return (Ledger(stateDir: dir), dir)
+    }
+
+    /// `app.status` is never removed on exit, so its pid outlives the app and
+    /// is eventually held by something else — pid 1 among them. `ps -p` said
+    /// yes to that, and every row underneath reported the dead app's last
+    /// known verdict as current.
+    @Test func aStaleHeartbeatIsNotARunningApp() {
+        let status = Ledger.AppStatus(pid: 1, notify: "authorized", login: "enabled", ts: 0)
+        #expect(!status.heartbeatIsFresh(now: 1_800_000_000))
+        // Written a moment ago by an app that is actually there.
+        let live = Ledger.AppStatus(pid: 4821, notify: "authorized", login: "enabled",
+                                    ts: 1_800_000_000 - 3)
+        #expect(live.heartbeatIsFresh(now: 1_800_000_000))
+        // And the boundary is the boundary, not a bit past it.
+        let old = Ledger.AppStatus(pid: 4821, notify: "authorized", login: "enabled",
+                                   ts: 1_800_000_000 - Ledger.AppStatus.maxHeartbeatAge - 1)
+        #expect(!old.heartbeatIsFresh(now: 1_800_000_000))
+    }
+
+    /// The log and the event stream are append-only records inside a directory
+    /// the user owns. A symlink dropped in their place would redirect every
+    /// future line somewhere else entirely — silently, because the failure
+    /// path in `append` is deliberately quiet.
+    @Test func theLogDoesNotFollowASymlinkOutOfTheStateDirectory() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let elsewhere = dir.appendingPathComponent("ELSEWHERE")
+        try? FileManager.default.removeItem(at: ledger.logFile)
+        try! FileManager.default.createSymbolicLink(at: ledger.logFile, withDestinationURL: elsewhere)
+
+        ledger.log("a line that must not travel", now: 1000)
+        #expect(!FileManager.default.fileExists(atPath: elsewhere.path))
+    }
+}

@@ -194,8 +194,12 @@ struct DoctorCLI: ParsableCommand {
         // executable would be told about its own never-granted state
         // (PLATFORM-FACTS.md — that misread cost a wrong diagnosis once already).
         let appStatus = ctx.ledger.readAppStatus()
+        // Both halves: the pid is still a process, AND the heartbeat behind it
+        // is recent. The pid alone vouches for whatever holds that pid now
+        // (Ledger.AppStatus.heartbeatIsFresh).
         let appRunning = appStatus.map {
             Shell.run("/bin/ps", ["-p", String($0.pid)]).status == 0
+                && $0.heartbeatIsFresh(now: ctx.now)
         } ?? false
         // Under the seam there is no app and there is not meant to be one: a
         // hermetic sandbox and CI would otherwise report a permanent failure
@@ -237,6 +241,20 @@ struct DoctorCLI: ParsableCommand {
                     label: "does NOT open at login — after a restart there is no menu bar and no banners until you open Simmer. The guard still works. Enable it in Simmer's setup window.",
                     ok: nil))
             }
+        }
+
+        // Created 0700/0600, and nothing re-tightens a directory that already
+        // existed — so the mode is worth reporting rather than assuming. A
+        // reason carries customer and project names and the log keeps every
+        // one of them, dated. Informational: a wider mode is the user's to
+        // decide about, and a permanently red row teaches people to skim.
+        if let mode = (try? FileManager.default.attributesOfItem(
+            atPath: ctx.ledger.stateDir.path))?[.posixPermissions] as? Int, mode & 0o077 != 0 {
+            rows.append(Row(
+                id: "state_mode",
+                label: String(format: "state directory is mode %03o — readable beyond you.", mode),
+                ok: nil,
+                detail: ["Tighten it: chmod -R go-rwx \(ctx.ledger.stateDir.path)"]))
         }
 
         rows.append(Row(id: "claims_writable", label: "claims directory writable",

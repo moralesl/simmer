@@ -183,8 +183,16 @@ public enum Commands {
         guard ctx.ledger.write(claim) else {
             ctx.ledger.log("ERROR: could not record the claim for \(ctx.owner)", now: ctx.now)
             Engine.settle(ctx: ctx, why: "the claim could not be recorded")
+            // What settle actually left behind, not what it leaves behind when
+            // this is the only claim. Somebody else's claim keeps the switch
+            // on — correctly — and "nothing is holding the Mac awake" told a
+            // caller who then closed the lid the exact opposite of the truth.
+            let after = ctx.aggregate()
+            let machine = after.count > 0
+                ? "\(after.count) other claim(s) still hold it awake"
+                : "nothing is holding the Mac awake"
             outcome.merge(.failure(
-                "could not record the claim in \(ctx.ledger.claimsDir.path) — nothing is holding the Mac awake. Run 'simmer doctor'",
+                "could not record the claim in \(ctx.ledger.claimsDir.path) — \(machine). Run 'simmer doctor'",
                 json: input.json))
             return outcome
         }
