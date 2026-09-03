@@ -19,6 +19,8 @@ public enum MenuAction: Equatable, Sendable {
     case capLift
     case copyCLI(String)
     case openSetup
+    /// Ask now, rather than waiting for the app's once-a-day look.
+    case checkForUpdates
     case quit
 }
 
@@ -68,10 +70,19 @@ public struct MenuInstall: Sendable, Equatable {
     /// The passwordless rule is in place. Without it the guard still runs and
     /// still decides correctly, and then cannot move the switch.
     public var canHandBackUnattended: Bool
+    /// `UpdateCommand.statusLine` of the LAST check — nil when there is
+    /// nothing to say, which is what makes the row conditional here rather
+    /// than in the renderer.
+    public var updateLine: String?
+    /// What updating this copy would take, for the row to hand out.
+    public var updateCommand: String
 
-    public init(version: String, canHandBackUnattended: Bool) {
+    public init(version: String, canHandBackUnattended: Bool,
+                updateLine: String? = nil, updateCommand: String = "") {
         self.version = version
         self.canHandBackUnattended = canHandBackUnattended
+        self.updateLine = updateLine
+        self.updateCommand = updateCommand
     }
 }
 
@@ -81,6 +92,20 @@ public enum MenuModel {
     public static func build(aggregate: Aggregate, batteryLine: String,
                              install: MenuInstall) -> [MenuItemModel] {
         var items: [MenuItemModel] = []
+
+        // First, and only when there is something to say. A newer release is
+        // not what the menu is FOR — the state header below is — so this row
+        // is not drawn bold and does not compete with it; it carries a symbol
+        // and a submenu instead, the same shape "Copy as CLI command" uses,
+        // because the useful thing to do with it is to take the command away
+        // to a terminal.
+        if let line = install.updateLine {
+            items.append(MenuItemModel(
+                title: line, symbol: "arrow.down.circle.fill",
+                children: [MenuItemModel(title: install.updateCommand,
+                                         action: .copyCLI(install.updateCommand))]))
+            items.append(.separator)
+        }
 
         switch aggregate.state {
         case .idle:
@@ -138,6 +163,11 @@ public enum MenuModel {
         items.append(capItem(aggregate))
         items.append(.separator)
         items.append(copyAsCLI(aggregate))
+        // Always here, in the same place, whether or not there is an update:
+        // an item that appears only when it has news is an item nobody can
+        // find when they want to ask.
+        items.append(MenuItemModel(title: "Check for Updates…", symbol: "arrow.down.circle",
+                                   action: .checkForUpdates))
         items.append(MenuItemModel(title: "Setup…", symbol: "gearshape", action: .openSetup))
         items.append(MenuItemModel(title: "Quit Simmer", action: .quit))
 

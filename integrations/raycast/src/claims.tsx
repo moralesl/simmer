@@ -5,14 +5,16 @@ import {
   Color,
   Icon,
   Keyboard,
+  LaunchType,
   List,
   Toast,
   confirmAlert,
+  launchCommand,
   open,
   showToast,
   Clipboard,
 } from "@raycast/api";
-import { useExec } from "@raycast/utils";
+import { useExec, usePromise } from "@raycast/utils";
 import { preferredPath } from "./preference.ts";
 import { useEffect, useMemo, useState } from "react";
 import { watch } from "node:fs";
@@ -36,6 +38,7 @@ import {
   SimmerClaim,
   SimmerMutation,
   SimmerStatus,
+  checkUpdate,
   grantedMessage,
   resolveBinary,
   run,
@@ -73,6 +76,16 @@ export default function Command() {
     parseOutput: ({ stdout }) => JSON.parse(stdout) as SimmerStatus,
     keepPreviousData: true,
   });
+
+  // The cached answer only — `--cached` makes no network request, so opening
+  // this view never waits on GitHub. The app refreshes the record once a day
+  // and the "Check for Updates" command is where someone asks for a fresh look.
+  // A failed read is nothing to report here: no row, no toast.
+  const { data: update } = usePromise(
+    async (path: string | null) =>
+      path ? checkUpdate(path, true).catch(() => null) : null,
+    [bin],
+  );
 
   // The countdown ticks locally. Re-running `status --json` every second would
   // spawn a process — and one `pmset` read inside it — per second, for a number
@@ -287,6 +300,49 @@ export default function Command() {
                   title="Release It"
                   icon={Icon.Moon}
                   onAction={() => perform(releaseArgs(true), () => "Released")}
+                />
+                {utilityActions}
+              </ActionPanel>
+            }
+          />
+        </List.Section>
+      )}
+
+      {update && (update.update_available || update.app_drift) && (
+        <List.Section title="Update">
+          <List.Item
+            icon={{
+              source: update.app_drift ? Icon.Warning : Icon.Download,
+              tintColor: update.app_drift ? Color.Orange : Color.Blue,
+            }}
+            title={
+              update.app_drift
+                ? `Simmer.app is ${update.app_version} · the CLI is ${update.installed}`
+                : `simmer ${update.latest} is out`
+            }
+            subtitle={
+              update.app_drift
+                ? "half an install — the bundle was not replaced"
+                : `you have ${update.installed}`
+            }
+            accessories={[{ text: update.update_command }]}
+            actions={
+              <ActionPanel>
+                {/* Copied, never run: an update replaces a running app and the
+                    binary the guard points at, and a claim may be live. */}
+                <Action.CopyToClipboard
+                  title="Copy the Update Command"
+                  content={update.update_command}
+                />
+                <Action
+                  title="Check Again"
+                  icon={Icon.ArrowClockwise}
+                  onAction={() =>
+                    launchCommand({
+                      name: "check-updates",
+                      type: LaunchType.UserInitiated,
+                    })
+                  }
                 />
                 {utilityActions}
               </ActionPanel>

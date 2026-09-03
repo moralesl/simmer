@@ -13,8 +13,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { capArgs, claimArgs, extendArgs, releaseArgs, statusArgs } from "../src/args.ts";
-import { resolveBinary, run, runText, SimmerRefusal } from "../src/simmer.ts";
+import { capArgs, claimArgs, extendArgs, releaseArgs, statusArgs, updateArgs } from "../src/args.ts";
+import { checkUpdate, resolveBinary, run, runText, SimmerRefusal } from "../src/simmer.ts";
 import type { SimmerMutation, SimmerStatus } from "../src/simmer.ts";
 
 const bin = resolveBinary();
@@ -240,4 +240,69 @@ test("render raycast gives one line per state, and they differ", { skip }, async
   }
   assert.notEqual(idle, active, "a held Mac must not look like a free one");
   assert.notEqual(idle, orphan, "an orphan must not look like a free one");
+});
+
+/**
+ * `simmer update` is the one command whose non-zero exit is an answer rather
+ * than a refusal, so `checkUpdate` must return the body instead of throwing it
+ * away. Both halves are asserted here: the answer, and the not-knowing.
+ */
+test("update --json carries every field the views read", { skip }, async () => {
+  const update = await checkUpdate(bin!, false, seam({ SIMMER_FAKE_LATEST: "v9.9.9" }));
+
+  for (const key of [
+    "action",
+    "verdict",
+    "installed",
+    "latest",
+    "update_available",
+    "provenance",
+    "update_command",
+    "app_version",
+    "app_drift",
+    "checked_at",
+    "cached",
+    "error",
+    "seamed",
+  ] as const) {
+    assert.ok(key in update, `update --json lost ${key}`);
+  }
+  assert.equal(update.verdict, "available");
+  assert.equal(update.update_available, true);
+  assert.equal(update.latest, "v9.9.9");
+  assert.ok(update.update_command.length > 0, "an available update must name its command");
+});
+
+test("a check that could not be made is an answer, not a thrown refusal", { skip }, async () => {
+  const update = await checkUpdate(bin!, false, seam({ SIMMER_FAKE_LATEST: "error" }));
+
+  assert.equal(update.verdict, "unknown");
+  assert.equal(update.update_available, false);
+  assert.equal(update.latest, null);
+  assert.ok(update.error, "not knowing has to say why");
+});
+
+/**
+ * The claims view reads the record, never the network — otherwise opening a
+ * launcher list would wait on GitHub. The source is primed here with an answer
+ * `--cached` is not allowed to look at.
+ */
+test("the cached read consults no source at all", { skip }, async () => {
+  const env = seam({ SIMMER_FAKE_LATEST: "v9.9.9" });
+  const cold = await checkUpdate(bin!, true, env);
+  assert.equal(cold.verdict, "unknown", "a cached read invented an answer");
+  assert.equal(cold.cached, true);
+
+  // Once something has been recorded, the same call answers from it.
+  await checkUpdate(bin!, false, env);
+  const warm = await checkUpdate(bin!, true, env);
+  assert.equal(warm.latest, "v9.9.9");
+  assert.equal(warm.cached, true);
+});
+
+test("updateArgs asks for JSON, and cached by default", () => {
+  assert.deepEqual(updateArgs(), ["update", "--cached", "--json"]);
+  assert.deepEqual(updateArgs(false), ["update", "--json"]);
+  // Read-only: nothing is claimed, so nothing is owned.
+  assert.ok(!updateArgs().includes("--owner"));
 });

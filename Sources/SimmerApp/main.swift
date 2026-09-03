@@ -28,6 +28,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             LoginItem.registerOnceIfNeeded(stateDir: AppState.shared.environment.stateDir)
         }
         SetupWindow.shared.showIfNeeded()
+        scheduleUpdateChecks()
+    }
+
+    /// The once-a-day release check, and the timer that keeps it once a day on
+    /// a Mac that stays logged in for weeks.
+    ///
+    /// A minute of delay before the first one: this runs at login, where the
+    /// network is often not up yet, and a failed check would then be the
+    /// answer cached for the day. Six hours between passes rather than
+    /// twenty-four, because the pass itself is what checks whether a day has
+    /// gone by — a 24-hour timer on a machine that sleeps drifts until it
+    /// never fires.
+    private func scheduleUpdateChecks() {
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: false) { _ in
+            AppState.shared.refreshUpdateCheck()
+        }
+        Timer.scheduledTimer(withTimeInterval: 6 * 60 * 60, repeats: true) { _ in
+            AppState.shared.refreshUpdateCheck()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

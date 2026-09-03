@@ -342,6 +342,62 @@ struct DoctorCLI: ParsableCommand {
                 ok: nil))
         }
 
+        // Is there a newer release — from the CACHE, never from the network.
+        //
+        // `doctor` answers "is this install wired up correctly", and that
+        // question must have the same answer on a train as in the office. The
+        // app refreshes the cache once a day and `simmer update` refreshes it
+        // whenever a person asks; this row reports what they found.
+        //
+        // Informational in every state, including "you are current": being out
+        // of date is not a broken install, and a row that can go red for it
+        // would teach the reader to skim the ones that mean something.
+        let install = Install.detect(executablePath: env.binPath)
+        let update = UpdateCommand.check(
+            now: ctx.now, installed: Runtime.version, install: install,
+            appVersion: install.bundleVersion(), ledger: ctx.ledger,
+            source: env.makeReleaseSource(), cached: true,
+            seamed: env.isSeamed)
+        switch update.verdict {
+        case .available:
+            rows.append(Row(
+                id: "update",
+                label: "simmer \(update.latestDisplay) is out; this is \(Runtime.version).",
+                ok: nil,
+                detail: ["  \(update.install.updateCommand)"]))
+        case .current:
+            rows.append(Row(id: "update",
+                            label: "running the newest release (\(Runtime.version))",
+                            ok: nil))
+        case .ahead:
+            rows.append(Row(id: "update",
+                            label: "simmer \(Runtime.version) is ahead of the newest release (\(update.latestDisplay))",
+                            ok: nil))
+        case .unknown:
+            rows.append(Row(id: "update",
+                            label: "release check: \(update.error)",
+                            ok: nil,
+                            detail: ["  simmer update"]))
+        }
+
+        // The bundle and the CLI disagreeing IS broken, and this row is red
+        // for it — the one update-shaped thing that is.
+        //
+        // `make install` symlinks the CLI at the copy inside the bundle, so
+        // the two are normally one file and cannot differ. When they do, the
+        // menu bar, the event-driven half of the guard and the notification
+        // identity are all the previous version running against the current
+        // ledger — the failure the install recipe quits the app to avoid, and
+        // the one a package manager that upgrades only the CLI would
+        // reintroduce.
+        if update.appDrift {
+            rows.append(Row(
+                id: "app_version",
+                label: "Simmer.app is \(update.appVersion ?? "?") but this CLI is \(Runtime.version).",
+                ok: false,
+                detail: ["  \(update.install.updateCommand)"]))
+        }
+
         let failures = rows.filter { $0.ok == false }.count
 
         if common.json {

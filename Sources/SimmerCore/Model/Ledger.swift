@@ -344,6 +344,12 @@ public struct Ledger: Sendable {
 
     public var spoolFile: URL { stateDir.appendingPathComponent("notify-spool.jsonl") }
     public var appStatusFile: URL { stateDir.appendingPathComponent("app.status") }
+    public var updateCheckFile: URL { stateDir.appendingPathComponent("update-check") }
+    /// Present = the app's once-a-day check is off. A stamp file rather than a
+    /// preference, for the reason `login-item.offered` is one: the app keeps no
+    /// UserDefaults, all of its state is here, and `doctor` can then read a
+    /// person's decision without asking the app whether it is running.
+    public var updateCheckOffFile: URL { stateDir.appendingPathComponent("update-check.off") }
 
     public func enqueueNotification(_ request: NotificationRequest, now: Int) {
         let json = JSONValue.object([
@@ -390,6 +396,97 @@ public struct Ledger: Sendable {
                 actionable: object["actionable"] as? Bool ?? false))
         }
         return requests
+    }
+
+    // MARK: the last release check
+    //
+    // Cached so that the surfaces which are not the one doing the asking —
+    // `doctor`, a launcher row, the menu — never make a network call of their
+    // own. One check a day answers all of them, and a stale answer is labelled
+    // rather than refreshed behind someone's back.
+
+    public struct UpdateRecord: Sendable, Equatable {
+        public var checkedAt: Int
+        public var installed: String
+        /// The newest release tag, or empty when the check could not answer.
+        public var latest: String
+        /// Why it could not answer. Empty on success.
+        public var error: String
+        /// A `SIMMER_FAKE_*` was in force when this was written, so it is an
+        /// answer about a seam and not about the repository. Recorded rather
+        /// than suppressed: the suite needs the cache path to be reachable,
+        /// and an unseamed reader needs to know not to believe this one.
+        public var seamed: Bool
+
+        public init(checkedAt: Int, installed: String, latest: String, error: String,
+                    seamed: Bool = false) {
+            self.checkedAt = checkedAt
+            self.installed = installed
+            self.latest = latest
+            self.error = error
+            self.seamed = seamed
+        }
+
+        /// A day, matching the app's tick. Older than this is reported with
+        /// its age instead of being trusted as current.
+        public static let maxAge = 24 * 60 * 60
+
+        public func isFresh(now: Int) -> Bool {
+            checkedAt > 0 && now - checkedAt < Self.maxAge
+        }
+    }
+
+    public func writeUpdateRecord(_ record: UpdateRecord) {
+        // key=value like the cap and the heartbeat, not JSON: nothing outside
+        // simmer reads this file. `simmer update --json` is how a launcher or
+        // a script asks, so the cache format stays an implementation detail
+        // and not a fifth machine surface to keep append-only.
+        _ = atomicWrite("""
+        checked=\(record.checkedAt)
+        installed=\(Claim.singleLine(record.installed, limit: 64))
+        latest=\(Claim.singleLine(record.latest, limit: 64))
+        error=\(Claim.singleLine(record.error, limit: 200))
+        seamed=\(record.seamed ? 1 : 0)
+
+        """, to: updateCheckFile)
+    }
+
+    public func readUpdateRecord() -> UpdateRecord? {
+        guard let text = try? String(contentsOf: updateCheckFile, encoding: .utf8) else { return nil }
+        var checked = 0
+        var installed = "", latest = "", error = ""
+        var seamed = false
+        for line in text.split(separator: "\n") {
+            let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            let value = String(parts[1])
+            switch parts[0] {
+            case "checked": checked = Int(value) ?? 0
+            case "installed": installed = value
+            case "latest": latest = value
+            case "error": error = value
+            case "seamed": seamed = value == "1"
+            default: break
+            }
+        }
+        guard checked > 0 else { return nil }
+        return UpdateRecord(checkedAt: checked, installed: installed, latest: latest,
+                            error: error, seamed: seamed)
+    }
+
+    /// Whether the app may check on its own. A person's answer, not a seam —
+    /// `SIMMER_NO_UPDATE_CHECK=1` is the environment's way to say the same
+    /// thing for one process (SimmerEnvironment).
+    public var backgroundUpdateChecksEnabled: Bool {
+        !FileManager.default.fileExists(atPath: updateCheckOffFile.path)
+    }
+
+    public func setBackgroundUpdateChecks(enabled: Bool) {
+        if enabled {
+            try? FileManager.default.removeItem(at: updateCheckOffFile)
+        } else {
+            _ = atomicWrite("off\n", to: updateCheckOffFile)
+        }
     }
 
     // MARK: the app's heartbeat — what doctor reads instead of asking UN

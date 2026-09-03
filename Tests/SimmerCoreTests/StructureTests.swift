@@ -16,6 +16,79 @@ import Testing
         try String(contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8)
     }
 
+    /// The sugar layer's verb list and the parser's subcommand list must name
+    /// exactly the same verbs.
+    ///
+    /// They are two hand-kept lists in two files, and disagreeing in either
+    /// direction is silent. A subcommand the normaliser does not know is
+    /// unreachable — `simmer update` was read as a duration and diagnosed as
+    /// "did not understand the duration: update", with the command right there
+    /// in the binary. A verb the normaliser knows with nothing behind it is the
+    /// raw parser's "Unexpected argument", the one refusal in the surface that
+    /// names no fix.
+    ///
+    /// Derived from the source rather than from a third list, because a gate
+    /// with its own copy of the answer is a fourth thing to keep in step.
+    @Test func theSugarLayerAndTheParserKnowTheSameVerbs() throws {
+        let normalize = try Self.read("Sources/SimmerCLI/Normalize.swift")
+        guard let literal = normalize.components(separatedBy: "static let verbs: Set<String> = [")
+            .dropFirst().first?.components(separatedBy: "]").first else {
+            #expect(Bool(false), "Normalize.verbs is not a set literal any more")
+            return
+        }
+        let sugarVerbs = Set(Self.quoted(in: literal))
+
+        let cli = try Self.read("Sources/SimmerCLI/CLI.swift")
+        guard let declared = cli.components(separatedBy: "subcommands: [")
+            .dropFirst().first?.components(separatedBy: "]").first else {
+            #expect(Bool(false), "SimmerRoot declares no subcommands array")
+            return
+        }
+        let types = declared.components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.hasSuffix(".self") }
+            .map { String($0.dropLast(".self".count)) }
+        #expect(types.count > 5, "the subcommand list did not parse: \(types)")
+
+        // `commandName` is what the verb is actually called, and it does not
+        // always follow from the type name (`NotifyTestCLI` is `notify-test`).
+        var parserVerbs = Set<String>()
+        let sources = (try? FileManager.default.contentsOfDirectory(
+            at: Self.repoRoot.appendingPathComponent("Sources/SimmerCLI"),
+            includingPropertiesForKeys: nil)) ?? []
+        let allCLISource = sources.compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+            .joined(separator: "\n")
+        for type in types {
+            guard let afterStruct = allCLISource.components(separatedBy: "struct \(type)")
+                .dropFirst().first,
+                  let name = Self.quoted(in: afterStruct.components(separatedBy: "commandName: ")
+                      .dropFirst().first?.components(separatedBy: ",").first ?? "").first else {
+                #expect(Bool(false), "no commandName found for \(type)")
+                continue
+            }
+            parserVerbs.insert(name)
+        }
+
+        let sugarOnly = sugarVerbs.subtracting(parserVerbs)
+        let parserOnly = parserVerbs.subtracting(sugarVerbs)
+        #expect(sugarVerbs == parserVerbs,
+                "sugar knows \(sugarOnly) with nothing behind it; the parser has \(parserOnly) that sugar swallows")
+    }
+
+    /// Every double-quoted string in a fragment of Swift source.
+    static func quoted(in fragment: String) -> [String] {
+        var found: [String] = []
+        var current: String?
+        for character in fragment {
+            if character == "\"" {
+                if let value = current { found.append(value); current = nil } else { current = "" }
+            } else if current != nil {
+                current?.append(character)
+            }
+        }
+        return found
+    }
+
     /// macOS binds a notification grant to the executable that asked. With two
     /// executables in one bundle, each reads its own state — so a CLI that
     /// links UserNotifications asks questions about the wrong binary and gets

@@ -76,6 +76,10 @@ CHECKING ON IT
   simmer notify-test         queue one banner and say whether it can arrive —
                              banners come from Simmer.app or not at all
   simmer render swiftbar     draw a launcher surface (also: raycast)
+  simmer update              is there a newer simmer? It shows the command
+                             that installs it — it never installs anything.
+                             --cached reports the last check without asking
+                             the network (which is what the menu bar reads)
   simmer --version
 
 REMOVING IT
@@ -91,7 +95,7 @@ FOR SCRIPTS AND AGENTS
                              the top level, every claim in .claims
   simmer status --machine    the same as key=value lines, when jq is not around
   --json                     claim · extend · release · cap · status · budget ·
-                             log · doctor. A mutating command answers with what
+                             log · doctor · update. A mutating command answers with what
                              changed plus the resulting aggregate, so one call
                              is enough. notify-test and render refuse it rather
                              than accept it and do nothing
@@ -103,6 +107,8 @@ EXIT CODES ARE API
   run -- cmd     the command's own exit code, passed through untouched
   claim/extend/release/cap   0 ok · 1 refused (floor, cap, authority, parse)
   doctor         0 healthy · 1 something red
+  update         0 the check completed — read update_available for the answer ·
+                 1 could not check. A newer version existing is not a failure.
 
 https://github.com/moralesl/simmer
 """

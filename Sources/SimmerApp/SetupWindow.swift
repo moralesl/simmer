@@ -87,6 +87,16 @@ final class SetupWindow: NSObject {
 
     // MARK: layout
 
+    /// The one thing in this window that is a preference rather than a
+    /// permission — and the only place simmer's single outbound request can be
+    /// turned off by hand. Stored as a file under the ledger, not in
+    /// UserDefaults: every other thing the app remembers lives there, and
+    /// `doctor` can then read the decision without asking the app.
+    private lazy var updateCheckBox: NSButton = {
+        NSButton(checkboxWithTitle: "Check for a newer simmer once a day",
+                 target: self, action: #selector(toggleUpdateChecks))
+    }()
+
     private func build() {
         sudoRow.button.target = self
         sudoRow.button.action = #selector(setUpSudo)
@@ -133,7 +143,20 @@ final class SetupWindow: NSObject {
         hint.textColor = .tertiaryLabelColor
         hint.preferredMaxLayoutWidth = 460
 
-        let content = NSStackView(views: [header, rows, hint])
+        let updateCaption = NSTextField(wrappingLabelWithString:
+            "One request to github.com, asking which release is newest. It sends "
+            + "nothing about you or this Mac, and simmer never installs anything "
+            + "on its own — it shows you the command. Turn it off here, or set "
+            + "SIMMER_NO_UPDATE_CHECK=1.")
+        updateCaption.font = .systemFont(ofSize: 11)
+        updateCaption.textColor = .tertiaryLabelColor
+        updateCaption.preferredMaxLayoutWidth = 460
+        let updates = NSStackView(views: [updateCheckBox, updateCaption])
+        updates.orientation = .vertical
+        updates.alignment = .leading
+        updates.spacing = 4
+
+        let content = NSStackView(views: [header, rows, updates, hint])
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = 16
@@ -157,7 +180,26 @@ final class SetupWindow: NSObject {
 
     // MARK: live status
 
+    @objc private func toggleUpdateChecks() {
+        let enabled = updateCheckBox.state == .on
+        AppState.shared.context().ledger.setBackgroundUpdateChecks(enabled: enabled)
+        // Asked for it just now: look immediately rather than at the next
+        // six-hour pass, so the switch visibly does something.
+        if enabled { AppState.shared.refreshUpdateCheck() }
+    }
+
     private func refresh() {
+        // The environment wins over the checkbox, and says so rather than
+        // showing a switch that does nothing: a variable exported in a shell
+        // rc is not something a click in this window can overrule.
+        let environmentSaysNo = AppState.shared.environment.backgroundUpdateCheckDisabled
+        updateCheckBox.isEnabled = !environmentSaysNo
+        updateCheckBox.state = environmentSaysNo
+            || !AppState.shared.context().ledger.backgroundUpdateChecksEnabled ? .off : .on
+        updateCheckBox.title = environmentSaysNo
+            ? "Check for a newer simmer once a day — off via SIMMER_NO_UPDATE_CHECK"
+            : "Check for a newer simmer once a day"
+
         sudoState { ok, foreign in
             DispatchQueue.main.async {
                 if ok {

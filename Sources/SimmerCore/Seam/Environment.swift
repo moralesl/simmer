@@ -137,6 +137,28 @@ public struct SimmerEnvironment: Sendable {
     /// no SIMMER_NOTIFIER_APP override to honour (CONTRACTS.md § test seam).
     public var notifyTransport: String { env["SIMMER_NOTIFY"] ?? "auto" }
 
+    // MARK: is there a newer release — SIMMER_FAKE_LATEST, SIMMER_NO_UPDATE_CHECK
+
+    /// The only outbound network read simmer has, and the seam over it.
+    ///
+    /// A seamed process with no `SIMMER_FAKE_LATEST` reads nothing: see the
+    /// note on `ReleaseLookup`. That is what makes the acceptance suite
+    /// hermetic by construction rather than by everyone remembering to set one
+    /// more variable.
+    public func makeReleaseSource() -> ReleaseSource {
+        if let fake = env["SIMMER_FAKE_LATEST"] { return FakeReleaseSource(value: fake) }
+        if isSeamed { return SeamedReleaseSource() }
+        return GitHubReleaseSource()
+    }
+
+    /// Ordinary configuration rather than a seam: it turns off the app's own
+    /// once-a-day check. `simmer update`, typed by a person who is asking, is
+    /// never suppressed by it — a command that answers "not checking" to the
+    /// question "check" would be the silent-drop failure in a new place.
+    public var backgroundUpdateCheckDisabled: Bool {
+        env["SIMMER_NO_UPDATE_CHECK"] == "1"
+    }
+
     // MARK: the power seam
 
     public func makePowerSystem() -> PowerSystem {

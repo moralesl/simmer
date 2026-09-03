@@ -2,7 +2,7 @@
   "$schema": "https://www.raycast.com/schemas/extension.json",
   "name": "simmer",
   "title": "Simmer",
-  "description": "Hold this Mac awake with the lid closed, as counted claims with deadlines \u2014 and see who is holding it.",
+  "description": "Hold this Mac awake with the lid closed, as counted claims with deadlines — and see who is holding it.",
   "icon": "simmer.png",
   "author": "moralesl",
   "platforms": [
@@ -28,12 +28,12 @@
         "claims",
         "lid"
       ],
-      "subtitle": "\u21b5 once to start the countdown"
+      "subtitle": "↵ once to start the countdown"
     },
     {
       "name": "claims",
       "title": "Simmer Claims",
-      "description": "Who is holding this Mac awake, until when, and why \u2014 with the actions",
+      "description": "Who is holding this Mac awake, until when, and why — with the actions",
       "mode": "view",
       "keywords": [
         "awake",
@@ -142,6 +142,19 @@
             }
           ]
         }
+      ]
+    },
+    {
+      "name": "check-updates",
+      "title": "Simmer Check for Updates",
+      "description": "Ask GitHub which release is newest, and show the command that installs it",
+      "mode": "view",
+      "keywords": [
+        "update",
+        "upgrade",
+        "version",
+        "release",
+        "newest"
       ]
     }
   ],

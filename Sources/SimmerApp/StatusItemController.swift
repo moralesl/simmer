@@ -90,8 +90,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // Read per menu open, not cached: the rule can be installed from the
         // setup window while this menu is the thing that sent you there, and a
         // stale "no permission" row would then be the lie.
+        let update = AppState.shared.cachedUpdateReport()
         let install = MenuInstall(version: ctx.version,
-                                  canHandBackUnattended: SudoRule.installedPath() != nil)
+                                  canHandBackUnattended: SudoRule.installedPath() != nil,
+                                  updateLine: UpdateCommand.statusLine(update),
+                                  updateCommand: update.install.updateCommand)
         let model = MenuModel.build(aggregate: ctx.aggregate(), batteryLine: batteryLine,
                                     install: install)
         for entry in model {
@@ -170,6 +173,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             NSPasteboard.general.setString(command, forType: .string)
         case .openSetup:
             SetupWindow.shared.show()
+        case .checkForUpdates:
+            // The answer arrives after the menu has closed, so it has to come
+            // back through the one channel the app already owns: a banner.
+            // Posting it is not a downgrade of the "no notification for the
+            // background check" decision — this one was asked for by hand.
+            AppState.shared.refreshUpdateCheck(force: true) { report in
+                Notifier.shared.post([UpdateCommand.notification(report)])
+            }
         case .quit:
             NSApp.terminate(nil)
         }

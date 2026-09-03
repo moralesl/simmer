@@ -38,6 +38,19 @@ Two consequences worth knowing:
 - The bundle is **ad-hoc signed**.
   It has no stable code identity across rebuilds and no Apple Developer certificate, on purpose (`docs/FAQ.md`).
 
+## The one thing simmer sends
+
+`simmer update` — and `Simmer.app` once a day — makes one `HEAD` request to `https://github.com/moralesl/simmer/releases/latest` and reads the tag out of the redirect.
+That is the whole network surface.
+
+- **What goes out:** the request line and a `simmer/<version>` User-Agent.
+  No identifier, no hostname, no machine detail, no claim, no reason, no telemetry — not now and not later.
+- **What comes back is a version string**, and the only thing done with it is a comparison against the compiled-in one.
+  Nothing is downloaded, and nothing is executed: simmer prints the command that would update it and stops.
+- **Turning it off:** the checkbox in the setup window, or `SIMMER_NO_UPDATE_CHECK=1`.
+  That stops the app's background check; `simmer update`, typed by someone asking, still asks.
+- **`--cached`** answers from the last check and never opens a socket, which is what `doctor`, the menu bar and the Raycast list use — so the surfaces you did not ask cannot make a request on your behalf.
+
 ## What is not a vulnerability
 
 - **Human primacy is not a security boundary.** A human can release any claim and only a human can move the cap — enforced against *honest* actors.

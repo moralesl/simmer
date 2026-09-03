@@ -24,6 +24,7 @@ simmer status --machine | --json                machine status
 simmer budget [--need D] [--seconds] [--json]   room to start something?
 simmer log [n] · doctor · notify-test · --version · --help
 simmer render swiftbar|raycast                 surfaces, drawn by the core
+simmer update [--cached]                        is there a newer release?
 ```
 
 Durations: `90`, `90m`, `2h`, `1h30m`, `45min`, `30s`, `2H`, `1d`, `1d12h`.
@@ -44,9 +45,14 @@ Every command reachable from a launcher also tolerates a trailing `-r <reason> -
 | `run -- cmd` | *(command's own exit code, passed through untouched)* ||||
 | take/extend/down/cap | ok | refused (floor, cap, authority, parse) | — | — |
 | `doctor` | healthy | something red | — | — |
+| `update` | the check completed — newer or not | **could not check** | — | — |
 
 `budget`'s 3-vs-1 split is load-bearing: 1 is a small budget, 3 is an absent guarantee.
 Callers that conflate them keep working while the machine sleeps.
+
+**`update`'s 0 does not mean "you are current"** — it means the question was answered, and the answer is in `update_available`.
+A newer release existing is not a failure of anything, which is the same reading that keeps "out of date" out of `doctor`'s red rows; the one non-zero exit is not knowing.
+So a caller can tell "you are current" from "nobody could tell", which is the distinction that matters to anything automated.
 
 **"The earliest clock" is not always the deadline** — see § Two clocks.
 An open-ended claim can now answer `1`, which it could not before 0.2.
@@ -74,6 +80,18 @@ Fields are append-only; removing or renaming one is a major version, **and so is
 The two exceptions are the flat surfaces, which have no types at all: `--machine` emits `0`/`1`, and `status --json` keeps `on_battery` and `sleep_disabled` as `0`/`1` because they mirror `--machine` field for field.
 A reader must never have to discover that one field answers the same question in a different type than its neighbour, and one field must never carry two types across two surfaces of the same binary.
 The acceptance suite asserts this against the raw JSON text, because `JSONSerialization` bridges `0`/`1` to `Bool` and would let exactly that drift through a typed assertion.
+
+`update --json`: `action` (always `checked`), `verdict` (`current`·`available`·`ahead`·`unknown`), `installed`, `latest` (the release tag as published, `v` and all, or `null`), `update_available` (boolean), `provenance` (`homebrew`·`bundle`·`checkout`·`unknown`), `update_command`, `app_version` (the installed bundle's, or `null`), `app_drift` (boolean), `checked_at`, `cached` (boolean), `error` (or `null`), `seamed` (boolean).
+
+**`latest` keeps the `v`; the human surfaces drop it.** The field is the string a caller hands to `git checkout` or matches against a release page, so it is the tag verbatim.
+A sentence that puts `v0.3.0` next to `0.2.0` reads like two different kinds of thing, so the prose says `0.3.0` — presentation, which guarantee 5 leaves free.
+
+**`provenance` decides `update_command`, and that is the whole reason it is a field.** "What is the newest release" has one answer; "how do you update" does not.
+Telling a Homebrew user to re-run the one-paste installer would put a second, unmanaged copy beside the managed one; telling someone with a checkout to `brew upgrade` names a formula they do not have.
+Both are derived from the path the running binary resolves to, never from a preference.
+
+**`app_drift` is the one update-shaped thing that is a fault.** `make install` symlinks the CLI at the copy inside the bundle, so the two are normally one file and cannot differ.
+When they do, the menu bar, the event-driven half of the guard and the notification identity are all the previous version running against the current ledger — which is why `doctor` reports it red while it reports being out of date as information.
 
 **The top-level fields describe the AGGREGATE** — what the machine will actually do — and the descriptive ones (`reason`, `owner`, `min_battery`, `since`) come from the claim that *defines* the aggregate deadline.
 With one claim that is the same answer the single-lease shape gave, which is why every existing reader keeps working.
@@ -104,6 +122,10 @@ Neither field changed meaning when the second clock arrived; `fits` and the exit
     The id is derived from the owner — see § The claim id.
 - `cap` — the human ceiling, same discipline.
 - `simmer.log`.
+- `update-check` — what the last release check found, `key=value`.
+  Not a machine surface: `simmer update --json` is how anything else asks, so this stays an implementation detail rather than a fifth format to keep append-only.
+  It records whether the check was `seamed`, and an unseamed reader discards a seamed record — a `SIMMER_FAKE_LATEST` left exported in a shell rc must not put "Update available: 9.9.9" in a person's menu bar.
+- `update-check.off` — present when a person has turned the app's once-a-day check off.
 - additionally, an append-only `events.jsonl` (one JSON object per transition: `v`, `ts`, `event`, `reason`, `owner`, …).
 
 A `format=1` lease is read **once**, converted into a claim, and deleted.
@@ -143,6 +165,7 @@ Any implementation MUST honour these, or it cannot be tested without root and wi
 | `SIMMER_HUMAN=1` | the caller carries human authority regardless of owner |
 | `SIMMER_NOTIFY=<transport\|none>` | `none` silences. There is exactly one transport: the CLI enqueues into `$STATE/notify-spool.jsonl` and the app — the only executable holding a notification grant — posts. The spool is the assertable surface |
 | `SIMMER_NOTIFIER_APP=<path>` | **retired in the rewrite** (was: notifier bundle override). The spool lives under `XDG_STATE_HOME`, so notification routing is seam-isolated by construction; see PLATFORM-FACTS.md on per-executable grants |
+| `SIMMER_FAKE_LATEST=<tag\|error>` | the newest published release, e.g. `v0.3.0`; `error` is the offline path. **A process that is seamed at all and has not been given this reads nothing over the network** — while a `SIMMER_FAKE_*` is in force nothing this process reports is about this machine, and a live network read would be the one exception. That is what makes the suite hermetic without a rule anyone has to remember |
 | `SIMMER_FAKE_BATTERY_TIME=<seconds>` | macOS's own time-to-empty estimate, which `budget` scales into the battery clock — see § Two clocks |
 | `SIMMER_BIN=<path>` | which binary integrations exec, **honoured only while `SIMMER_FAKE_PMSET` is also set**. It decides what a menu-bar or launcher row executes, which is not a decision one unguarded environment variable may make on a real install; there it is redundant anyway, because the binary knows its own path |
 | `SIMMER_SKILL_DIR=<dir>` | where the generated agent protocol lives, for `doctor`'s staleness row. Needed because `homeDirectoryForCurrentUser` reads the passwd entry and ignores `HOME`, so this one read would otherwise reach the tester's real `~/.claude` |
@@ -155,6 +178,7 @@ Two more are read but are not seams — they are ordinary configuration, listed 
 |---|---|
 | `SIMMER_OWNER=<name>` | the default owner, when no `--owner` is given |
 | `SIMMER_NONINTERACTIVE=1` | never prompt for sudo, even on a tty |
+| `SIMMER_NO_UPDATE_CHECK=1` | the app never checks for a newer release on its own. `simmer update`, typed by someone who is asking, is never suppressed by it — a command that answered "not checking" to the question "check" would be the silent-drop failure in a new place |
 
 **Every side effect outside the process must be behind this seam, not merely the ones that are awkward to test.** A suite that called itself hermetic leaked 222 orphaned `caffeinate` processes exactly this way: ten seam variables, and none of them covering the one call that spawned a detached child holding a real power assertion (`PLATFORM-FACTS.md`).
 If an implementation shells out or spawns anything, that has a `SIMMER_FAKE_*` too.
@@ -234,7 +258,7 @@ All additive to the surface above:
   `simmer <duration>` remains the way to *set* a deadline from now, and the two spellings now mean visibly different things.
   A claim already past its deadline but not yet retired extends from **now**, never from the stale deadline — otherwise the addition lands in the past.
   The alias set is exactly the surface above.
-- **`--json` on every command that has a machine answer**: `claim`, `extend`, `release`, `cap`, `status`, `budget`, `log`, `doctor`.
+- **`--json` on every command that has a machine answer**: `claim`, `extend`, `release`, `cap`, `status`, `budget`, `log`, `doctor`, `update`.
   A mutating command returns one object: what changed plus the resulting aggregate — `{"action":"claimed|extended|released|cap_set|cap_lifted|refused", "claim": {…}, "clipped_by_cap":bool, "state", "until", "left", "claim_count", "cap", "capped", "cap_expires"}`, where `cap_expires` says when the ceiling lifts itself (0 = no cap).
   Bare `cap --json` spells the same field `expires`, because every field in that object is already about the cap.
   `notify-test` and `render` have none and **refuse** the flag rather than accepting and ignoring it: a flag that is silently dropped is indistinguishable, to the caller, from one that worked.
@@ -249,6 +273,13 @@ All additive to the surface above:
   Order is chronological — the switch flips before the claim file lands, and the stream says so.
   Fields are append-only.
   Nothing reads it yet; `watch`/`why` stay uncontracted.
+- **`simmer update` reports; it never installs.** It prints the command for the copy it is running from and stops there.
+  An update replaces a running app and the binary the guard's LaunchAgent points at, and it can be asked for while a claim is live — so the shape is `simmer uninstall`'s, for the same reason: an operation that happens rarely, in front of a person already at a keyboard, is better as a command they can read first than as a button that acts on their behalf.
+  `--cached` reports the last check and makes no network request, which is what every surface that is not the one being asked uses — `doctor`, the menu bar, a launcher row.
+  `doctor` therefore answers the same on a train as in the office.
+- **One outbound request, and it is the only one.** A `HEAD` to `github.com/moralesl/simmer/releases/latest`, whose redirect names the newest tag.
+  It carries a `simmer/<version>` User-Agent and nothing else: no identifier, no machine detail, no telemetry, ever.
+  The app makes it at most once a day and posts no banner for it; `simmer update` makes it when asked.
 - **`simmer guard`** is the tick's CLI spelling — what the LaunchAgent runs.
   It never prompts (sudo -n or nothing) and exits 1 only when the switch could not be moved.
 

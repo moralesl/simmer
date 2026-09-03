@@ -11,6 +11,7 @@ import { execFile } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { updateArgs } from "./args.ts";
 
 /** One live claim. Mirrors `Present.claimJSON`. */
 export interface SimmerClaim {
@@ -48,6 +49,26 @@ export interface SimmerStatus {
   capped: boolean;
   claims: SimmerClaim[];
   version: string;
+}
+
+/** `simmer update --json`. Mirrors `UpdateCommand.json`. */
+export interface SimmerUpdate {
+  action: "checked";
+  verdict: "current" | "available" | "ahead" | "unknown";
+  installed: string;
+  /** The release tag as published (`v0.3.0`), null when the check could not answer. */
+  latest: string | null;
+  update_available: boolean;
+  /** How this copy was installed, which decides `update_command`. */
+  provenance: "homebrew" | "bundle" | "checkout" | "unknown";
+  update_command: string;
+  app_version: string | null;
+  /** Simmer.app and the CLI are different versions — half an install. */
+  app_drift: boolean;
+  checked_at: number;
+  cached: boolean;
+  error: string | null;
+  seamed: boolean;
 }
 
 /** Every mutating command answers with its action, the claim, and the aggregate tail. */
@@ -206,6 +227,37 @@ export async function run<T>(
     );
   }
   return parsed as T;
+}
+
+/**
+ * Is there a newer simmer.
+ *
+ * The one command whose non-zero exit is not a refusal: `simmer update` exits 1
+ * when it could not TELL, and prints the same object either way with
+ * `verdict: "unknown"` and the reason in `error`. Routing it through `run()`
+ * would turn "cannot reach GitHub" into a thrown refusal and throw the body
+ * away with it, so the exit code is read as the answer it is.
+ */
+export async function checkUpdate(
+  bin: string,
+  cached = true,
+  env?: NodeJS.ProcessEnv,
+): Promise<SimmerUpdate> {
+  const { code, stdout, stderr } = await spawn(bin, updateArgs(cached), env);
+  let parsed: SimmerUpdate | undefined;
+  try {
+    parsed = JSON.parse(stdout) as SimmerUpdate;
+  } catch {
+    parsed = undefined;
+  }
+  if (parsed?.action === "checked") return parsed;
+  // Anything else IS a refusal — an unknown flag, a binary too old to have the
+  // verb at all — and simmer's own sentence is the one to show.
+  throw new SimmerRefusal(
+    (parsed as { error?: string } | undefined)?.error?.trim() ||
+      stderr.trim() ||
+      `simmer exited ${code}`,
+  );
 }
 
 /**
