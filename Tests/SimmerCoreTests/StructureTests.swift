@@ -16,6 +16,36 @@ import Testing
         try String(contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8)
     }
 
+    /// The compiled-in version has a CHANGELOG section, always.
+    ///
+    /// Bumping `Version.swift` and writing the notes are one act, not two: the
+    /// bump is what a release IS, and notes written afterwards are written from
+    /// `git log` by someone reconstructing decisions they were present for.
+    /// This fails in the pull request that bumps the version, which is where it
+    /// costs one line to fix.
+    ///
+    /// It also makes the release workflow's job small — by tag time the notes
+    /// already exist and the only new question is whether the tag agrees with
+    /// this string, which is a question only a tag can answer.
+    @Test func theVersionHasItsOwnChangelogSection() throws {
+        let changelog = try Self.read("CHANGELOG.md")
+        let heading = "## \(SimmerVersion.string) — "
+        #expect(changelog.contains(heading),
+                "CHANGELOG.md has no \"\(heading)<date>\" section for the version in Version.swift")
+    }
+
+    /// Work in flight collects under one heading, so the release commit renames
+    /// it rather than inventing notes.
+    ///
+    /// Not a check that it is non-empty: a release commit legitimately leaves it
+    /// empty, and a rule that forbade that would be a rule to work around on
+    /// exactly the commit that matters most.
+    @Test func thereIsSomewhereForUnreleasedNotesToGo() throws {
+        let changelog = try Self.read("CHANGELOG.md")
+        #expect(changelog.contains("## Unreleased"),
+                "CHANGELOG.md lost its Unreleased section — the next change has nowhere to land")
+    }
+
     /// The sugar layer's verb list and the parser's subcommand list must name
     /// exactly the same verbs.
     ///

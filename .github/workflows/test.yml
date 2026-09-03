@@ -17,6 +17,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Callable, so `release.yml` can gate a tag on THESE legs rather than on a
+  # second copy of them. Two lists of checks drift, and the one that would
+  # drift is the one nobody watches until a release goes out red.
+  workflow_call:
 
 jobs:
   suites:
@@ -172,6 +176,93 @@ jobs:
           # [ ] — which would mean rewriting every line of a working installer
           # for no change in what it does.
           shellcheck bootstrap.sh
+
+  # The one-paste install, actually run.
+  #
+  # `bootstrap.sh` is the path every colleague takes and the one `simmer update`
+  # points them back to, and until now CI only asked whether it PARSES. Nothing
+  # executed it: not the clone, not `make install`, not the write to
+  # /etc/sudoers.d that SECURITY.md's central promise is about, not the guard
+  # registration. A runner is the right place for that — it is a machine nobody
+  # minds, granted for twenty minutes.
+  #
+  # Against THIS checkout, never the published tag: `SIMMER_REPO` points at the
+  # workspace and `SIMMER_REF` at a branch created here, so the leg tests the
+  # commit under review rather than the last release.
+  #
+  # `SIMMER_NO_LAUNCH=1` is the one step a runner cannot stand in for. Opening
+  # the app is how the notification permission gets requested, and that is a
+  # click by design (PLATFORM-FACTS.md) — so the leg installs everything and
+  # asserts everything else, and says here that the banner is not covered.
+  one-paste-install:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: |
+          newest="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$newest" ]; then sudo xcode-select -s "$newest"; fi
+          swift --version
+
+      # The installer clones by ref, and `git clone --branch` does not take a
+      # SHA — on a pull request the checkout is a detached HEAD, so give it a
+      # name to ask for.
+      - name: Name the commit under test
+        run: git switch -c ci-under-test
+
+      - name: The documented one-paste install, start to finish
+        env:
+          SIMMER_REPO: ${{ github.workspace }}
+          SIMMER_REF: ci-under-test
+          SIMMER_NO_LAUNCH: "1"
+        run: |
+          SIMMER_DIR="$RUNNER_TEMP/simmer-src" bash bootstrap.sh
+
+      # Every promise the installer's own epilogue makes, asserted. A leg that
+      # ran the script and checked nothing would go green on an installer that
+      # printed its way to the end having installed half of it.
+      - name: Assert what it promised
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+
+          bin="$HOME/.local/bin/simmer"
+          [ -L "$bin" ] || fail "$bin is not the symlink make install writes"
+          "$bin" --version || fail "the installed CLI does not run"
+
+          app="$HOME/Applications/Simmer.app"
+          [ -x "$app/Contents/MacOS/simmer-app" ] || fail "no app executable in the bundle"
+          [ "$(readlink "$bin")" = "$app/Contents/MacOS/simmer" ] ||
+            fail "the CLI is not the binary inside the bundle — they can now drift"
+
+          # The privileged step, which is the whole reason the guard can hand
+          # the switch back unattended. Scoped exactly as SECURITY.md states.
+          rule="/etc/sudoers.d/simmer-$(id -un)"
+          [ -f "$rule" ] || fail "$rule was not installed"
+          sudo -nl | grep -qE 'NOPASSWD:.*/usr/bin/pmset -a disablesleep 0' ||
+            fail "the rule is there but grants nothing"
+
+          # The watchdog. `make install` bootstraps it into the GUI domain, and
+          # whether launchd allows that on a runner is something only this leg
+          # can answer — if it cannot, that is a real fact about the
+          # environment and belongs in the log, not behind a skip.
+          launchctl print "gui/$(id -u)/io.github.moralesl.simmer.guard" >/dev/null ||
+            fail "the guard is not loaded"
+
+          # And simmer's own verdict on the install it just got. `doctor` exits
+          # 1 here by design — nothing opened the app, so the rows about
+          # banners are red — so this reads the two rows the INSTALLER is
+          # responsible for rather than the exit code.
+          "$bin" doctor --json > "$RUNNER_TEMP/doctor.json" || true
+          for key in guard_loaded sudo_rule; do
+            verdict="$(jq -r --arg k "$key" \
+              '.checks[] | select(.id == $k) | .ok' "$RUNNER_TEMP/doctor.json")"
+            [ "$verdict" = "true" ] || fail "doctor says $key is ${verdict:-absent}"
+          done
+          echo "doctor agrees: guard loaded, sudo rule in place"
+
+      - name: And uninstall says how to undo all of it
+        run: $HOME/.local/bin/simmer uninstall
 
   # The toolchain the whole build is designed around, and the one CI never
   # used. "CLT-only by design: the bundle is hand-assembled and ad-hoc signed,

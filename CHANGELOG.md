@@ -19,6 +19,19 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 - **`doctor` reports a half-finished install as red.** `Simmer.app` and the CLI are normally the same file, so a version disagreement between them means one was replaced and the other was not — which a package manager that upgrades only the CLI would produce routinely.
   Being merely out of date stays informational.
 
+### Releasing, and the checks around it
+
+- **A tag is now verified before anything is published.** `.github/workflows/release.yml` runs on a `v*` tag: the whole matrix (by reference to `test.yml`, not a second copy of it), then the one question only a tag can answer — does it name the version the binary reports, and does that version have CHANGELOG notes — and only then creates the GitHub Release from that section.
+  It refuses to overwrite a release that already exists.
+- **`make release-check`** asks the same questions before the tag exists: clean tree, on `main`, version not already tagged, notes present and non-empty, both suites green.
+  It prints the notes and the two commands and tags nothing itself.
+- **Two tests keep the version honest between releases.** The compiled-in version must have a CHANGELOG section — so a bump without notes fails in the pull request that bumps it — and there must always be an `Unreleased` section for the next change to land in.
+- **The one-paste install runs in CI.** A macOS leg executes `bootstrap.sh` against the checkout under review: the clone, `make install`, the write to `/etc/sudoers.d`, the guard registration, and `simmer doctor`'s verdict on the result.
+  Previously CI only asked whether the installer parsed.
+- **`SIMMER_NO_LAUNCH=1`** installs everything except opening the app, for a machine with no login session — CI, or an install over SSH.
+  The notification permission is a click by design, and the installer now says so instead of implying the install is finished.
+- **`docs/RELEASING.md`** — what happens when a pull request merges (nothing: the notes go under `Unreleased` and the version does not move), how a release is cut, and what a version number promises.
+
 ### Machine surface
 
 - **New:** `update --json` (`action`, `verdict`, `installed`, `latest`, `update_available`, `provenance`, `update_command`, `app_version`, `app_drift`, `checked_at`, `cached`, `error`, `seamed`), and the `update` and `app_version` rows in `doctor --json`.

@@ -67,7 +67,7 @@ TEST_FLAGS = -Xswiftc -F -Xswiftc $(CLT_FRAMEWORKS) \
 endif
 endif
 
-.PHONY: build test test-raycast skill app install uninstall clean
+.PHONY: build test test-raycast skill app install uninstall clean release-check release-notes
 
 build:
 	swift build -c release
@@ -88,6 +88,50 @@ test-raycast:
 	# right on a fresh checkout and pure waste on the fifth run of the day.
 	cd integrations/raycast && { [ -d node_modules ] || npm ci; } \
 	  && npm run typecheck && npx eslint src tests && npm test
+
+# ── releasing ───────────────────────────────────────────────────────────────
+#
+# A tag is the highest-consequence thing this repository can produce.
+# `bootstrap.sh` resolves the newest `v*` tag and installs THAT, and
+# `simmer update` compares against the same tag — so pushing one decides what
+# every future install gets and what every existing install is told. Both of
+# these exist so that decision is checked before it is taken, and taken by a
+# person: `release-check` refuses to tag anything itself and prints the two
+# commands instead, the same shape `simmer uninstall` uses for the same reason.
+
+# The body of one CHANGELOG section, which is what the release notes ARE.
+# One implementation, used by a human reading it and by the release workflow
+# publishing it — two extractors would eventually publish different notes than
+# the ones the maintainer approved.
+release-notes:
+	@awk -v want="$(VERSION)" ' 	  /^## /  { if (found) exit; if ($$2 == want) { found = 1; next } } 	  found   { print } 	' CHANGELOG.md
+
+# Everything that must be true before a tag exists. Runs the suite, because a
+# tag on a red commit is an install everyone gets.
+release-check:
+	@printf 'releasing %s\n\n' '$(VERSION)'
+	@test -z "$$(git status --porcelain)" || { 	  echo "the working tree is dirty — a tag must name a commit that exists"; exit 1; }
+	@branch="$$(git rev-parse --abbrev-ref HEAD)"; [ "$$branch" = main ] || { 	  echo "on $$branch, not main — releases are cut from main"; exit 1; }
+	@git rev-parse -q --verify 'refs/tags/v$(VERSION)' >/dev/null && { 	  echo "v$(VERSION) is already a tag. Bump Sources/SimmerCore/Version.swift first."; 	  exit 1; } || true
+	@# The notes have to exist before the release does. A section is also what
+	@# `StructureTests` asserts for the compiled-in version, so this can only
+	@# fail here if the heading's date is missing.
+	@grep -q '^## $(VERSION) — ' CHANGELOG.md || { 	  echo "CHANGELOG.md has no '## $(VERSION) — <date>' section"; exit 1; }
+	@test -n "$$($(MAKE) --no-print-directory release-notes)" || { 	  echo "the $(VERSION) section in CHANGELOG.md is empty"; exit 1; }
+	@echo "▸ the suite, against the commit that would be tagged"
+	@$(MAKE) --no-print-directory test >/dev/null || { echo "tests are red"; exit 1; }
+	@$(MAKE) --no-print-directory test-raycast >/dev/null || { 	  echo "the extension's suite is red"; exit 1; }
+	@echo "  green"
+	@echo ""
+	@echo "▸ these are the release notes GitHub will carry"
+	@$(MAKE) --no-print-directory release-notes | sed 's/^/    /'
+	@echo ""
+	@echo "▸ nothing has been tagged. Yours to run:"
+	@echo "    git tag -a v$(VERSION) -m 'simmer $(VERSION)'"
+	@echo "    git push origin v$(VERSION)"
+	@echo ""
+	@echo "  The tag push runs .github/workflows/release.yml, which verifies this"
+	@echo "  again on a clean runner and publishes the release from the section above."
 
 # Assemble the bundle: both binaries inside Contents/MacOS — the bundle IS the
 # notification identity, and the CLI posting from inside it is what lets a
