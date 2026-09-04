@@ -3,6 +3,55 @@
 Notable changes, newest first.
 Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are contract and append-only; anything that changes one is called out here explicitly.
 
+## Unreleased
+
+### Added
+
+- **`simmer update`** — is there a newer release, and what would install *this* copy.
+  It reports and prints the command; it never installs anything, for the same reason `simmer uninstall` shows commands rather than running them, and more so: an update replaces a running app and the binary the guard's LaunchAgent points at, and it can be asked for while a claim is live.
+  The instruction follows how the copy got here — `brew upgrade simmer` for a Homebrew install, `git pull && make install` for a checkout, the one-paste installer otherwise — because "what is the newest release" has one answer and "how do you update" does not.
+  `--json` carries `verdict`, `update_available`, `provenance`, `update_command` and `app_drift`; exit 0 means the check completed, 1 means it could not be made.
+  A newer release existing is never a failure.
+- **`simmer update --apply` installs it**, for the person with no terminal to paste into — which is most of the people the menu bar exists for.
+  It runs the command it would have printed and nothing else: no password, and never a script piped from the internet into a shell.
+  A bundle install has the one-paste installer's checkout at `~/.local/share/simmer`, so the plan fetches the new tag there and runs `make install`; Homebrew gets `brew upgrade simmer`.
+  It refuses in a developer's own checkout — that may hold local commits, an unfinished branch or a stash — and refuses when it cannot tell whether there is anything to install.
+  `applied`, `steps` and `apply_error` on `--json`; exit 0 means nothing is left to do.
+- **The same answer in four more places.** A conditional row in the menu bar carrying **Install it now** and the command to copy, plus a permanent "Check for Updates…" item; a footer that always says which version you are on and which is newest; an informational row in `doctor`; a row in the Raycast claims list and a "Simmer Check for Updates" command.
+  All of them render from one `UpdateCommand` in the core, so they cannot disagree about what "up to date" means.
+- **`Simmer.app` checks once a day**, off the main thread, and posts no banner for it — it updates the menu and stops there.
+  Off via the setup window's new checkbox or `SIMMER_NO_UPDATE_CHECK=1`.
+- **`doctor` reports a half-finished install as red.** `Simmer.app` and the CLI are normally the same file, so a version disagreement between them means one was replaced and the other was not — which a package manager that upgrades only the CLI would produce routinely.
+  Being merely out of date stays informational.
+
+### Releasing, and the checks around it
+
+- **A tag is now verified before anything is published.** `.github/workflows/release.yml` runs on a `v*` tag: the whole matrix (by reference to `test.yml`, not a second copy of it), then the one question only a tag can answer — does it name the version the binary reports, and does that version have CHANGELOG notes — and only then creates the GitHub Release from that section.
+  It refuses to overwrite a release that already exists.
+- **`make release-check`** asks the same questions before the tag exists: clean tree, on `main`, version not already tagged, notes present and non-empty, both suites green.
+  It prints the notes and the two commands and tags nothing itself.
+- **Two tests keep the version honest between releases.** The compiled-in version must have a CHANGELOG section — so a bump without notes fails in the pull request that bumps it — and there must always be an `Unreleased` section for the next change to land in.
+- **The one-paste install runs in CI.** A macOS leg executes `bootstrap.sh` against the checkout under review: the clone, `make install`, the write to `/etc/sudoers.d`, the guard registration, and `simmer doctor`'s verdict on the result.
+  Previously CI only asked whether the installer parsed.
+- **`SIMMER_NO_LAUNCH=1`** installs everything except opening the app, for a machine with no login session — CI, or an install over SSH.
+  The notification permission is a click by design, and the installer now says so instead of implying the install is finished.
+- **`docs/RELEASING.md`** — what happens when a pull request merges (nothing: the notes go under `Unreleased` and the version does not move), how a release is cut, and what a version number promises.
+
+### Machine surface
+
+- **New:** `update --json` (`action`, `verdict`, `installed`, `latest`, `update_available`, `provenance`, `update_command`, `app_version`, `app_drift`, `checked_at`, `cached`, `error`, `seamed`), and the `update` and `app_version` rows in `doctor --json`.
+  Nothing existing changed.
+- **New seam:** `SIMMER_FAKE_APPLY=<file>` — `--apply`'s steps are recorded instead of run, which is how the plan is asserted without a build.
+- **New seam:** `SIMMER_FAKE_LATEST=<tag|error>`.
+  A process that is seamed at all and has not been given it reads nothing over the network, which is what keeps both suites hermetic.
+- **New state:** `$XDG_STATE_HOME/simmer/update-check` and `update-check.off`.
+  Neither is a machine surface — `simmer update --json` is how anything else asks.
+
+### Fixed
+
+- **A new subcommand can no longer be unreachable.** The sugar layer's verb list and the parser's subcommand list are two hand-kept lists in two files, and a name missing from the first made a working command report "did not understand the duration".
+  A structural test now derives both from the source and fails if they disagree.
+
 ## 0.2.0 — 2026-08-28
 
 A hardening release.

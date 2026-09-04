@@ -62,6 +62,11 @@ Where a rule can be a test instead of a sentence in a document, make it a test: 
 - CI runs the Swift suites on macOS 14 and 15, assembles the bundle, lints the templates and the installer, and runs the extension's lane twice — once as pure units on Linux, once against the built binary on macOS.
   All of it must be green.
 
+## Releases
+
+You do not need to touch the version.
+It moves once, in a release commit, and `docs/RELEASING.md` is that procedure — including what happens when a pull request merges, which is: the notes go under `## Unreleased` and nothing else changes.
+
 ## What is deliberately not wanted
 
 `docs/ROADMAP.md` closes with a list — a SwiftBar plugin, a daemon, a config file, named presets, force semantics, any paid Apple signature.

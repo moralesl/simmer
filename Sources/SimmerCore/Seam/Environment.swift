@@ -137,6 +137,49 @@ public struct SimmerEnvironment: Sendable {
     /// no SIMMER_NOTIFIER_APP override to honour (CONTRACTS.md § test seam).
     public var notifyTransport: String { env["SIMMER_NOTIFY"] ?? "auto" }
 
+    // MARK: is there a newer release — SIMMER_FAKE_LATEST, SIMMER_NO_UPDATE_CHECK
+
+    /// The only outbound network read simmer has, and the seam over it.
+    ///
+    /// A seamed process with no `SIMMER_FAKE_LATEST` reads nothing: see the
+    /// note on `ReleaseLookup`. That is what makes the acceptance suite
+    /// hermetic by construction rather than by everyone remembering to set one
+    /// more variable.
+    public func makeReleaseSource() -> ReleaseSource {
+        if let fake = env["SIMMER_FAKE_LATEST"] { return FakeReleaseSource(value: fake) }
+        if isSeamed { return SeamedReleaseSource() }
+        return GitHubReleaseSource()
+    }
+
+    /// Where a plan's steps are recorded instead of run.
+    ///
+    /// `simmer update --apply` spawns `git` and `make`, and the contract is
+    /// explicit that anything spawned has a `SIMMER_FAKE_*` — the suite that
+    /// called itself hermetic leaked 222 `caffeinate` processes through exactly
+    /// this gap. With this set, each step is appended to the file and reported
+    /// as having succeeded, so the plan is assertable without a build.
+    public var applyRecordFile: String? {
+        env["SIMMER_FAKE_APPLY"].flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// The home directory, `HOME` first.
+    ///
+    /// `homeDirectoryForCurrentUser` reads the passwd entry and ignores `HOME`,
+    /// which would send a hermetic test looking for the tester's own installer
+    /// checkout — the same reason `skillDir` consults `HOME` first.
+    public var homeDirectory: String {
+        if let home = env["HOME"], !home.isEmpty { return home }
+        return FileManager.default.homeDirectoryForCurrentUser.path
+    }
+
+    /// Ordinary configuration rather than a seam: it turns off the app's own    /// Ordinary configuration rather than a seam: it turns off the app's own
+    /// once-a-day check. `simmer update`, typed by a person who is asking, is
+    /// never suppressed by it — a command that answers "not checking" to the
+    /// question "check" would be the silent-drop failure in a new place.
+    public var backgroundUpdateCheckDisabled: Bool {
+        env["SIMMER_NO_UPDATE_CHECK"] == "1"
+    }
+
     // MARK: the power seam
 
     public func makePowerSystem() -> PowerSystem {

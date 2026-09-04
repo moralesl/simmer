@@ -499,7 +499,7 @@ import Testing
     /// gate is mechanical rather than a promise to remember.
     @Test(arguments: ["claim", "extend", "release", "cap", "status", "budget",
                       "run", "guard", "doctor", "log", "render", "notify-test",
-                      "uninstall"])
+                      "uninstall", "update"])
     func everyDocumentedVerbResolves(_ verb: String) {
         let sim = Sim(); defer { sim.tearDown() }
         let result = sim.run([verb, "--help"])
@@ -516,7 +516,8 @@ import Testing
     /// rather than the four that were wrong: a new command cannot join the
     /// surface without answering the question one way or the other.
     @Test(arguments: ["claim", "extend", "release", "cap", "status", "budget",
-                      "doctor", "log", "render", "notify-test", "uninstall"])
+                      "doctor", "log", "render", "notify-test", "uninstall",
+                      "update"])
     func everyVerbHonoursJSON(_ verb: String) {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["2h", "--owner", "terminal"]) // something for them to describe

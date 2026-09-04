@@ -11,6 +11,7 @@ import { execFile } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { applyArgs, updateArgs } from "./args.ts";
 
 /** One live claim. Mirrors `Present.claimJSON`. */
 export interface SimmerClaim {
@@ -48,6 +49,33 @@ export interface SimmerStatus {
   capped: boolean;
   claims: SimmerClaim[];
   version: string;
+}
+
+/** `simmer update --json`. Mirrors `UpdateCommand.json`. */
+export interface SimmerUpdate {
+  /** `checked` for a plain check; `updated` or `refused` under `--apply`. */
+  action: "checked" | "updated" | "refused";
+  verdict: "current" | "available" | "ahead" | "unknown";
+  installed: string;
+  /** The release tag as published (`v0.3.0`), null when the check could not answer. */
+  latest: string | null;
+  update_available: boolean;
+  /** How this copy was installed, which decides `update_command`. */
+  provenance: "homebrew" | "bundle" | "checkout" | "unknown";
+  update_command: string;
+  app_version: string | null;
+  /** Simmer.app and the CLI are different versions — half an install. */
+  app_drift: boolean;
+  checked_at: number;
+  cached: boolean;
+  error: string | null;
+  seamed: boolean;
+  /** `--apply` only: something was installed. */
+  applied?: boolean;
+  /** `--apply` only: the commands it ran, in order. */
+  steps?: string[];
+  /** `--apply` only: why it could not be done. */
+  apply_error?: string | null;
 }
 
 /** Every mutating command answers with its action, the claim, and the aggregate tail. */
@@ -137,12 +165,13 @@ function spawn(
   bin: string,
   args: string[],
   env?: NodeJS.ProcessEnv,
+  timeout = 10_000,
 ): Promise<Completed> {
   return new Promise((resolve) => {
     execFile(
       bin,
       args,
-      { timeout: 10_000, encoding: "utf8", env },
+      { timeout, encoding: "utf8", env },
       (error, stdout, stderr) => {
         // A refusal is a non-zero exit *with* a JSON body on stdout, so the exit
         // code alone is not enough to build the message from.
@@ -206,6 +235,78 @@ export async function run<T>(
     );
   }
   return parsed as T;
+}
+
+/**
+ * Is there a newer simmer.
+ *
+ * The one command whose non-zero exit is not a refusal: `simmer update` exits 1
+ * when it could not TELL, and prints the same object either way with
+ * `verdict: "unknown"` and the reason in `error`. Routing it through `run()`
+ * would turn "cannot reach GitHub" into a thrown refusal and throw the body
+ * away with it, so the exit code is read as the answer it is.
+ */
+export async function checkUpdate(
+  bin: string,
+  cached = true,
+  env?: NodeJS.ProcessEnv,
+): Promise<SimmerUpdate> {
+  const { code, stdout, stderr } = await spawn(bin, updateArgs(cached), env);
+  let parsed: SimmerUpdate | undefined;
+  try {
+    parsed = JSON.parse(stdout) as SimmerUpdate;
+  } catch {
+    parsed = undefined;
+  }
+  if (parsed?.action === "checked") return parsed;
+  // Anything else IS a refusal — an unknown flag, a binary too old to have the
+  // verb at all — and simmer's own sentence is the one to show.
+  throw new SimmerRefusal(
+    (parsed as { error?: string } | undefined)?.error?.trim() ||
+      stderr.trim() ||
+      `simmer exited ${code}`,
+  );
+}
+
+/**
+ * Install the update, rather than printing its command.
+ *
+ * Takes as long as a build — a minute or two — so a caller has to say
+ * something to the person waiting. It runs the same command `simmer update`
+ * would have printed, needs no password, and never pipes a script from the
+ * internet into a shell (CONTRACTS.md § Surface guarantees).
+ *
+ * A refusal here is a real refusal — someone's own checkout, or no checkout to
+ * build from — and carries simmer's own sentence.
+ */
+export async function applyUpdate(
+  bin: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<SimmerUpdate> {
+  // Longer than `spawn`'s default 10s: this compiles. The CLI has no timeout
+  // of its own, so the ceiling here is the only one.
+  const { code, stdout, stderr } = await spawn(bin, applyArgs(), env, 15 * 60_000);
+  let parsed: SimmerUpdate | undefined;
+  try {
+    parsed = JSON.parse(stdout) as SimmerUpdate;
+  } catch {
+    parsed = undefined;
+  }
+  if (parsed?.action === "updated" || parsed?.action === "checked") return parsed;
+
+  // A refusal simmer chose to make carries its own sentence.
+  const refusal = parsed?.apply_error?.trim() || parsed?.error?.trim();
+  if (refusal) throw new SimmerRefusal(refusal);
+  if (stderr.trim()) throw new SimmerRefusal(stderr.trim());
+
+  // Output this side could not understand. Says so, and shows it: a message
+  // of "simmer exited 0" names neither what was asked nor what came back,
+  // which makes a failure on a machine you cannot reach undiagnosable — and
+  // that is exactly where this one turned up.
+  throw new SimmerRefusal(
+    `simmer exited ${code} with output this extension could not parse: ` +
+      `${JSON.stringify(stdout.slice(0, 300))}`,
+  );
 }
 
 /**

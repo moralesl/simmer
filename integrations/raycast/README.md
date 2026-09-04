@@ -1,6 +1,6 @@
 # simmer for Raycast
 
-Six commands in the root search, over the same contract everything else reads.
+Seven commands in the root search, over the same contract everything else reads.
 
 | Command | What it does |
 |---|---|
@@ -10,6 +10,7 @@ Six commands in the root search, over the same contract everything else reads.
 | **Simmer Longer** | adds to *your* deadline, counted from your current one |
 | **Simmer Down** | hands Raycast's claim back |
 | **Nothing Past** | the evening ceiling no claim may cross, or lift it |
+| **Simmer Check for Updates** | asks GitHub which release is newest, and either installs it (⏎) or hands you the command |
 
 Typing "simmer" shows the state without opening anything:
 
@@ -81,6 +82,11 @@ It does **not** run `ray lint` or `ray build`: the `ray` CLI is macOS-only and e
   A machine without simmer gets a calm empty state, never a red error screen.
 - **Owner.** Every mutation is `--owner raycast`, which is a human owner name in `SimmerEnvironment.isHumanOwnerName` — that is what grants this surface the authority to release everything and to move the ceiling.
   An agent must never borrow it (`AGENTS.md`).
+- **The only command that opens a socket** is **Check for Updates**, and only when you run it.
+  The claims list reads `simmer update --cached`, which answers from the record `Simmer.app` refreshes once a day and makes no request — so opening a launcher view never waits on GitHub.
+- **Installing runs `simmer update --apply`**, which is the same command the view hands out: no password, and never a script piped from the internet into a shell.
+  It compiles, so it takes a minute or two behind an animated toast, and Simmer.app quits and comes back while it happens.
+  In a developer's own checkout simmer refuses and says so — that is a repository, not machinery.
 - **No polling.** The countdown ticks locally from `until`; the list re-reads only when `$STATE/claims` or `$STATE/cap` changes, which is the same watch `LedgerWatcher` arms.
 - **The icon** is `assets/simmer.png`, the 512px face out of the shared `assets/icon.icns`.
   To regenerate: `iconutil -c iconset ../../assets/icon.icns -o /tmp/simmer.iconset` and copy `icon_512x512.png`.

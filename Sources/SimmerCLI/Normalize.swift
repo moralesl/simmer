@@ -13,6 +13,7 @@ enum Normalize {
     static let verbs: Set<String> = [
         "claim", "extend", "release", "cap", "status", "budget", "run",
         "guard", "doctor", "log", "render", "notify-test", "uninstall",
+        "update",
     ]
 
     static func arguments(_ args: [String]) -> [String] {

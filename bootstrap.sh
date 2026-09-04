@@ -37,6 +37,12 @@ DIR="${SIMMER_DIR:-$HOME/.local/share/simmer}"
 # `#includedir` ignores any filename containing a dot, so a username with one
 # cannot have a file here; that falls back to the shared name, which is the
 # only thing sudo will read for them.
+# A headless install: everything except opening the app. For a machine with no
+# session to open a window in — CI, or an install over SSH — where `open` either
+# fails or launches into nothing. The notification permission is a click by
+# design (PLATFORM-FACTS.md), so this is the one step nothing can stand in for,
+# and the script says so rather than pretending the install is complete.
+NO_LAUNCH="${SIMMER_NO_LAUNCH:-}"
 SUDOERS_USER=$(id -un)
 case "$SUDOERS_USER" in
   *[!A-Za-z0-9_-]*) SUDOERS=/etc/sudoers.d/simmer ;;
@@ -242,12 +248,28 @@ BYHAND
 # banner carrying simmer's own pot icon (PLATFORM-FACTS.md). This launch IS
 # the onboarding: the banner is on screen when the next paragraph says Allow.
 launch_app() {
+  if [ -n "$NO_LAUNCH" ]; then
+    step "not launching Simmer (SIMMER_NO_LAUNCH)"
+    echo "  Everything else is installed. The menu bar and the notification"
+    echo "  permission need a login session: run \`open -a Simmer\` in one."
+    return 0
+  fi
   step "launching Simmer"
   open "$HOME/Applications/Simmer.app"
 }
 
 epilogue() {
-  cat <<EOF
+  if [ -n "$NO_LAUNCH" ]; then
+    cat <<EOF
+
+▸ One thing left, and it needs a session
+
+  \`open -a Simmer\` where someone is logged in, then click **Allow** on the
+  notification banner. Until then the CLI and the guard work as documented and
+  there are no banners — honestly, and \`simmer notify-test\` says so.
+EOF
+  else
+    cat <<EOF
 
 ▸ One thing left, and it is a click
 
@@ -257,6 +279,9 @@ epilogue() {
 
   Nothing appeared? Notifications are optional — the menu bar and the CLI
   always tell the truth. \`simmer notify-test\` shows whether they can arrive.
+EOF
+  fi
+  cat <<EOF
 
 ▸ Try it
 
@@ -269,7 +294,7 @@ epilogue() {
     export PATH="\$HOME/.local/bin:\$PATH"
 
   The checkout lives at $DIR
-  Update later with:  curl -fsSL ${REPO}/raw/main/bootstrap.sh | bash
+  Is it current?      simmer update      (it prints the command for THIS install)
   Remove it with:     simmer uninstall
 EOF
 }
