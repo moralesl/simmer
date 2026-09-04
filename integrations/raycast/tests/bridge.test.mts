@@ -10,11 +10,11 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { capArgs, claimArgs, extendArgs, releaseArgs, statusArgs, updateArgs } from "../src/args.ts";
-import { checkUpdate, resolveBinary, run, runText, SimmerRefusal } from "../src/simmer.ts";
+import { applyArgs, capArgs, claimArgs, extendArgs, releaseArgs, statusArgs, updateArgs } from "../src/args.ts";
+import { applyUpdate, checkUpdate, resolveBinary, run, runText, SimmerRefusal } from "../src/simmer.ts";
 import type { SimmerMutation, SimmerStatus } from "../src/simmer.ts";
 
 const bin = resolveBinary();
@@ -305,4 +305,54 @@ test("updateArgs asks for JSON, and cached by default", () => {
   assert.deepEqual(updateArgs(false), ["update", "--json"]);
   // Read-only: nothing is claimed, so nothing is owned.
   assert.ok(!updateArgs().includes("--owner"));
+});
+
+test("applyArgs asks for JSON and never for a cached answer", () => {
+  assert.deepEqual(applyArgs(), ["update", "--apply", "--json"]);
+  // simmer refuses --apply with --cached rather than resolving it, so this
+  // builder must never be able to produce the pair.
+  assert.ok(!applyArgs().includes("--cached"));
+});
+
+/**
+ * The install action, against the real binary with every step recorded rather
+ * than run. Asserts the two things the extension depends on: that a plan comes
+ * back as a result rather than a thrown refusal, and that nothing executed is a
+ * script piped from the internet.
+ */
+test("applyUpdate returns the plan it ran", { skip }, async () => {
+  const home = mkdtempSync(join(root, "apply-home-"));
+  mkdirSync(join(home, ".local/share/simmer/.git"), { recursive: true });
+  writeFileSync(join(home, ".local/share/simmer/Makefile"), "all:\n");
+  const log = join(home, "apply.log");
+  writeFileSync(log, "");
+
+  const done = await applyUpdate(
+    bin!,
+    seam({
+      HOME: home,
+      SIMMER_FAKE_LATEST: "v9.9.9",
+      SIMMER_FAKE_APPLY: log,
+      SIMMER_BIN: join(home, "Applications/Simmer.app/Contents/MacOS/simmer"),
+    }),
+  );
+
+  assert.equal(done.action, "updated");
+  assert.equal(done.applied, true);
+  assert.equal(done.steps?.length, 3);
+
+  const ran = readFileSync(log, "utf8");
+  assert.ok(!ran.includes("curl"), ran);
+  assert.ok(!ran.includes("bash"), ran);
+  assert.match(ran, /checkout --quiet v9\.9\.9/);
+});
+
+test("a refusal to install arrives as simmer's own sentence", { skip }, async () => {
+  // No SIMMER_BIN, so the binary places itself in its own checkout — which
+  // simmer refuses to move onto a tag.
+  await assert.rejects(
+    () => applyUpdate(bin!, seam({ SIMMER_FAKE_LATEST: "v9.9.9" })),
+    (error: unknown) =>
+      error instanceof SimmerRefusal && /checkout/.test((error as Error).message),
+  );
 });

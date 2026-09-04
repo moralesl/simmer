@@ -143,3 +143,128 @@ import Testing
         #expect(result.code == 0, "\(result.combined)")
     }
 }
+
+/// `--apply` through the binary. Every step is recorded rather than run
+/// (`SIMMER_FAKE_APPLY`), which is what lets the suite assert the plan a real
+/// install would execute without building or installing anything.
+@Suite struct UpdateApplyTests {
+    private func object(_ text: String) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] ?? [:]
+    }
+
+    /// A bundle install with the installer's checkout on disk — the colleague
+    /// case, and the only one where nobody has a terminal open.
+    private func bundleInstall(_ sim: Sim) -> [String: String] {
+        let checkout = sim.root.appendingPathComponent(".local/share/simmer")
+        try? FileManager.default.createDirectory(
+            at: checkout.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        try? "all:\n".write(to: checkout.appendingPathComponent("Makefile"),
+                            atomically: true, encoding: .utf8)
+        return ["SIMMER_BIN": sim.root
+            .appendingPathComponent("Applications/Simmer.app/Contents/MacOS/simmer").path]
+    }
+
+    @Test func applyRunsThePlanAndSaysWhatItRan() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+
+        #expect(result.code == 0, "\(result.combined)")
+        let json = object(result.out)
+        #expect(json["action"] as? String == "updated")
+        #expect(json["applied"] as? Bool == true)
+        #expect((json["steps"] as? [String])?.count == 3)
+
+        let ran = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+        let lines = ran.split(separator: "\n").map(String.init)
+        #expect(lines.count == 3, "recorded: \(lines)")
+        #expect(lines[0].contains("fetch --tags"))
+        #expect(lines[1].contains("checkout --quiet v9.9.9"))
+        #expect(lines[2].contains("install NOTES=0"))
+    }
+
+    /// The property that makes this something simmer can honestly offer: the
+    /// printed command for a bundle install pipes a script from the internet
+    /// into bash, and what actually RUNS never does.
+    @Test func whatRunsIsNeverAScriptPipedFromTheNetwork() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+
+        // The command it would have PRINTED does pipe curl into bash…
+        #expect((object(result.out)["update_command"] as? String)?.contains("curl") == true)
+        // …and nothing it RAN does.
+        let ran = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+        #expect(!ran.contains("curl"))
+        #expect(!ran.contains("bash"))
+        #expect(!ran.isEmpty, "nothing was recorded at all")
+    }
+
+    /// Nothing to install is exit 0. Being current is the good outcome, and a
+    /// caller that treats it as a failure would retry forever.
+    @Test func applyingWhenCurrentDoesNothingAndSucceeds() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let version = sim.run(["--version"]).out
+            .replacingOccurrences(of: "simmer ", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v\(version)"
+
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+        #expect(result.code == 0)
+        #expect(object(result.out)["applied"] as? Bool == false)
+        #expect(object(result.out)["action"] as? String == "checked")
+    }
+
+    /// A working repository is not machinery: it may hold local commits, an
+    /// unfinished branch or a stash.
+    @Test func applyRefusesInSomebodysOwnCheckout() {
+        let sim = Sim(); defer { sim.tearDown() }
+        // The suite's own binary runs from a checkout, so no fixture is needed
+        // — just no SIMMER_BIN pointing at a bundle.
+        let result = sim.run(["update", "--apply", "--json"],
+                             env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+
+        #expect(result.code == 1)
+        let json = object(result.out)
+        #expect(json["action"] as? String == "refused")
+        #expect(json["applied"] as? Bool == false)
+        #expect((json["apply_error"] as? String)?.isEmpty == false)
+    }
+
+    /// Honoured or refused, never accepted and dropped. Applying what a cached
+    /// answer said could install a release that has since been pulled.
+    @Test func applyAndCachedTogetherAreRefused() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["update", "--apply", "--cached"],
+                             env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+        #expect(result.code == 1)
+        #expect(result.err.contains("--cached"), "\(result.err)")
+    }
+
+    /// Not knowing whether there is an update is not a licence to install one.
+    @Test func applyRefusesWhenTheCheckCouldNotBeMade() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "error"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        let result = sim.run(["update", "--apply"], env: env)
+
+        #expect(result.code == 1)
+        #expect((try? String(contentsOf: log, encoding: .utf8)) == "",
+                "something was run despite not knowing whether to")
+    }
+}

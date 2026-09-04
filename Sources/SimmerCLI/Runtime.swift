@@ -62,6 +62,55 @@ enum Runtime {
         return argv0
     }
 
+    /// Run one step of an update plan, or record it.
+    ///
+    /// The only place this binary spawns anything other than `pmset` and a
+    /// `run` command, and it is behind `SIMMER_FAKE_APPLY` for the reason
+    /// CONTRACTS.md gives: every side effect outside the process has a seam,
+    /// not merely the ones that are awkward to test.
+    ///
+    /// Output is captured rather than inherited. `make install` prints a
+    /// dozen lines nobody asked for here, and the part worth showing when it
+    /// fails is the tail of stderr, which is what the failure sentence carries.
+    static func execute(_ step: SimmerCore.UpdateCommand.ApplyStep,
+                        recordTo file: String?) -> (ok: Bool, detail: String) {
+        if let file {
+            let line = step.described + "\n"
+            if let handle = FileHandle(forWritingAtPath: file) {
+                handle.seekToEndOfFile()
+                handle.write(Data(line.utf8))
+                try? handle.close()
+            } else {
+                try? line.write(toFile: file, atomically: true, encoding: .utf8)
+            }
+            return (true, "recorded")
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: step.executable)
+        process.arguments = step.arguments
+        if let cwd = step.workingDirectory {
+            process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        }
+        let errPipe = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = errPipe
+        process.standardInput = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            return (false, error.localizedDescription)
+        }
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let text = String(decoding: errData, as: UTF8.self)
+                .split(separator: "\n").suffix(3).joined(separator: " · ")
+            return (false, text.isEmpty ? "exited \(process.terminationStatus)" : text)
+        }
+        return (true, "")
+    }
+
     /// One context per invocation. Migration from the format=1 lease happens
     /// here, at the entry point, exactly once per run (CONTRACTS.md § State).
     static func context(ownerFlag: String?, interactive: Bool = true) -> Context {

@@ -11,7 +11,7 @@ import { execFile } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { updateArgs } from "./args.ts";
+import { applyArgs, updateArgs } from "./args.ts";
 
 /** One live claim. Mirrors `Present.claimJSON`. */
 export interface SimmerClaim {
@@ -53,7 +53,8 @@ export interface SimmerStatus {
 
 /** `simmer update --json`. Mirrors `UpdateCommand.json`. */
 export interface SimmerUpdate {
-  action: "checked";
+  /** `checked` for a plain check; `updated` or `refused` under `--apply`. */
+  action: "checked" | "updated" | "refused";
   verdict: "current" | "available" | "ahead" | "unknown";
   installed: string;
   /** The release tag as published (`v0.3.0`), null when the check could not answer. */
@@ -69,6 +70,12 @@ export interface SimmerUpdate {
   cached: boolean;
   error: string | null;
   seamed: boolean;
+  /** `--apply` only: something was installed. */
+  applied?: boolean;
+  /** `--apply` only: the commands it ran, in order. */
+  steps?: string[];
+  /** `--apply` only: why it could not be done. */
+  apply_error?: string | null;
 }
 
 /** Every mutating command answers with its action, the claim, and the aggregate tail. */
@@ -158,12 +165,13 @@ function spawn(
   bin: string,
   args: string[],
   env?: NodeJS.ProcessEnv,
+  timeout = 10_000,
 ): Promise<Completed> {
   return new Promise((resolve) => {
     execFile(
       bin,
       args,
-      { timeout: 10_000, encoding: "utf8", env },
+      { timeout, encoding: "utf8", env },
       (error, stdout, stderr) => {
         // A refusal is a non-zero exit *with* a JSON body on stdout, so the exit
         // code alone is not enough to build the message from.
@@ -255,6 +263,39 @@ export async function checkUpdate(
   // verb at all — and simmer's own sentence is the one to show.
   throw new SimmerRefusal(
     (parsed as { error?: string } | undefined)?.error?.trim() ||
+      stderr.trim() ||
+      `simmer exited ${code}`,
+  );
+}
+
+/**
+ * Install the update, rather than printing its command.
+ *
+ * Takes as long as a build — a minute or two — so a caller has to say
+ * something to the person waiting. It runs the same command `simmer update`
+ * would have printed, needs no password, and never pipes a script from the
+ * internet into a shell (CONTRACTS.md § Surface guarantees).
+ *
+ * A refusal here is a real refusal — someone's own checkout, or no checkout to
+ * build from — and carries simmer's own sentence.
+ */
+export async function applyUpdate(
+  bin: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<SimmerUpdate> {
+  // Longer than `spawn`'s default 10s: this compiles. The CLI has no timeout
+  // of its own, so the ceiling here is the only one.
+  const { code, stdout, stderr } = await spawn(bin, applyArgs(), env, 15 * 60_000);
+  let parsed: SimmerUpdate | undefined;
+  try {
+    parsed = JSON.parse(stdout) as SimmerUpdate;
+  } catch {
+    parsed = undefined;
+  }
+  if (parsed?.action === "updated" || parsed?.action === "checked") return parsed;
+  throw new SimmerRefusal(
+    parsed?.apply_error?.trim() ||
+      parsed?.error?.trim() ||
       stderr.trim() ||
       `simmer exited ${code}`,
   );

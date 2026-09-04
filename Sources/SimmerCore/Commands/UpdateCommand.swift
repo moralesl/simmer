@@ -144,6 +144,184 @@ public enum UpdateCommand {
         return report
     }
 
+    // MARK: applying it
+    //
+    // `--apply` runs the update instead of printing it, for the person who has
+    // no terminal to paste into — which is most of the people the menu bar
+    // exists for. Three properties make it something this tool can honestly
+    // offer:
+    //
+    //   1. **It never pipes the network into a shell.** The printed command for
+    //      a bundle install is `curl … | bash`, and an app running THAT on
+    //      someone's behalf is a different kind of thing entirely. The same
+    //      install already has the installer's checkout on disk, so the plan
+    //      updates that and runs `make install` — local files, and the same
+    //      recipe `bootstrap.sh` would have run.
+    //   2. **It needs no root.** `make install` never touches sudo; the
+    //      privileged rule is installed once, by a human, and an update does
+    //      not renew it. So "simmer never gives itself root" is untouched.
+    //   3. **It refuses rather than guesses.** A developer's own checkout is
+    //      not machinery to be moved onto a tag, and an install this cannot
+    //      place is not one to run commands in.
+
+    /// One thing to run. Held as data so the decision is testable without
+    /// anything being executed — the seam is in the runner, not in here.
+    public struct ApplyStep: Sendable, Equatable {
+        public let executable: String
+        public let arguments: [String]
+        public let workingDirectory: String?
+
+        public init(executable: String, arguments: [String], workingDirectory: String? = nil) {
+            self.executable = executable
+            self.arguments = arguments
+            self.workingDirectory = workingDirectory
+        }
+
+        /// What a person reads in the output and in the log.
+        public var described: String {
+            ([URL(fileURLWithPath: executable).lastPathComponent] + arguments)
+                .joined(separator: " ")
+        }
+    }
+
+    public struct ApplyPlan: Sendable, Equatable {
+        public let steps: [ApplyStep]
+        /// The release this plan installs, for the sentence at the end.
+        public let target: String
+        /// The bundle to reopen afterwards — `make install` quits the running
+        /// app before replacing it, so something has to bring it back.
+        public let reopenBundle: String?
+    }
+
+    public enum ApplyDecision: Sendable, Equatable {
+        case run(ApplyPlan)
+        /// Nothing to install. Exit 0: being current is the good outcome.
+        case nothingToDo(String)
+        /// This install cannot be updated in place, and the reason names the
+        /// way that works instead. Exit 1.
+        case refused(String)
+    }
+
+    /// Where `bootstrap.sh` puts the checkout it installs from. Machinery, not
+    /// a project anyone works in — which is exactly why moving it onto a tag is
+    /// fair game, and why a developer's own checkout is not.
+    public static let installerCheckout = ".local/share/simmer"
+
+    public static func applyPlan(for report: Report,
+                                 home: String,
+                                 exists: (String) -> Bool) -> ApplyDecision {
+        switch report.verdict {
+        case .current:
+            return .nothingToDo("simmer \(report.installed) is already the newest release")
+        case .ahead:
+            return .nothingToDo(
+                "simmer \(report.installed) is ahead of the newest release (\(report.latestDisplay))")
+        case .unknown:
+            return .refused("cannot tell whether there is anything to install — \(report.error)")
+        case .available:
+            break
+        }
+
+        switch report.install.kind {
+        case .homebrew:
+            // Homebrew owns this copy, so `brew` is the only correct verb —
+            // and the formula is what knows how to build it.
+            guard let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].first(where: exists)
+            else {
+                return .refused("this is a Homebrew install but brew is not where it usually is — run: \(report.install.updateCommand)")
+            }
+            return .run(ApplyPlan(
+                steps: [ApplyStep(executable: brew, arguments: ["upgrade", "simmer"])],
+                target: report.latestDisplay,
+                reopenBundle: report.install.bundle))
+
+        case .checkout:
+            // Somebody's working repository. It may hold local commits, an
+            // unfinished branch, or a stash, and `git checkout v0.3.0` in it
+            // would be simmer rearranging someone's desk. The person running
+            // from a checkout has a terminal by definition.
+            return .refused(
+                "this is your own checkout — update it yourself: \(report.install.updateCommand)")
+
+        case .bundle, .unknown:
+            let checkout = URL(fileURLWithPath: home)
+                .appendingPathComponent(installerCheckout).path
+            guard exists(checkout + "/.git"), exists(checkout + "/Makefile") else {
+                return .refused(
+                    "no installer checkout at ~/\(installerCheckout), so there is nothing here to build from — run: \(report.install.updateCommand)")
+            }
+            // The tag, not a branch: this checkout tracks releases, which is
+            // what `bootstrap.sh` left it on. `--tags --force` because a tag
+            // can legitimately have moved on the remote and a stale local one
+            // would silently install the wrong thing.
+            return .run(ApplyPlan(
+                steps: [
+                    ApplyStep(executable: "/usr/bin/git",
+                              arguments: ["-C", checkout, "fetch", "--tags", "--force", "--quiet"]),
+                    ApplyStep(executable: "/usr/bin/git",
+                              arguments: ["-C", checkout, "checkout", "--quiet", report.latest]),
+                    // NOTES=0: the epilogue tells a reader to do things this
+                    // path has already done or is about to do.
+                    ApplyStep(executable: "/usr/bin/make",
+                              arguments: ["-C", checkout, "install", "NOTES=0"]),
+                ],
+                target: report.latestDisplay,
+                reopenBundle: report.install.bundle))
+        }
+    }
+
+    /// What the plan says it will do, before it does it.
+    public static func applyPreamble(_ plan: ApplyPlan, installed: String) -> [String] {
+        ["▸ updating simmer \(installed) → \(plan.target)"]
+            + plan.steps.map { "   \($0.described)" }
+    }
+
+    public static func applied(_ plan: ApplyPlan, reopened: Bool) -> Outcome {
+        var outcome = Outcome()
+        outcome.stdout = ["✅ simmer \(plan.target) installed"
+            + (reopened ? " · Simmer.app relaunched" : "")]
+        outcome.notifications = [NotificationRequest(
+            title: "simmer \(plan.target) installed",
+            subtitle: reopened ? "Simmer.app was relaunched" : "", body: "", sound: false)]
+        return outcome
+    }
+
+    /// A step failed. Names which one, because "the update failed" sends a
+    /// person to a log they do not know the location of.
+    public static func applyFailed(step: ApplyStep, detail: String) -> Outcome {
+        var outcome = Outcome.failure("\(step.described) failed — \(detail)")
+        outcome.notifications = [NotificationRequest(
+            title: "The simmer update did not finish",
+            subtitle: step.described, body: detail, sound: false)]
+        return outcome
+    }
+
+    public static func applyJSON(_ report: Report, seamed: Bool,
+                                 applied: Bool, plan: ApplyPlan?,
+                                 error: String?) -> JSONValue {
+        var fields: [(String, JSONValue)] = []
+        for (key, value) in objectFields(json(report, seamed: seamed)) {
+            fields.append((key, value))
+        }
+        // Overwrite `action`: this call did something, or refused to.
+        fields = fields.map { key, value in
+            key == "action"
+                ? (key, .string(applied ? "updated" : (error == nil ? "checked" : "refused")))
+                : (key, value)
+        }
+        fields.append(("applied", .bool(applied)))
+        fields.append(("steps", .array((plan?.steps ?? []).map { .string($0.described) })))
+        if let error { fields.append(("apply_error", .string(error))) }
+        return .object(fields)
+    }
+
+    /// `JSONValue` is an enum, and `applyJSON` needs the check's fields plus a
+    /// few of its own rather than a second hand-kept copy of the list.
+    private static func objectFields(_ value: JSONValue) -> [(String, JSONValue)] {
+        if case .object(let fields) = value { return fields }
+        return []
+    }
+
     // MARK: what each surface shows
 
     /// The terminal answer. Exit 0 whenever the check completed — a newer
@@ -229,6 +407,30 @@ public enum UpdateCommand {
             return NotificationRequest(
                 title: "Could not check for updates",
                 subtitle: "", body: report.error, sound: false)
+        }
+    }
+
+    /// The menu bar's footer: what you are running, and what is out there.
+    ///
+    /// Always present, unlike the update row above it. A menu that shows the
+    /// installed version and says nothing about the newest one answers half of
+    /// the only question anyone asks it, and the missing half is the half you
+    /// cannot get at without a terminal.
+    public static func footerLine(_ report: Report) -> String {
+        switch report.verdict {
+        case .current:
+            return "simmer \(report.installed) · newest"
+        case .available:
+            return "simmer \(report.installed) · newest is \(report.latestDisplay)"
+        case .ahead:
+            return "simmer \(report.installed) · ahead of \(report.latestDisplay)"
+        case .unknown:
+            // Deliberately not the error text: this line is four words wide in
+            // a menu, and "not checked" is the actionable half of every reason
+            // the check could fail.
+            return report.checkedAt == 0
+                ? "simmer \(report.installed) · not checked yet"
+                : "simmer \(report.installed) · last check failed"
         }
     }
 

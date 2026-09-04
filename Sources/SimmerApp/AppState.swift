@@ -126,7 +126,52 @@ final class AppState {
         }
     }
 
-    // MARK: the in-process assertion — belt and braces for idle sleep
+    /// Is there a plan for this install, or only a command to copy.
+    func canApplyUpdate(_ report: UpdateCommand.Report) -> Bool {
+        if case .run = UpdateCommand.applyPlan(
+            for: report, home: environment.homeDirectory,
+            exists: { FileManager.default.fileExists(atPath: $0) }) { return true }
+        return false
+    }
+
+    /// Hand the update to the CLI and get out of its way.
+    ///
+    /// The work belongs in `simmer update --apply` — one implementation, one
+    /// set of tests, the same thing a terminal runs. This process cannot do it
+    /// itself for a more basic reason: `make install` quits Simmer.app before
+    /// replacing the bundle, so whatever is driving the update has to outlive
+    /// being quit. A child process does; this one does not.
+    ///
+    /// Nothing is waited for. The child posts its own banner through the spool
+    /// when it finishes, and because the spool is a file rather than a
+    /// connection, that banner survives the app being replaced and relaunched
+    /// in between — which is the whole reason the spool exists.
+    func applyUpdate() {
+        guard !seamActive else { return }
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: environment.binPath)
+        child.arguments = ["update", "--apply", "--owner", "menubar"]
+        child.standardOutput = FileHandle.nullDevice
+        child.standardError = FileHandle.nullDevice
+        child.standardInput = FileHandle.nullDevice
+        do {
+            try child.run()
+        } catch {
+            Notifier.shared.post([NotificationRequest(
+                title: "Could not start the update",
+                subtitle: "", body: error.localizedDescription, sound: false)])
+            return
+        }
+        // Said now, because a compile takes a minute or two and the next thing
+        // that visibly happens is the menu bar disappearing as the bundle is
+        // replaced. Without this line that reads as a crash.
+        Notifier.shared.post([NotificationRequest(
+            title: "Updating simmer…",
+            subtitle: "Simmer.app will quit and come back",
+            body: "", sound: false)])
+    }
+
+    // MARK: the in-process assertion — belt and braces for idle sleep    // MARK: the in-process assertion — belt and braces for idle sleep
     //
     // An IOKit assertion cannot hold a closed lid (PLATFORM-FACTS.md closed
     // that negatively); pmset -a disablesleep is the mechanism. This is only

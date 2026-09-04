@@ -77,9 +77,12 @@ CHECKING ON IT
                              banners come from Simmer.app or not at all
   simmer render swiftbar     draw a launcher surface (also: raycast)
   simmer update              is there a newer simmer? It shows the command
-                             that installs it — it never installs anything.
-                             --cached reports the last check without asking
-                             the network (which is what the menu bar reads)
+                             that installs it, for you to run
+  simmer update --apply      ...or installs it: same command, run for you.
+                             No password. Refuses in your own checkout — that
+                             is your repository, not simmer's machinery
+  simmer update --cached     the last check, without asking the network
+                             (which is what the menu bar and doctor read)
   simmer --version
 
 REMOVING IT
@@ -109,6 +112,8 @@ EXIT CODES ARE API
   doctor         0 healthy · 1 something red
   update         0 the check completed — read update_available for the answer ·
                  1 could not check. A newer version existing is not a failure.
+  update --apply 0 nothing left to do (installed, or already current) ·
+                 1 could not be done — the reason names the way that works
 
 https://github.com/moralesl/simmer
 """

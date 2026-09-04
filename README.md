@@ -78,9 +78,14 @@ simmer --help               # the rest, including the exit-code API
 ### Staying up to date
 
 `simmer update` compares what you are running against the newest published release and prints the command that installs it — `brew upgrade simmer`, `make install`, or the one-paste line above, depending on how this copy got here.
-It never installs anything itself: an update replaces a running app and the binary the background guard points at, and it can be asked for while a claim is live, so the command is yours to run when it suits.
+
+**`simmer update --apply` runs that command for you**, and the menu bar offers the same thing as **Install it now** — because most of the people the menu bar exists for do not have a terminal open.
+It asks for no password, and it never pipes a script from the internet into a shell: the one-paste install already leaves its checkout at `~/.local/share/simmer`, so an update fetches the new tag there and runs `make install`.
+Simmer.app quits and comes back; a claim you are holding survives it.
+In your own checkout it refuses and tells you to `git pull && make install` — that is your repository, not simmer's machinery.
 
 `Simmer.app` makes the same check once a day and puts one row in the menu bar when there is something newer — no banner, no nagging.
+The bottom of the menu always says which version you are on and which is newest.
 That is a single `HEAD` request to `github.com`, carrying a `simmer/<version>` User-Agent and nothing else: no identifier, no machine detail, no telemetry, ever.
 It is also the only outbound request simmer makes, and you can turn it off in the setup window or with `SIMMER_NO_UPDATE_CHECK=1`.
 

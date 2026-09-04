@@ -21,6 +21,11 @@ public enum MenuAction: Equatable, Sendable {
     case openSetup
     /// Ask now, rather than waiting for the app's once-a-day look.
     case checkForUpdates
+    /// Install it, for the person who has no terminal to paste into — which is
+    /// most of the people this menu exists for. Offered only where
+    /// `UpdateCommand.applyPlan` has a plan: a developer's own checkout is not
+    /// machinery for simmer to move onto a tag.
+    case applyUpdate
     case quit
 }
 
@@ -76,13 +81,23 @@ public struct MenuInstall: Sendable, Equatable {
     public var updateLine: String?
     /// What updating this copy would take, for the row to hand out.
     public var updateCommand: String
+    /// `UpdateCommand.footerLine` — the version, and what is newest, in one
+    /// line. Falls back to the bare version when nothing has been checked at
+    /// all, so the footer is never empty.
+    public var versionLine: String?
+    /// There is a plan to run — so the menu may offer to run it rather than
+    /// only hand over a command that needs a terminal.
+    public var canApplyUpdate: Bool
 
     public init(version: String, canHandBackUnattended: Bool,
-                updateLine: String? = nil, updateCommand: String = "") {
+                updateLine: String? = nil, updateCommand: String = "",
+                versionLine: String? = nil, canApplyUpdate: Bool = false) {
         self.version = version
         self.canHandBackUnattended = canHandBackUnattended
         self.updateLine = updateLine
         self.updateCommand = updateCommand
+        self.versionLine = versionLine
+        self.canApplyUpdate = canApplyUpdate
     }
 }
 
@@ -100,10 +115,21 @@ public enum MenuModel {
         // because the useful thing to do with it is to take the command away
         // to a terminal.
         if let line = install.updateLine {
+            var children: [MenuItemModel] = []
+            if install.canApplyUpdate {
+                // First, and named as the action it is. It runs the same
+                // command the row hands out — no root, no download piped into
+                // a shell — and it is the only path here that does not require
+                // a terminal.
+                children.append(MenuItemModel(title: "Install it now",
+                                              symbol: "arrow.down.circle",
+                                              action: .applyUpdate))
+                children.append(.separator)
+            }
+            children.append(MenuItemModel(title: install.updateCommand,
+                                          action: .copyCLI(install.updateCommand)))
             items.append(MenuItemModel(
-                title: line, symbol: "arrow.down.circle.fill",
-                children: [MenuItemModel(title: install.updateCommand,
-                                         action: .copyCLI(install.updateCommand))]))
+                title: line, symbol: "arrow.down.circle.fill", children: children))
             items.append(.separator)
         }
 
@@ -184,7 +210,10 @@ public enum MenuModel {
                 symbol: "exclamationmark.triangle.fill",
                 action: .openSetup, isProminent: true))
         }
-        items.append(MenuItemModel(title: "simmer \(install.version)"))
+        // The one line that answers both halves of "am I current": what is
+        // installed, and what is out there. `simmer update` says it in a
+        // terminal; this is the same sentence for someone who has not got one.
+        items.append(MenuItemModel(title: install.versionLine ?? "simmer \(install.version)"))
         return items
     }
 

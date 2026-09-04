@@ -12,8 +12,13 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   The instruction follows how the copy got here — `brew upgrade simmer` for a Homebrew install, `git pull && make install` for a checkout, the one-paste installer otherwise — because "what is the newest release" has one answer and "how do you update" does not.
   `--json` carries `verdict`, `update_available`, `provenance`, `update_command` and `app_drift`; exit 0 means the check completed, 1 means it could not be made.
   A newer release existing is never a failure.
-- **The same answer in three more places.** A conditional row in the menu bar with the command to copy, plus a permanent "Check for Updates…" item; an informational row in `doctor`; a row in the Raycast claims list and a "Simmer Check for Updates" command.
-  All four render from one `UpdateCommand` in the core, so they cannot disagree about what "up to date" means.
+- **`simmer update --apply` installs it**, for the person with no terminal to paste into — which is most of the people the menu bar exists for.
+  It runs the command it would have printed and nothing else: no password, and never a script piped from the internet into a shell.
+  A bundle install has the one-paste installer's checkout at `~/.local/share/simmer`, so the plan fetches the new tag there and runs `make install`; Homebrew gets `brew upgrade simmer`.
+  It refuses in a developer's own checkout — that may hold local commits, an unfinished branch or a stash — and refuses when it cannot tell whether there is anything to install.
+  `applied`, `steps` and `apply_error` on `--json`; exit 0 means nothing is left to do.
+- **The same answer in four more places.** A conditional row in the menu bar carrying **Install it now** and the command to copy, plus a permanent "Check for Updates…" item; a footer that always says which version you are on and which is newest; an informational row in `doctor`; a row in the Raycast claims list and a "Simmer Check for Updates" command.
+  All of them render from one `UpdateCommand` in the core, so they cannot disagree about what "up to date" means.
 - **`Simmer.app` checks once a day**, off the main thread, and posts no banner for it — it updates the menu and stops there.
   Off via the setup window's new checkbox or `SIMMER_NO_UPDATE_CHECK=1`.
 - **`doctor` reports a half-finished install as red.** `Simmer.app` and the CLI are normally the same file, so a version disagreement between them means one was replaced and the other was not — which a package manager that upgrades only the CLI would produce routinely.
@@ -36,6 +41,7 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 - **New:** `update --json` (`action`, `verdict`, `installed`, `latest`, `update_available`, `provenance`, `update_command`, `app_version`, `app_drift`, `checked_at`, `cached`, `error`, `seamed`), and the `update` and `app_version` rows in `doctor --json`.
   Nothing existing changed.
+- **New seam:** `SIMMER_FAKE_APPLY=<file>` — `--apply`'s steps are recorded instead of run, which is how the plan is asserted without a build.
 - **New seam:** `SIMMER_FAKE_LATEST=<tag|error>`.
   A process that is seamed at all and has not been given it reads nothing over the network, which is what keeps both suites hermetic.
 - **New state:** `$XDG_STATE_HOME/simmer/update-check` and `update-check.off`.

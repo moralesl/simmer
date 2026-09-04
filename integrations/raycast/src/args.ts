@@ -73,6 +73,17 @@ export function updateArgs(cached = true): string[] {
   return cached ? ["update", "--cached", JSON_FLAG] : ["update", JSON_FLAG];
 }
 
+/**
+ * Install it, rather than printing the command.
+ *
+ * `--apply` always checks first, so it cannot be combined with `--cached` —
+ * simmer refuses the pair rather than resolving it, which is why there is no
+ * `cached` parameter here to get wrong.
+ */
+export function applyArgs(): string[] {
+  return ["update", "--apply", JSON_FLAG];
+}
+
 /** Bare report, so the view can show who set the ceiling. */
 export function capReportArgs(): string[] {
   return ["cap", JSON_FLAG];

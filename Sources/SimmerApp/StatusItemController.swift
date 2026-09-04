@@ -94,7 +94,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let install = MenuInstall(version: ctx.version,
                                   canHandBackUnattended: SudoRule.installedPath() != nil,
                                   updateLine: UpdateCommand.statusLine(update),
-                                  updateCommand: update.install.updateCommand)
+                                  updateCommand: update.install.updateCommand,
+                                  versionLine: UpdateCommand.footerLine(update),
+                                  canApplyUpdate: AppState.shared.canApplyUpdate(update))
         let model = MenuModel.build(aggregate: ctx.aggregate(), batteryLine: batteryLine,
                                     install: install)
         for entry in model {
@@ -181,6 +183,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             AppState.shared.refreshUpdateCheck(force: true) { report in
                 Notifier.shared.post([UpdateCommand.notification(report)])
             }
+        case .applyUpdate:
+            AppState.shared.applyUpdate()
         case .quit:
             NSApp.terminate(nil)
         }

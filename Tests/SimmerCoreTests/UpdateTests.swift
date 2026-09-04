@@ -263,3 +263,177 @@ import Testing
         #expect(items.filter(\.isProminent).count == 1)
     }
 }
+
+/// What `--apply` will and will not do. The decision is data, so all of it is
+/// assertable without anything being built, downloaded or installed.
+@Suite struct UpdateApplyTests {
+    private func report(installed: String, latest: String, kind: Install.Kind,
+                        home: String = "/Users/x") -> UpdateCommand.Report {
+        let path: String
+        switch kind {
+        case .homebrew: path = "/opt/homebrew/Cellar/simmer/9.9.9/Simmer.app/Contents/MacOS/simmer"
+        case .bundle: path = "\(home)/Applications/Simmer.app/Contents/MacOS/simmer"
+        case .checkout: path = "\(home)/src/simmer/.build/debug/simmer"
+        case .unknown: path = "/tmp/simmer"
+        }
+        let install = Install.detect(executablePath: path) {
+            kind == .checkout && ($0.hasSuffix("Package.swift") || $0.hasSuffix(".git"))
+        }
+        #expect(install.kind == kind, "fixture placed as \(install.kind)")
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-apply-\(UUID().uuidString)")
+        return UpdateCommand.check(
+            now: 1_800_000_000, installed: installed, install: install, appVersion: nil,
+            ledger: Ledger(stateDir: dir), source: FakeReleaseSource(value: latest),
+            cached: false, seamed: false)
+    }
+
+    /// Every path exists, which is the interesting case for the bundle plan.
+    private let all: (String) -> Bool = { _ in true }
+    private let nothing: (String) -> Bool = { _ in false }
+
+    @Test func beingCurrentIsNothingToDoRatherThanARefusal() {
+        let decision = UpdateCommand.applyPlan(
+            for: report(installed: "0.2.0", latest: "v0.2.0", kind: .bundle),
+            home: "/Users/x", exists: all)
+        guard case .nothingToDo(let sentence) = decision else {
+            #expect(Bool(false), "\(decision)"); return
+        }
+        #expect(sentence.contains("already the newest"))
+    }
+
+    @Test func beingAheadIsAlsoNothingToDo() {
+        let decision = UpdateCommand.applyPlan(
+            for: report(installed: "0.9.0", latest: "v0.2.0", kind: .bundle),
+            home: "/Users/x", exists: all)
+        guard case .nothingToDo = decision else { #expect(Bool(false), "\(decision)"); return }
+    }
+
+    /// Not knowing whether there is an update is not a licence to install one.
+    @Test func aFailedCheckRefusesRatherThanInstallingAnything() {
+        let decision = UpdateCommand.applyPlan(
+            for: report(installed: "0.2.0", latest: "error", kind: .bundle),
+            home: "/Users/x", exists: all)
+        guard case .refused = decision else { #expect(Bool(false), "\(decision)"); return }
+    }
+
+    /// The bundle install — the colleague case, and the only one where nobody
+    /// has a terminal open.
+    @Test func aBundleInstallUpdatesTheInstallersCheckout() {
+        let decision = UpdateCommand.applyPlan(
+            for: report(installed: "0.2.0", latest: "v0.3.0", kind: .bundle),
+            home: "/Users/x", exists: all)
+        guard case .run(let plan) = decision else { #expect(Bool(false), "\(decision)"); return }
+
+        #expect(plan.target == "0.3.0")
+        #expect(plan.steps.count == 3)
+        #expect(plan.steps[0].described.contains("fetch --tags"))
+        // The TAG, not a branch: this checkout tracks releases.
+        #expect(plan.steps[1].described.contains("checkout --quiet v0.3.0"))
+        #expect(plan.steps[2].described.contains("install NOTES=0"))
+        // Something has to bring the menu bar back — `make install` quits it.
+        #expect(plan.reopenBundle == "/Users/x/Applications/Simmer.app")
+    }
+
+    /// The honesty property, asserted rather than promised: the printed command
+    /// for a bundle install pipes a script from the internet into bash, and an
+    /// app doing THAT on someone's behalf is a different kind of thing. The
+    /// plan uses the checkout that install already has.
+    @Test func noPlanEverPipesTheNetworkIntoAShell() {
+        for kind in [Install.Kind.bundle, .homebrew, .checkout, .unknown] {
+            let decision = UpdateCommand.applyPlan(
+                for: report(installed: "0.2.0", latest: "v0.3.0", kind: kind),
+                home: "/Users/x", exists: all)
+            guard case .run(let plan) = decision else { continue }
+            for step in plan.steps {
+                #expect(!step.described.contains("curl"), "\(kind): \(step.described)")
+                #expect(!step.described.contains("bash"), "\(kind): \(step.described)")
+                #expect(!step.described.contains("|"), "\(kind): \(step.described)")
+            }
+        }
+    }
+
+    /// No checkout to build from, so there is nothing to run — and the refusal
+    /// carries the command that does work.
+    @Test func aBundleWithNoInstallerCheckoutRefusesWithTheCommand() {
+        let decision = UpdateCommand.applyPlan(
+            for: report(installed: "0.2.0", latest: "v0.3.0", kind: .bundle),
+            home: "/Users/x", exists: nothing)
+        guard case .refused(let why) = decision else { #expect(Bool(false), "\(decision)"); return }
+        #expect(why.contains("bootstrap.sh"))
+    }
+
+    /// Somebody's working repository, which may hold local commits, an
+    /// unfinished branch or a stash. `git checkout v0.3.0` in it would be
+    /// simmer rearranging someone's desk — and a person running from a checkout
+    /// has a terminal by definition.
+    @Test func aDevelopersOwnCheckoutIsNeverTouched() {
+        let decision = UpdateCommand.applyPlan(
+            for: report(installed: "0.2.0", latest: "v0.3.0", kind: .checkout),
+            home: "/Users/x", exists: all)
+        guard case .refused(let why) = decision else { #expect(Bool(false), "\(decision)"); return }
+        #expect(why.contains("your own checkout"))
+        #expect(why.contains("make install"))
+    }
+
+    @Test func homebrewUpgradesThroughBrew() {
+        let decision = UpdateCommand.applyPlan(
+            for: report(installed: "0.2.0", latest: "v0.3.0", kind: .homebrew),
+            home: "/Users/x", exists: { $0 == "/opt/homebrew/bin/brew" })
+        guard case .run(let plan) = decision else { #expect(Bool(false), "\(decision)"); return }
+        #expect(plan.steps.map(\.described) == ["brew upgrade simmer"])
+    }
+
+    @Test func homebrewWithoutBrewRefusesRatherThanGuessingAPath() {
+        let decision = UpdateCommand.applyPlan(
+            for: report(installed: "0.2.0", latest: "v0.3.0", kind: .homebrew),
+            home: "/Users/x", exists: nothing)
+        guard case .refused = decision else { #expect(Bool(false), "\(decision)"); return }
+    }
+
+    /// The footer answers both halves of "am I current", in every state, so a
+    /// menu-only reader never has to open a terminal to find out.
+    @Test func theFooterNamesBothVersions() {
+        #expect(UpdateCommand.footerLine(report(installed: "0.2.0", latest: "v0.3.0", kind: .bundle))
+                == "simmer 0.2.0 · newest is 0.3.0")
+        #expect(UpdateCommand.footerLine(report(installed: "0.3.0", latest: "v0.3.0", kind: .bundle))
+                == "simmer 0.3.0 · newest")
+        #expect(UpdateCommand.footerLine(report(installed: "0.9.0", latest: "v0.3.0", kind: .bundle))
+                == "simmer 0.9.0 · ahead of 0.3.0")
+        #expect(UpdateCommand.footerLine(report(installed: "0.2.0", latest: "error", kind: .bundle))
+                .hasSuffix("last check failed"))
+    }
+
+    /// The menu offers to install only where there is a plan. Offering it where
+    /// `applyPlan` refuses would be a button that reports a refusal — which is
+    /// worse than no button, because the person clicked it expecting an install.
+    @Test func theMenuOffersInstallOnlyWhereThereIsAPlan() {
+        func menu(_ canApply: Bool) -> [MenuItemModel] {
+            MenuModel.build(
+                aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000, sleepDisabled: false),
+                batteryLine: "battery 80%, on AC",
+                install: MenuInstall(version: "0.2.0", canHandBackUnattended: true,
+                                     updateLine: "Update available: 0.3.0",
+                                     updateCommand: "brew upgrade simmer",
+                                     versionLine: "simmer 0.2.0 · newest is 0.3.0",
+                                     canApplyUpdate: canApply))
+        }
+        let offered = menu(true).first?.children.map(\.action) ?? []
+        #expect(offered.contains(.applyUpdate))
+        #expect(offered.contains(.copyCLI("brew upgrade simmer")))
+
+        let copyOnly = menu(false).first?.children.map(\.action) ?? []
+        #expect(!copyOnly.contains(.applyUpdate))
+        #expect(copyOnly.contains(.copyCLI("brew upgrade simmer")))
+    }
+
+    /// The footer is the last row and it is never empty — a menu that has not
+    /// checked anything still says which version it is.
+    @Test func theFooterIsAlwaysTheLastRow() {
+        let items = MenuModel.build(
+            aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000, sleepDisabled: false),
+            batteryLine: "battery 80%, on AC",
+            install: MenuInstall(version: "0.2.0", canHandBackUnattended: true))
+        #expect(items.last?.title == "simmer 0.2.0")
+    }
+}

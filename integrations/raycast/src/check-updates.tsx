@@ -1,8 +1,21 @@
-import { Action, ActionPanel, Detail, Icon, open } from "@raycast/api";
+import {
+  Action,
+  ActionPanel,
+  Detail,
+  Icon,
+  Toast,
+  open,
+  showToast,
+} from "@raycast/api";
 import { usePromise } from "@raycast/utils";
 import { useMemo } from "react";
 import { preferredPath } from "./preference.ts";
-import { checkUpdate, resolveBinary, SimmerUpdate } from "./simmer.ts";
+import {
+  applyUpdate,
+  checkUpdate,
+  resolveBinary,
+  SimmerUpdate,
+} from "./simmer.ts";
 
 const REPO = "https://github.com/moralesl/simmer";
 
@@ -53,6 +66,39 @@ export default function Command() {
       }
       actions={
         <ActionPanel>
+          {data?.update_available && (
+            // First, because it is the thing most people want and the only one
+            // that does not need a terminal. It runs the same command the row
+            // below hands out — no password, and never a script piped from the
+            // internet into a shell.
+            <Action
+              title="Install It Now"
+              icon={Icon.Download}
+              onAction={async () => {
+                const toast = await showToast({
+                  style: Toast.Style.Animated,
+                  title: "Installing…",
+                  message: "this compiles — a minute or two",
+                });
+                try {
+                  const done = await applyUpdate(bin!);
+                  toast.style = Toast.Style.Success;
+                  toast.title = done.applied
+                    ? `simmer ${done.latest?.replace(/^v/, "") ?? ""} installed`
+                    : "already up to date";
+                  toast.message = undefined;
+                } catch (error) {
+                  // simmer's own sentence — it refused for a reason it can
+                  // state better than this extension can guess.
+                  toast.style = Toast.Style.Failure;
+                  toast.title = "simmer refused";
+                  toast.message =
+                    error instanceof Error ? error.message : String(error);
+                }
+                revalidate();
+              }}
+            />
+          )}
           {data && (data.update_available || data.app_drift) && (
             <Action.CopyToClipboard
               title="Copy the Update Command"
@@ -87,7 +133,7 @@ function body(update: SimmerUpdate): string {
     : "";
   switch (update.verdict) {
     case "available":
-      return `# simmer ${update.latest} is out\n\nYou have ${update.installed}, ${describe(update)}.\n\n\`\`\`\n${update.update_command}\n\`\`\`\n\nsimmer never installs it for you — copy the command and run it when it suits.${drift}`;
+      return `# simmer ${update.latest} is out\n\nYou have ${update.installed}, ${describe(update)}.\n\n**⏎ Install it now**, or take the command:\n\n\`\`\`\n${update.update_command}\n\`\`\`\n\nInstalling asks for no password and never pipes a script from the internet into a shell. Simmer.app quits and comes back; a claim you are holding survives it.${drift}`;
     case "current":
       return `# Up to date\n\nsimmer ${update.installed} is the newest release, ${describe(update)}.${drift}`;
     case "ahead":
