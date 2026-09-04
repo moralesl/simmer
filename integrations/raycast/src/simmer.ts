@@ -293,11 +293,19 @@ export async function applyUpdate(
     parsed = undefined;
   }
   if (parsed?.action === "updated" || parsed?.action === "checked") return parsed;
+
+  // A refusal simmer chose to make carries its own sentence.
+  const refusal = parsed?.apply_error?.trim() || parsed?.error?.trim();
+  if (refusal) throw new SimmerRefusal(refusal);
+  if (stderr.trim()) throw new SimmerRefusal(stderr.trim());
+
+  // Output this side could not understand. Says so, and shows it: a message
+  // of "simmer exited 0" names neither what was asked nor what came back,
+  // which makes a failure on a machine you cannot reach undiagnosable — and
+  // that is exactly where this one turned up.
   throw new SimmerRefusal(
-    parsed?.apply_error?.trim() ||
-      parsed?.error?.trim() ||
-      stderr.trim() ||
-      `simmer exited ${code}`,
+    `simmer exited ${code} with output this extension could not parse: ` +
+      `${JSON.stringify(stdout.slice(0, 300))}`,
   );
 }
 
