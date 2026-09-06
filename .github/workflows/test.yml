@@ -137,6 +137,38 @@ jobs:
       - name: Build simmer
         run: swift build -c release
 
+      # TEMPORARY (feat/update-check): `update --apply --json` comes back with
+      # empty stdout under node on this runner while the Swift acceptance suite
+      # drives the same verb successfully on the same OS. Three local
+      # reproductions — debug, release, and a stripped environment — all print
+      # the object. This step asks the runner directly, and comes out again once
+      # it has answered.
+      - name: What does --apply actually emit here
+        run: |
+          bin="$GITHUB_WORKSPACE/.build/release/simmer"
+          home="$RUNNER_TEMP/apply-home"
+          mkdir -p "$home/.local/share/simmer/.git" "$home/state"
+          printf 'all:\n' > "$home/.local/share/simmer/Makefile"
+          : > "$home/apply.log"
+          set +e
+          env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$home" TZ=Europe/Berlin \
+            XDG_STATE_HOME="$home/state" SIMMER_FAKE_PMSET="$home/pmset" \
+            SIMMER_FAKE_BATTERY=80:0 SIMMER_FAKE_THERMAL=0 SIMMER_FAKE_LOCKDELAY=0 \
+            SIMMER_FAKE_NOW=1800000000 SIMMER_NOTIFY=none \
+            SIMMER_FAKE_LATEST=v9.9.9 SIMMER_FAKE_APPLY="$home/apply.log" \
+            SIMMER_BIN="$home/Applications/Simmer.app/Contents/MacOS/simmer" \
+            "$bin" update --apply --json > "$home/out.txt" 2> "$home/err.txt"
+          echo "exit=$?"
+          echo "--- stdout ---"; cat "$home/out.txt"; echo "[end]"
+          echo "--- stderr ---"; cat "$home/err.txt"; echo "[end]"
+          echo "--- recorded ---"; cat "$home/apply.log"; echo "[end]"
+          echo "--- same call, plain check ---"
+          env -i PATH=/usr/bin:/bin HOME="$home" XDG_STATE_HOME="$home/state" \
+            SIMMER_FAKE_PMSET="$home/pmset" SIMMER_FAKE_NOW=1800000000 \
+            SIMMER_NOTIFY=none SIMMER_FAKE_LATEST=v9.9.9 \
+            "$bin" update --json; echo "exit=$?"
+          set -e
+
       - name: Contract suite against the built binary
         working-directory: integrations/raycast
         run: |
