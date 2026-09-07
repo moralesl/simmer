@@ -151,84 +151,174 @@ jobs:
       - name: Build simmer
         run: swift build -c release
 
-      # TEMPORARY (feat/update-check), round two. Round one cleared
-      # Runtime.execute, the record file, the fd numbers and the step plan:
-      # `--apply --json` prints nothing even on the nothing-to-do path, which
-      # runs no steps at all, while the human form of the same path and the
-      # plain `--json` check both print. Two candidates are left — an empty
-      # `outcome.stdout`, or a `print` whose bytes never reach fd 1 — and they
-      # want different fixes.
+      # TEMPORARY (feat/update-check), round three and the last one.
       #
-      # SIMMER_TRACE_EMIT (Runtime.trace) reports the array count, each line's
-      # length, fflush's verdict, what fd 1 has actually received, and whether
-      # a raw write(1) lands. Q5 and Q6 ask the optimiser the same question
-      # from the outside. Nothing here fails the leg, and it all comes out
-      # with the fix.
-      - name: Where are the bytes lost
+      # Round two answered by vanishing. Every probe printed, `make
+      # test-release` passed on macos-15, and the contract suite went 31/31 for
+      # the first time since 2026-09-04 — on the same runner image and the same
+      # Swift 6.2.4 that had lost the line twenty minutes earlier. The only
+      # difference in the binary was the instrumentation added to `Runtime.emit`
+      # itself, none of which does anything with its variable unset. So the
+      # perturbation is the finding, and the question left is which change moves
+      # it — which is what decides whether the fix in this branch is the right
+      # one or merely another perturbation.
+      #
+      # V0 is byte-identical to Runtime.swift at a5a825c, the tree the defect
+      # was observed on; that identity is checked locally against `git show`,
+      # not asserted. V0 MUST come back 0 B. If it prints, the defect is
+      # nondeterministic on this runner, every reading above is worth less than
+      # it looks, and the fix stops being justified by this evidence.
+      - name: Round three — which change moves it
         run: |
           bin="$GITHUB_WORKSPACE/.build/release/simmer"
           home="$RUNNER_TEMP/apply-home"
+          gen="$RUNNER_TEMP/variant.py"
+          orig="$RUNNER_TEMP/runtime-as-committed.swift"
           mkdir -p "$home/.local/share/simmer/.git" "$home/state"
           printf 'all:\n' > "$home/.local/share/simmer/Makefile"
           set +e
+          cat > "$gen" <<'PYEOF'
+          """Rewrite Runtime.swift's rendering region as one of the round-three variants.
+
+          The region is everything from "/// Print, post, exit." to the end of the file:
+          deliver, emit, and whatever helper emit uses. V0 is byte-identical to the
+          Runtime.swift of a5a825c, the tree the defect was observed on.
+          """
+          import sys
+
+          MARKER = "    /// Print, post, exit. The single exit path for every subcommand.\n"
+
+          DELIVER = """    /// Print, post, exit. The single exit path for every subcommand.
+              static func deliver(_ outcome: Outcome, human: HumanStream = .stdout) -> Never {
+                  emit(outcome, human: human)
+                  exit(outcome.exit)
+              }
+
+          """
+
+          NOTIFY = """        // The app is the only poster — macOS binds the notification grant to
+                  // the executable that asked, and this executable never asks
+                  // (PLATFORM-FACTS.md). Banners go through the spool; the app drains it
+                  // within seconds. App not running = no banners, honestly: the menu
+                  // bar is gone then too.
+                  guard !outcome.notifications.isEmpty else { return }
+                  let env = environment()
+                  guard env.notifyTransport != "none" else { return }
+                  let ledger = Ledger(stateDir: env.stateDir)
+                  for notification in outcome.notifications {
+                      ledger.enqueueNotification(notification, now: env.now())
+                  }
+              }
+          }
+          """
+
+          # V0 — the observed defect, exactly as it stood.
+          V0 = DELIVER + """    static func emit(_ outcome: Outcome, human: HumanStream = .stdout) {
+                  for line in outcome.stdout {
+                      switch human {
+                      case .stdout: print(line)
+                      case .stderr: FileHandle.standardError.write(Data((line + "\\n").utf8))
+                      }
+                  }
+                  for line in outcome.stderr {
+                      FileHandle.standardError.write(Data((line + "\\n").utf8))
+                  }
+          """ + NOTIFY
+
+          # V1 — V0 plus one explicit flush. Is the buffer simply never flushed?
+          V1 = DELIVER + """    static func emit(_ outcome: Outcome, human: HumanStream = .stdout) {
+                  for line in outcome.stdout {
+                      switch human {
+                      case .stdout: print(line)
+                      case .stderr: FileHandle.standardError.write(Data((line + "\\n").utf8))
+                      }
+                  }
+                  fflush(stdout)
+                  for line in outcome.stderr {
+                      FileHandle.standardError.write(Data((line + "\\n").utf8))
+                  }
+          """ + NOTIFY
+
+          # V2 — V0 with the loop's shape changed and nothing else. Does any change to
+          # this function move it?
+          V2 = DELIVER + """    static func emit(_ outcome: Outcome, human: HumanStream = .stdout) {
+                  for (index, line) in outcome.stdout.enumerated() {
+                      _ = index
+                      switch human {
+                      case .stdout: print(line)
+                      case .stderr: FileHandle.standardError.write(Data((line + "\\n").utf8))
+                      }
+                  }
+                  for line in outcome.stderr {
+                      FileHandle.standardError.write(Data((line + "\\n").utf8))
+                  }
+          """ + NOTIFY
+
+          # V4 — V0 plus the smallest perturbation there is: one call that reads an
+          # unset variable and returns. This is what round two accidentally added.
+          V4 = DELIVER + """    private static func inert() {
+                  guard ProcessInfo.processInfo.environment["SIMMER_TRACE_EMIT"] != nil else { return }
+                  let bytes = Array("[inert]\\n".utf8)
+                  bytes.withUnsafeBufferPointer { _ = write(2, $0.baseAddress, $0.count) }
+              }
+
+              static func emit(_ outcome: Outcome, human: HumanStream = .stdout) {
+                  inert()
+                  for line in outcome.stdout {
+                      switch human {
+                      case .stdout: print(line)
+                      case .stderr: FileHandle.standardError.write(Data((line + "\\n").utf8))
+                      }
+                  }
+                  for line in outcome.stderr {
+                      FileHandle.standardError.write(Data((line + "\\n").utf8))
+                  }
+          """ + NOTIFY
+
+          VARIANTS = {"v0": V0, "v1": V1, "v2": V2, "v4": V4}
+
+          path = "Sources/SimmerCLI/Runtime.swift"
+          source = open(path).read()
+          head = source[:source.index(MARKER)]
+          open(path, "w").write(head + VARIANTS[sys.argv[1]])
+          PYEOF
           base=(env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$home" TZ=Europe/Berlin
             XDG_STATE_HOME="$home/state" SIMMER_FAKE_PMSET="$home/pmset"
             SIMMER_FAKE_BATTERY=80:0 SIMMER_FAKE_THERMAL=0 SIMMER_FAKE_LOCKDELAY=0
             SIMMER_FAKE_NOW=1800000000 SIMMER_NOTIFY=none
-            SIMMER_FAKE_LATEST=v9.9.9 SIMMER_TRACE_EMIT=1
+            SIMMER_FAKE_LATEST=v9.9.9
             SIMMER_BIN="$home/Applications/Simmer.app/Contents/MacOS/simmer")
-          probe() {  # name, then the command
-            name="$1"; shift
+          probe() {  # label, then the binary
+            label="$1"; simmer="$2"
             : > "$home/apply.log"
-            "$@" > "$home/out.txt" 2> "$home/err.txt"
+            "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" \
+              "$simmer" update --apply --json > "$home/out.txt" 2> "$home/err.txt"
             code=$?
-            echo "=== $name: exit=$code stdout=$(wc -c < "$home/out.txt")B recorded=$(wc -l < "$home/apply.log") lines"
-            cat "$home/err.txt"
-            echo "--- stdout, first 120 and last 40 bytes ---"
-            head -c 120 "$home/out.txt"; echo; tail -c 40 "$home/out.txt"; echo
+            echo "=== $label: exit=$code stdout=$(wc -c < "$home/out.txt")B stderr=$(wc -c < "$home/err.txt")B recorded=$(wc -l < "$home/apply.log") lines"
+            head -c 100 "$home/out.txt"; echo
           }
-          echo "### Q1 --apply --json, traced: is the array empty, or are the bytes lost?"
-          probe Q1 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply --json
-          echo "### Q2 plain --json check, traced — the control that prints"
-          probe Q2 "${base[@]}" "$bin" update --json
-          echo "### Q3 --apply human mode, traced — the other control that prints"
-          probe Q3 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply
-          echo "### Q4 --apply --json on a pty: line-buffered, so print flushes per line"
-          probe Q4 script -q /dev/null "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply --json
-          echo "### Q5 --apply --json into a pipe rather than a file"
-          : > "$home/apply.log"
-          "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply --json 2>/dev/null | cat > "$home/out.txt"
-          echo "=== Q5: stdout=$(wc -c < "$home/out.txt")B"; head -c 120 "$home/out.txt"; echo
-          echo "### Q6 the release CONFIG built at -Onone: optimiser, or something else?"
-          swift build -c release --scratch-path "$RUNNER_TEMP/b-onone" -Xswiftc -Onone 2>&1 | tail -1
-          probe Q6 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$RUNNER_TEMP/b-onone/release/simmer" update --apply --json
-          echo "### Q7 release without whole-module optimisation"
-          swift build -c release --scratch-path "$RUNNER_TEMP/b-nowmo" -Xswiftc -no-whole-module-optimization 2>&1 | tail -1
-          probe Q7 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$RUNNER_TEMP/b-nowmo/release/simmer" update --apply --json
-          echo "### Q8 a SHORT home: the same path, a JSON object well under 512 bytes"
-          applyat() {  # name, home — the plan embeds the home path three times,
-            nm="$1"; h="$2"   # so the home decides how long the JSON line is
-            mkdir -p "$h/.local/share/simmer/.git" "$h/state"
-            printf 'all:\n' > "$h/.local/share/simmer/Makefile"
-            : > "$h/apply.log"
-            env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$h" TZ=Europe/Berlin \
-              XDG_STATE_HOME="$h/state" SIMMER_FAKE_PMSET="$h/pmset" \
-              SIMMER_FAKE_BATTERY=80:0 SIMMER_FAKE_THERMAL=0 SIMMER_FAKE_LOCKDELAY=0 \
-              SIMMER_FAKE_NOW=1800000000 SIMMER_NOTIFY=none SIMMER_FAKE_LATEST=v9.9.9 \
-              SIMMER_TRACE_EMIT=1 SIMMER_FAKE_APPLY="$h/apply.log" \
-              SIMMER_BIN="$h/Applications/Simmer.app/Contents/MacOS/simmer" \
-              "$bin" update --apply --json > "$home/out.txt" 2> "$home/err.txt"
-            echo "=== $nm: exit=$? home=${#h} chars stdout=$(wc -c < "$home/out.txt")B"
-            cat "$home/err.txt"
-            head -c 120 "$home/out.txt"; echo
+          variant() {  # label, variant key, scratch suffix, then build flags
+            label="$1"; key="$2"; suffix="$3"; shift 3
+            cp "$orig" Sources/SimmerCLI/Runtime.swift
+            python3 "$gen" "$key"
+            swift build -c release --scratch-path "$RUNNER_TEMP/b-$suffix" "$@" 2>&1 | tail -1
+            probe "$label" "$RUNNER_TEMP/b-$suffix/release/simmer"
           }
-          applyat Q8 "/tmp/s"
-          echo "### Q9 a LONG home: the same path, a JSON object well over 1024 bytes"
-          applyat Q9 "/tmp/$(printf 'l%.0s' $(seq 1 120))/$(printf 'm%.0s' $(seq 1 120))"
-          echo "### Q10 the CHECK path, forced past 614 bytes by a very long tag:"
-          echo "###     if this one vanishes too, the length of the line is the trigger"
-          probe Q10 "${base[@]}" SIMMER_FAKE_LATEST="v9.9.9-$(printf 'a%.0s' $(seq 1 400))" "$bin" update --json
-          echo "Q done"
+          echo "### V3 the fix as committed — writeLine, no print in the path"
+          probe V3 "$bin"
+          cp Sources/SimmerCLI/Runtime.swift "$orig"
+          echo "### V0 a5a825c's emit, byte for byte — MUST be 0 B or the reading collapses"
+          variant V0 v0 v0
+          echo "### V0 at -Onone — is the optimiser required?"
+          variant V0-Onone v0 v0-onone -Xswiftc -Onone
+          echo "### V1 V0 plus one fflush(stdout) — is it only the flush?"
+          variant V1-fflush v1 v1
+          echo "### V2 V0 with the loop's shape changed and nothing else"
+          variant V2-enumerated v2 v2
+          echo "### V4 V0 plus one call that reads an unset variable and returns"
+          variant V4-inert v4 v4
+          cp "$orig" Sources/SimmerCLI/Runtime.swift
+          echo "V done — V0 0 B and V3 printing is the whole case for this fix"
           set -e
 
       - name: Contract suite against the built binary
