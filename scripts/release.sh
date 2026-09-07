@@ -5,9 +5,10 @@
 #
 # A tag is the highest-consequence thing this repository can produce
 # (docs/RELEASING.md), and until now every step of taking one was a sentence
-# someone had to remember. These three subcommands are those sentences as code:
+# someone had to remember. These subcommands are those sentences as code:
 #
 #   next-version   what the next version is, and why — from CHANGELOG.md alone
+#   bump-label     what a pull request's labels declare the bump to be
 #   write          the two files a release commit changes, changed
 #   check          everything that must be true of a release before it is one
 #
@@ -21,7 +22,8 @@ VERSION_FILE=Sources/SimmerCore/Version.swift
 usage() {
   cat >&2 <<'USAGE'
 usage:
-  release.sh next-version [--major] [--changelog F] [--version-file F]
+  release.sh next-version [--bump major|minor|patch] [--changelog F] [--version-file F]
+  release.sh bump-label            # pull request label names on stdin
   release.sh write VERSION [--date YYYY-MM-DD] [--changelog F] [--version-file F]
   release.sh check [--expect-version X.Y.Z] [--released "0.1.0 0.2.0"]
                    [--changelog F] [--version-file F]
@@ -75,6 +77,13 @@ blank() { [ -z "$(printf '%s' "$1" | tr -d '[:space:]')" ]; }
 # A major is never inferred at all. Removing a field, renaming one, or
 # changing one's type reads exactly like adding one; only a person knows
 # which, so a person says so with the `release: major` label.
+#
+# All three kinds are declarable the same way — `release: major`, `release:
+# minor`, `release: patch` — because the reason a person overrules the rule is
+# not always "the rule was too cautious". It is sometimes "we are shipping this
+# as a patch anyway, and I know what that costs". A rule with no override is a
+# rule that gets worked around outside the mechanism, where nothing records who
+# decided or what the rule had said.
 MACHINE_SURFACE_HEADINGS="Machine surface|The test seam"
 
 bump_for_unreleased() {
@@ -105,28 +114,65 @@ apply_bump() {
 }
 
 cmd_next_version() {
-  local want_major=no
+  local declared=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --major) want_major=yes; shift ;;
+      --bump) declared="$2"; shift 2 ;;
       --changelog) CHANGELOG="$2"; shift 2 ;;
       --version-file) VERSION_FILE="$2"; shift 2 ;;
       *) usage ;;
     esac
   done
+  case "$declared" in
+    ""|major|minor|patch) ;;
+    *) die "--bump takes major, minor or patch, not '$declared'" ;;
+  esac
 
-  local current body kind
+  local current body rule kind
   current="$(current_version)"
   body="$(section_body Unreleased)"
-  kind="$(bump_for_unreleased "$body")"
+  rule="$(bump_for_unreleased "$body")"
+  kind="$rule"
 
-  # The label decides against a rule that cannot see removals, so it wins —
-  # but only over something. A major of an empty section is still nothing.
-  [ "$want_major" = yes ] && [ "$kind" != none ] && kind=major
+  # A declaration decides against a rule that cannot see removals, and against
+  # one that can — but only over something. Declaring a bump for an empty
+  # section is an instruction about a release, not a reason to invent one.
+  [ -n "$declared" ] && [ "$rule" != none ] && kind="$declared"
 
   printf 'current=%s\n' "$current"
   printf 'bump=%s\n' "$kind"
+  # What the rule said underneath, so the caller can print both. A number that
+  # overrules the CHANGELOG has to say so where somebody reads it, or an
+  # override is indistinguishable from the rule having agreed all along.
+  [ "$kind" = "$rule" ] || printf 'rule_bump=%s\n' "$rule"
   [ "$kind" = none ] || printf 'version=%s\n' "$(apply_bump "$current" "$kind")"
+}
+
+# ── what a pull request's labels declare ────────────────────────────────────
+#
+# Label names on stdin, the declared bump on stdout, nothing at all when none
+# of them say anything.
+#
+# One reader, because two halves of CI ask this question — the job that WRITES
+# the number and the check that RE-DERIVES it — and a second implementation is
+# how they would come to disagree on the one pull request where it matters.
+cmd_bump_label() {
+  [ $# -eq 0 ] || usage
+  local kinds count
+  # `sed -E`, not `\|` alternation: that is a GNU extension, and BSD sed — the
+  # one on the maintainer's Mac, where `make release-check` runs — matches it
+  # as a literal. It would have worked on every ubuntu runner and silently
+  # found no label at home.
+  kinds="$(sed -n -E 's/^release: (major|minor|patch)$/\1/p' | sort -u)"
+  [ -n "$kinds" ] || return 0
+
+  count="$(printf '%s\n' "$kinds" | grep -c .)"
+  # Two of them is not a bump to choose between, it is two people who have not
+  # spoken to each other. Refusing is the only answer that does not silently
+  # pick one of them and publish it.
+  [ "$count" -eq 1 ] ||
+    die "the release pull request carries more than one bump label ($(printf '%s' "$kinds" | tr '\n' ' ')). Leave exactly one."
+  printf '%s\n' "$kinds"
 }
 
 # ── the release commit, written ─────────────────────────────────────────────
@@ -249,6 +295,7 @@ cmd_check() {
 subcommand="$1"; shift
 case "$subcommand" in
   next-version) cmd_next_version "$@" ;;
+  bump-label)   cmd_bump_label "$@" ;;
   write)        cmd_write "$@" ;;
   check)        cmd_check "$@" ;;
   *)            usage ;;

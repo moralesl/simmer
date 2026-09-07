@@ -140,15 +140,115 @@ import Testing
             """)
         #expect(Self.run(["next-version"], changelog: removal).value("bump") == "minor",
                 "prose cannot be read for removals — without the label this is a minor")
-        #expect(Self.run(["next-version", "--major"], changelog: removal).value("version") == "1.0.0")
+        #expect(Self.run(["next-version", "--bump", "major"], changelog: removal).value("version") == "1.0.0")
     }
 
-    /// `--major` on an empty section is still nothing. A label is an
+    /// A declaration overrules the rule in **either** direction, including
+    /// downwards.
+    ///
+    /// 0.3.1 shipped that way: an entry under `### Machine surface` made it a
+    /// minor by the rule, and it went out as a patch because a person decided
+    /// it should. A rule with no override is a rule that gets worked around
+    /// outside the mechanism, where nothing records who decided or what the
+    /// rule had said — so the override is a label, both halves of CI read it,
+    /// and `rule_bump` carries what the rule had said so the pull request can
+    /// print both.
+    @Test(arguments: [
+        // (what is declared, the version, what the rule said underneath)
+        ("patch", "0.3.1", "minor"),
+        ("minor", "0.4.0", nil),      // agrees with the rule; nothing was overruled
+        ("major", "1.0.0", "minor"),
+    ])
+    func aDeclarationOverrulesTheRuleInEitherDirection(
+        declared: String, version: String, ruleBump: String?
+    ) {
+        let surface = Self.changelog(unreleased: """
+
+            ### Machine surface
+
+            - `doctor --json` gains a field
+
+            """)
+        #expect(Self.run(["next-version"], changelog: surface).value("version") == "0.4.0",
+                "the rule on its own reads a machine-surface entry as a minor")
+
+        let result = Self.run(["next-version", "--bump", declared], changelog: surface)
+        #expect(result.value("bump") == declared)
+        #expect(result.value("version") == version)
+        #expect(result.value("rule_bump") == ruleBump,
+                "an overruled rule has to be reported, or the override is invisible")
+    }
+
+    /// A declared bump on an empty section is still nothing. A label is an
     /// instruction about a release, not a reason to invent one.
-    @Test func aLabelDoesNotConjureAReleaseOutOfNothing() {
-        let result = Self.run(["next-version", "--major"], changelog: Self.changelog(unreleased: "\n"))
+    @Test(arguments: ["major", "minor", "patch"])
+    func aDeclarationDoesNotConjureAReleaseOutOfNothing(declared: String) {
+        let result = Self.run(["next-version", "--bump", declared],
+                              changelog: Self.changelog(unreleased: "\n"))
         #expect(result.value("bump") == "none")
         #expect(result.value("version") == nil)
+    }
+
+    /// A bump nobody defined is refused rather than guessed at.
+    @Test func anUnknownBumpIsRefused() {
+        let result = Self.run(["next-version", "--bump", "sideways"],
+                              changelog: Self.changelog(unreleased: "\n### Fixed\n\n- a crash\n"))
+        #expect(result.code != 0)
+        #expect(result.err.contains("--bump takes major, minor or patch"))
+    }
+
+    // ── the labels, read once for both halves of CI ─────────────────────────
+
+    /// `bump-label` is the single reader of the release pull request's labels.
+    ///
+    /// Two halves of CI ask this question — the job that WRITES the number and
+    /// the `release-check` leg that RE-DERIVES it on the pull request — and a
+    /// second implementation is exactly how they would come to disagree on the
+    /// one pull request where it matters. The disagreement is not theoretical:
+    /// before this existed, an overridden number was red on `release-check`
+    /// and therefore unmergeable.
+    @Test(arguments: [
+        // (the labels a pull request carries, what they declare)
+        (["bug", "release: patch"], "patch"),
+        (["release: major"], "major"),
+        (["release: minor", "release: minor"], "minor"),   // one label, twice
+        (["bug", "documentation"], ""),                     // nothing declared
+        ([], ""),
+        (["release: majorish"], ""),                        // not the label
+        (["Release: Major"], ""),                           // nor is this
+    ])
+    func theLabelsAreReadOnce(labels: [String], declared: String) throws {
+        #expect(try Self.bumpLabel(labels).out.trimmingCharacters(in: .whitespacesAndNewlines) == declared)
+    }
+
+    /// Two different bump labels is not a bump to choose between — it is two
+    /// people who have not spoken to each other. Picking one silently is the
+    /// one answer that publishes somebody's number without their knowing.
+    @Test func twoDifferentBumpLabelsAreRefused() throws {
+        let result = try Self.bumpLabel(["release: patch", "release: major"])
+        #expect(result.code != 0)
+        #expect(result.err.contains("more than one bump label"))
+        #expect(result.err.contains("major patch"), "the refusal names them: \(result.err)")
+    }
+
+    /// Label names on stdin, the way `gh pr list --jq` hands them over.
+    static func bumpLabel(_ labels: [String]) throws -> Result {
+        let process = Process()
+        process.executableURL = repoRoot.appendingPathComponent("scripts/release.sh")
+        process.arguments = ["bump-label"]
+        let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
+        process.standardInput = inPipe
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+        try process.run()
+        inPipe.fileHandleForWriting.write(Data(labels.joined(separator: "\n").utf8))
+        try inPipe.fileHandleForWriting.close()
+        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return Result(out: String(decoding: outData, as: UTF8.self),
+                      err: String(decoding: errData, as: UTF8.self),
+                      code: process.terminationStatus)
     }
 
     /// The bump is arithmetic on the version in `Version.swift`, and a minor

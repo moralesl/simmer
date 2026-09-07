@@ -21,10 +21,12 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      version:
-        description: "Release this version instead of the one the rule computes (X.Y.Z)"
+      bump:
+        description: "Declare the bump, or let the CHANGELOG rule decide"
         required: false
-        type: string
+        default: rule
+        type: choice
+        options: [rule, major, minor, patch]
 
 # Read by default; each job below asks for exactly what it writes.
 permissions:
@@ -43,7 +45,8 @@ jobs:
       release_version: ${{ steps.plan.outputs.release_version }}
       next_version: ${{ steps.plan.outputs.next_version }}
       bump: ${{ steps.plan.outputs.bump }}
-      major_label: ${{ steps.plan.outputs.major_label }}
+      declared: ${{ steps.plan.outputs.declared }}
+      rule_bump: ${{ steps.plan.outputs.rule_bump }}
     steps:
       # Tags, because "is this version already released" is the whole question.
       - uses: actions/checkout@v7
@@ -54,7 +57,7 @@ jobs:
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION_OVERRIDE: ${{ inputs.version }}
+          BUMP_INPUT: ${{ inputs.bump }}
         run: |
           set -euo pipefail
 
@@ -97,48 +100,57 @@ jobs:
               echo "release_version=$current"
               echo "next_version="
               echo "bump=none"
-              echo "major_label=false"
+              echo "declared="
+              echo "rule_bump="
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "release_version=" >> "$GITHUB_OUTPUT"
 
-          # `release: major` on the open release pull request. A major is never
-          # inferred from prose — a removed field and an added one read exactly
-          # alike — so this label is the only thing that can say so, and it is
-          # a person who puts it there.
-          major=false
-          if gh pr list --head release/next --state open \
-               --json labels --jq '.[0].labels // [] | .[].name' \
-               | grep -qx 'release: major'; then
-            major=true
-            echo "the open release pull request is labelled 'release: major'"
+          # What a person has declared, if anyone has. A `release: major`,
+          # `release: minor` or `release: patch` label on the open release pull
+          # request overrules the rule — a major because prose cannot show a
+          # removed field, the other two because "we are shipping this as a
+          # patch anyway" is a decision the rule has no way to know about.
+          #
+          # `bump-label` is the one reader of those labels, shared with the
+          # `release-check` leg that re-derives this number on the pull request.
+          # Two readers is how the two halves would come to disagree on the one
+          # pull request where it matters.
+          declared="$(gh pr list --head release/next --state open \
+                        --json labels --jq '.[0].labels // [] | .[].name' \
+                      | ./scripts/release.sh bump-label)"
+          [ -z "$declared" ] || echo "the release pull request declares a $declared"
+
+          # A dispatch may declare it instead, for the run that has no pull
+          # request to label yet. `rule` is the default and means "no
+          # declaration" — actionlint refuses an empty option in a choice, and
+          # naming the default after what it does reads better in the dialog
+          # than a blank line does.
+          if [ -n "${BUMP_INPUT:-}" ] && [ "$BUMP_INPUT" != rule ]; then
+            echo "::notice::bump declared by dispatch: $BUMP_INPUT"
+            declared="$BUMP_INPUT"
           fi
-          echo "major_label=$major" >> "$GITHUB_OUTPUT"
 
           args=(next-version)
-          [ "$major" = true ] && args+=(--major)
+          [ -z "$declared" ] || args+=(--bump "$declared")
           plan="$(./scripts/release.sh "${args[@]}")"
           echo "$plan"
           bump="$(printf '%s\n' "$plan" | sed -n 's/^bump=//p')"
           version="$(printf '%s\n' "$plan" | sed -n 's/^version=//p')"
-
-          # A dispatch can name the number outright. It is the escape hatch for
-          # the release the rule cannot see — and it is still only a number:
-          # every check below runs the same way.
-          if [ -n "${VERSION_OVERRIDE:-}" ]; then
-            echo "::notice::version overridden by hand: $VERSION_OVERRIDE (the rule said ${version:-nothing})"
-            version="$VERSION_OVERRIDE"
-            bump=dispatch
-          fi
+          rule_bump="$(printf '%s\n' "$plan" | sed -n 's/^rule_bump=//p')"
 
           {
             echo "bump=$bump"
             echo "next_version=$version"
+            echo "declared=$declared"
+            echo "rule_bump=$rule_bump"
           } >> "$GITHUB_OUTPUT"
 
           if [ -z "$version" ]; then
             echo "::notice::## Unreleased is empty — there is nothing to release, so no pull request."
+          elif [ -n "$rule_bump" ]; then
+            echo "::notice::next release would be $version — $bump by declaration, where the rule read a $rule_bump"
           else
             echo "::notice::next release would be $version ($bump)"
           fi
@@ -192,6 +204,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.decide.outputs.next_version }}
           BUMP: ${{ needs.decide.outputs.bump }}
+          RULE_BUMP: ${{ needs.decide.outputs.rule_bump }}
         run: |
           set -euo pipefail
 
@@ -206,11 +219,20 @@ jobs:
           {
             printf 'Merging this **is** the %s release.\n\n' "$VERSION"
             printf 'It lands `release: %s` on `main`; a job there tags `v%s` and `release.yml` publishes the notes below, unchanged.\n\n' "$VERSION" "$VERSION"
-            printf 'The number is `%s` because the rule in `docs/RELEASING.md` § What a version number means read this as a **%s**.\n' "$VERSION" "$BUMP"
-            case "$BUMP" in
-              minor) printf 'If any of those machine-surface entries **removes, renames or changes the type of** a field, this is a major: add the `release: major` label and push anything to `main` to recompute.\n' ;;
-              patch) printf 'If something here touches a machine surface, it belongs under `### Machine surface` in `## Unreleased` — move it there and this becomes a minor.\n' ;;
-            esac
+            if [ -n "$RULE_BUMP" ]; then
+              # An overruled rule says so where somebody reads it. A number
+              # that quietly disagreed with the CHANGELOG would be
+              # indistinguishable from the rule having agreed all along, and
+              # the label that caused it is three clicks away in the sidebar.
+              printf 'The number is `%s`: a **%s**, declared by label, where `docs/RELEASING.md` § What a version number means read this as a **%s**.\n' "$VERSION" "$BUMP" "$RULE_BUMP"
+              printf 'Remove the `release: %s` label to go back to what the rule says.\n' "$BUMP"
+            else
+              printf 'The number is `%s` because the rule in `docs/RELEASING.md` § What a version number means read this as a **%s**.\n' "$VERSION" "$BUMP"
+              case "$BUMP" in
+                minor) printf 'If any of those machine-surface entries **removes, renames or changes the type of** a field, this is a major: add the `release: major` label and push anything to `main` to recompute.\n' ;;
+                patch) printf 'If something here touches a machine surface, it belongs under `### Machine surface` in `## Unreleased` — move it there and this becomes a minor.\n' ;;
+              esac
+            fi
             printf '\nThis branch is rebuilt from `main` on every push, so do not commit to it — edit `CHANGELOG.md` on `main` instead and it will come back changed.\n'
             printf '\n---\n\n'
             printf '%s\n' "$notes"
