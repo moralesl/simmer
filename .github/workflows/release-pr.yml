@@ -39,6 +39,7 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
+      act: ${{ steps.plan.outputs.act }}
       release_version: ${{ steps.plan.outputs.release_version }}
       next_version: ${{ steps.plan.outputs.next_version }}
       bump: ${{ steps.plan.outputs.bump }}
@@ -56,6 +57,27 @@ jobs:
           VERSION_OVERRIDE: ${{ inputs.version }}
         run: |
           set -euo pipefail
+
+          # Only `main` may act.
+          #
+          # This job is read-only and runs from anywhere — dispatching it from a
+          # branch is a useful dry run, and it says what a release from that
+          # branch would be. Everything BELOW it writes, and writes relative to
+          # whatever ref this run checked out: from a feature branch it would
+          # have built `release/next` out of that branch and opened a pull
+          # request whose diff was the branch, titled `release: X.Y.Z`. The tag
+          # job is the same mistake with no way back — a bumped, untagged
+          # version on any ref would have been tagged and published from a
+          # commit nobody released.
+          #
+          # `gh workflow run release-pr.yml --ref main` still does everything;
+          # that is the documented dispatch, and it is on main.
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            echo "act=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "act=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$GITHUB_REF is not main, so this run only reports — nothing is pushed, opened, tagged or published."
+          fi
 
           # Only X.Y.Z tags. This repository also carries `v0.1` and
           # `v0.0-lease` from before the version rule existed, and a
@@ -125,7 +147,9 @@ jobs:
 
   pull-request:
     needs: decide
-    if: needs.decide.outputs.next_version != ''
+    if: >-
+      needs.decide.outputs.act == 'true'
+      && needs.decide.outputs.next_version != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write        # push release/next
@@ -235,7 +259,9 @@ jobs:
 
   tag:
     needs: decide
-    if: needs.decide.outputs.release_version != ''
+    if: >-
+      needs.decide.outputs.act == 'true'
+      && needs.decide.outputs.release_version != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -283,7 +309,12 @@ jobs:
   # whole release in one run somebody can watch, instead of a second run to go
   # and find.
   publish:
-    needs: tag
+    needs: [decide, tag]
+    # A skipped `tag` skips this anyway, so the guard here is redundant — and
+    # it is here on purpose. The rule is "every job that writes carries it",
+    # with no exception to remember, which is what lets `ReleaseRuleTests`
+    # assert it of the whole file rather than of a list somebody maintains.
+    if: needs.decide.outputs.act == 'true'
     uses: ./.github/workflows/release.yml
     permissions:
       contents: write

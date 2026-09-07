@@ -20,6 +20,10 @@ import Testing
         .deletingLastPathComponent()
         .deletingLastPathComponent()
 
+    static func read(_ relativePath: String) throws -> String {
+        try String(contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8)
+    }
+
     struct Result {
         let out: String, err: String, code: Int32
 
@@ -292,6 +296,71 @@ import Testing
                               version: "0.3.1")
         #expect(result.code != 0)
         #expect(result.err.contains("the version rule says this release is 1.0.0, not 0.3.1"))
+    }
+
+    // ── the workflow's one structural rule ──────────────────────────────────
+
+    /// Every job in `release-pr.yml` that can write is gated on `main`.
+    ///
+    /// `decide` is read-only and deliberately runs from anywhere: dispatching
+    /// it from a branch is a useful dry run of what a release would be. Every
+    /// job below it writes relative to whatever ref the run checked out, and
+    /// from a feature branch that meant building `release/next` out of that
+    /// branch — a pull request whose diff was the branch, titled `release:
+    /// X.Y.Z` — and, in the tag job, tagging and publishing a bumped version
+    /// from a commit nobody released. That one has no way back.
+    ///
+    /// A one-line `if:` is exactly the kind of thing a later edit drops without
+    /// anyone noticing, and no test that runs the workflow can exist, so this
+    /// reads the file. It asserts the RULE rather than a list of job names:
+    /// a job added tomorrow with `contents: write` and no guard fails here,
+    /// which is the only version of this check worth having.
+    @Test func everyJobThatWritesIsGatedOnMain() throws {
+        let workflow = try Self.read(".github/workflows/release-pr.yml")
+        let jobs = Self.jobs(in: workflow)
+
+        #expect(jobs["decide"] != nil, "release-pr.yml lost its decide job, and with it the guard everything reads")
+        let decide = jobs["decide"] ?? ""
+        #expect(!Self.writes(decide),
+                "decide must stay read-only — it is the one job that runs from any ref")
+        #expect(decide.contains("refs/heads/main"),
+                "decide no longer computes the guard, so nothing below it can be gated on anything")
+
+        let writers = jobs.filter { $0.key != "decide" && Self.writes($0.value) }
+        #expect(writers.count >= 3,
+                "expected the branch, tag and publish jobs to declare write access; found \(writers.keys.sorted()) — if they were renamed, say so here, and if they stopped declaring it, this check has quietly stopped covering them")
+
+        for (name, body) in writers.sorted(by: { $0.key < $1.key }) {
+            #expect(body.contains("needs.decide.outputs.act == 'true'"),
+                    "job \(name) can write but is not gated on main")
+        }
+    }
+
+    /// The `jobs:` mapping, split into one block per job id. Two spaces of
+    /// indent is a job key; anything more indented belongs to it.
+    static func jobs(in workflow: String) -> [String: String] {
+        var jobs: [String: String] = [:]
+        var current: String?
+        var inJobs = false
+        for line in workflow.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line == "jobs:" { inJobs = true; continue }
+            guard inJobs else { continue }
+            // A job key: exactly two spaces, a name, a colon, nothing after it.
+            if line.hasPrefix("  "), !line.hasPrefix("   "),
+               line.hasSuffix(":"), !line.dropFirst(2).contains(" ") {
+                current = String(line.dropFirst(2).dropLast())
+                jobs[current!] = ""
+                continue
+            }
+            if let current { jobs[current, default: ""] += line + "\n" }
+        }
+        return jobs
+    }
+
+    /// Whether a job asks for a permission that reaches outside its own run.
+    static func writes(_ job: String) -> Bool {
+        ["contents: write", "pull-requests: write", "actions: write", "packages: write"]
+            .contains { job.contains($0) }
     }
 
     /// A fresh `## Unreleased` written BELOW the new section would send every

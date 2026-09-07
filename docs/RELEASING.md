@@ -81,6 +81,9 @@ gh workflow run release-pr.yml --ref main
 That workflow also takes a `version` input, which names the number outright.
 It is the escape hatch for the release the rule cannot see; every check below still runs the same way.
 
+**Only `main` acts.** Dispatched from any other ref, `release-pr.yml` reports what a release from that ref would be and stops — nothing is pushed, opened, tagged or published.
+Without that, a dispatch from a feature branch would have built `release/next` out of *that* branch, and a bumped version on it would have been tagged and published from a commit nobody released.
+
 ## When the automatic pull request is wrong
 
 It is a pull request.

@@ -13,6 +13,7 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   Reading it is the review; merging it lands the release commit, and a job on `main` sees a version no tag names, tags it, and hands over to the publish path.
   So a release can be taken from a phone, and the decision stays exactly where it was: a person, in front of something they can read first.
   Nothing about what a release IS moves — `release.yml` is called rather than copied, so every check that stood before a tag still stands before it, on the same commit, in the same order.
+  Only `main` acts: run from any other ref the workflow reports what a release would be and stops, so a dispatch from a branch cannot open a pull request out of that branch or tag a commit nobody released.
 - **The version number is read out of the CHANGELOG rather than remembered.**
   `scripts/release.sh` is `docs/RELEASING.md` § What a version number means, as code: an entry under `### Machine surface` or `### The test seam` in `## Unreleased` makes the next release a **minor**, an empty section means there is nothing to release, and anything else is a **patch**.
   A minor is *declared* by writing under one of those headings, never guessed from prose — "adds a `--json` field" and "adds a menu row" are the same sentence to a machine.
