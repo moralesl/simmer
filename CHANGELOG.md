@@ -26,7 +26,8 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 - **A menu row that copies says so.** Handing a command to the clipboard was the one menu action with no visible consequence: the menu closed, the clipboard had changed, and nothing on screen said which — indistinguishable from a row that did nothing.
   It now posts a banner naming the command.
   Raycast needed nothing: its own copy action shows a HUD when it fires.
-- **The release notes, before you install anything.** `simmer update` prints the release's own page under the install command, the menu bar's update group carries **Release notes…**, and Raycast's check gets an *Open Release Notes* action. simmer composes the URL from the tag and fetches nothing for it — its one outbound request is still the `HEAD` that names the newest release, and the browser does the reading.
+- **The release notes, before you install anything.** `simmer update` prints the release's own page under the install command, the menu bar's update group carries **Release notes…**, and Raycast's check gets an *Open Release Notes* action.
+  simmer composes the URL from the tag and fetches nothing for it — its one outbound request is still the `HEAD` that names the newest release, and the browser does the reading.
 - **The same answer in four more places.** A conditional row in the menu bar carrying **Install it now** and the command to copy, plus a permanent "Check for Updates…" item; a footer that always says which version you are on and which is newest; an informational row in `doctor`; a row in the Raycast claims list and a "Simmer Check for Updates" command.
   All of them render from one `UpdateCommand` in the core, so they cannot disagree about what "up to date" means.
 - **`Simmer.app` checks once a day**, off the main thread, and posts **one banner per new version** — never the same version twice, and nothing at all when you are current, ahead of the newest release, or the check could not answer.
@@ -112,7 +113,8 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   A structural test now derives both from the source and fails if they disagree.
 - **A failing `update --apply` reported its failure before the plan it describes.** `simmer update --apply > log 2>&1` — which is how anybody reports this going wrong — read back with "Could not install simmer 0.3.0" on the first line and "▸ updating simmer 0.2.0 → 0.3.0" on the third.
   `print` goes through stdio, which block-buffers when stdout is not a terminal, while a refusal is written straight to the stderr descriptor: correct on a tty, backwards in every log a person would send you.
-  Stdout is now flushed before any stderr is written, so one command writing to both comes back in the order it said things. An acceptance test asserts it through a single descriptor, because two pipes cannot see a sequence at all.
+  Stdout is now flushed before any stderr is written, so one command writing to both comes back in the order it said things.
+  An acceptance test asserts it through a single descriptor, because two pipes cannot see a sequence at all.
 - **`make test-raycast` tests the checkout rather than whatever is installed.** The extension resolves its own binary — `~/.local/bin/simmer` first — so the lane measured the installed copy, and a change adding a `--json` field was red with "update --json lost release_notes_url": a message naming the field and not the cause, green again only after `make install`, while the Swift lane had been green all along.
   It now builds and points `SIMMER_BIN` at the same debug product `make test` drives.
 
