@@ -109,6 +109,11 @@ Raycast copies each command's declaration verbatim, which is what makes that sou
 The row is **absent** where Raycast or the extension is not installed — an uninstalled launcher is not a finding — and **ℹ** where one side cannot be read (a Homebrew install has no checkout; a checkout predating the extension has no `integrations/raycast`).
 Never red, for the reason `agent_protocol` is never red: a stale renderer is not a broken install, and a row that can go red for it teaches the reader to skim the ones that mean something.
 
+**And "current" here means the manifests agree, not that the code does.** A change confined to the extension's TypeScript — a bug fix inside `claims.tsx`, a reworded empty state — declares nothing new, so a copy Raycast built before it still reads as current.
+That is a known limit rather than an oversight, and it is the price of the only comparison that stays true when the registered extension was built from a different checkout than provenance points at.
+The row is worth having anyway: what it *does* catch is the case nobody can otherwise see, a release that added a command which is simply not in the root search.
+Anything stronger needs a build stamp the extension does not currently write.
+
 **`app_drift` is the one update-shaped thing that is a fault.** `make install` symlinks the CLI at the copy inside the bundle, so the two are normally one file and cannot differ.
 When they do, the menu bar, the event-driven half of the guard and the notification identity are all the previous version running against the current ledger — which is why `doctor` reports it red while it reports being out of date as information.
 

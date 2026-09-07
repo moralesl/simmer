@@ -40,8 +40,10 @@ The bundle row is the same checkout `simmer update --apply` builds from, moved o
 
 **Turn the unattended install off first, or it comes straight back.** `simmer update --auto off`.
 With it on, the app's next daily check finds the newer release again and installs it — a rollback and an unattended update disagree, and the update wins because it runs later.
-Even with it off, `simmer update --apply` installs the newest release whenever it is next run, by you or from the menu; a rollback pins nothing.
-If you need the older version to stay, stay off `--apply` until the release that fixed the problem is out.
+**A rollback pins nothing, and nothing here pretends otherwise.** `simmer update --apply` installs the **newest** release every time it is run — that is the only thing it does. It does not know you went back on purpose and it has no memory of the version you chose, so the next `--apply`, whether you type it or press **Install it now** in the menu bar, undoes the rollback.
+There is no pin, deliberately: a switch that suppresses updates indefinitely is a switch people leave on.
+So while you are waiting out a bad release, do not run `--apply` and do not press that row — `simmer update` on its own is safe, it only reports.
+Take the fix when it ships.
 
 **What it does to your state: nothing.** Claims are `format=2` key=value files in every tagged release, the key set has not changed since `0.1.0`, and every parser ignores keys it does not know — that is what "machine surfaces are append-only" buys you in the one direction nobody plans for.
 So an older binary reads state a newer one wrote, and a claim you are relying on survives the rollback.

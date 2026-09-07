@@ -91,6 +91,8 @@ It does **not** run `ray lint` or `ray build`: the `ray` CLI is macOS-only and e
   The `raycast_extension` row compares the commands `package.json` declares against the ones the registered copy at `~/.config/raycast/extensions/simmer/` can actually run, and prints `npm ci && npm run dev` when they disagree.
   Informational, never red, and absent entirely on a Mac without Raycast.
   It compares the manifest rather than a version because a Raycast extension has none — [Raycast's own docs](https://developers.raycast.com) are explicit that a manifest declares no `version` during development.
+  **So "current" means the manifests agree, not that the code does:** a change confined to the TypeScript here declares nothing new and a copy Raycast built before it still reads as current.
+  Comparing manifests is the only signal that stays true when Raycast registered the extension from a different checkout than the installed simmer knows about, which is the normal case for a bundle install — so rebuild after any change to this directory rather than waiting for `doctor` to notice one.
 - **No polling.** The countdown ticks locally from `until`; the list re-reads only when `$STATE/claims` or `$STATE/cap` changes, which is the same watch `LedgerWatcher` arms.
 - **The icon** is `assets/simmer.png`, the 512px face out of the shared `assets/icon.icns`.
   To regenerate: `iconutil -c iconset ../../assets/icon.icns -o /tmp/simmer.iconset` and copy `icon_512x512.png`.
