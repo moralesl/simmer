@@ -120,10 +120,30 @@ final class AppState {
                 appVersion: install.bundleVersion(), ledger: ledger,
                 source: source, cached: false, seamed: seamed)
             DispatchQueue.main.async {
+                // One banner per new version, whoever's check found it. A
+                // check somebody asked for answers through its own banner
+                // (`finished`), so this records the version and posts nothing:
+                // tomorrow's background check must not repeat what they read
+                // just now. That is also why the recording happens on both
+                // paths and the posting on only one.
+                let banner = self.recordUpdateAnnouncement(report, ledger: ledger)
+                if !force, let banner { Notifier.shared.post([banner]) }
                 finished?(report)
                 NotificationCenter.default.post(name: .simmerStateChanged, object: nil)
             }
         }
+    }
+
+    /// Marks this check's version as announced and hands back the banner for
+    /// it, or nil when it is not news. The decision is
+    /// `UpdateCommand.announcement`; all this adds is the disk.
+    private func recordUpdateAnnouncement(_ report: UpdateCommand.Report,
+                                          ledger: Ledger) -> NotificationRequest? {
+        guard let announcement = UpdateCommand.announcement(
+            report, lastAnnounced: ledger.readAnnouncedUpdate(),
+            seamed: environment.isSeamed) else { return nil }
+        ledger.writeAnnouncedUpdate(announcement.announced, now: environment.now())
+        return announcement.notification
     }
 
     /// Is there a plan for this install, or only a command to copy.

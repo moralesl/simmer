@@ -350,6 +350,15 @@ public struct Ledger: Sendable {
     /// UserDefaults, all of its state is here, and `doctor` can then read a
     /// person's decision without asking the app whether it is running.
     public var updateCheckOffFile: URL { stateDir.appendingPathComponent("update-check.off") }
+    /// The newest release a person has been TOLD about — a different fact from
+    /// what the last check found, and therefore its own file.
+    ///
+    /// `update-check` is overwritten by every check, including the ones nobody
+    /// sees; this survives them, because it records what was said rather than
+    /// what was read. Keeping it as a field in that record would mean every
+    /// writer of the check had to carry the announcement forward, and
+    /// `UpdateCommand.check` has no business knowing what has been announced.
+    public var updateAnnouncedFile: URL { stateDir.appendingPathComponent("update-announced") }
 
     public func enqueueNotification(_ request: NotificationRequest, now: Int) {
         let json = JSONValue.object([
@@ -472,6 +481,26 @@ public struct Ledger: Sendable {
         guard checked > 0 else { return nil }
         return UpdateRecord(checkedAt: checked, installed: installed, latest: latest,
                             error: error, seamed: seamed)
+    }
+
+    /// The release tag the person has already been told about, or empty when
+    /// nothing has been announced yet.
+    public func readAnnouncedUpdate() -> String {
+        guard let text = try? String(contentsOf: updateAnnouncedFile, encoding: .utf8)
+        else { return "" }
+        for line in text.split(separator: "\n") {
+            let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            if parts.count == 2, parts[0] == "latest" { return String(parts[1]) }
+        }
+        return ""
+    }
+
+    public func writeAnnouncedUpdate(_ tag: String, now: Int) {
+        _ = atomicWrite("""
+        latest=\(Claim.singleLine(tag, limit: 64))
+        announced_at=\(now)
+
+        """, to: updateAnnouncedFile)
     }
 
     /// Whether the app may check on its own. A person's answer, not a seam —

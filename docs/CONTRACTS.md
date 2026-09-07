@@ -82,7 +82,10 @@ The two exceptions are the flat surfaces, which have no types at all: `--machine
 A reader must never have to discover that one field answers the same question in a different type than its neighbour, and one field must never carry two types across two surfaces of the same binary.
 The acceptance suite asserts this against the raw JSON text, because `JSONSerialization` bridges `0`/`1` to `Bool` and would let exactly that drift through a typed assertion.
 
-`update --json`: `action` (`checked`, or `updated`/`refused` under `--apply`), `verdict` (`current`·`available`·`ahead`·`unknown`), `installed`, `latest` (the release tag as published, `v` and all, or `null`), `update_available` (boolean), `provenance` (`homebrew`·`bundle`·`checkout`·`unknown`), `update_command`, `app_version` (the installed bundle's, or `null`), `app_drift` (boolean), `checked_at`, `cached` (boolean), `error` (or `null`), `seamed` (boolean).
+`update --json`: `action` (`checked`, or `updated`/`refused` under `--apply`), `verdict` (`current`·`available`·`ahead`·`unknown`), `installed`, `latest` (the release tag as published, `v` and all, or `null`), `update_available` (boolean), `provenance` (`homebrew`·`bundle`·`checkout`·`unknown`), `update_command`, `app_version` (the installed bundle's, or `null`), `app_drift` (boolean), `checked_at`, `cached` (boolean), `error` (or `null`), `seamed` (boolean), `release_notes_url` (the page for `latest`, or `null`).
+
+**`release_notes_url` is composed, never fetched.** It is `<repository>/releases/tag/<latest>`, and it is `null` unless `latest` parses as a version — the tag arrives as the last path component of a redirect and round-trips through a `key=value` cache file, and this is the field a surface hands to a browser.
+Reading the notes costs simmer no request: the one outbound request stays the `HEAD` that names the newest tag, and the browser fetches the page.
 
 **`latest` keeps the `v`; the human surfaces drop it.** The field is the string a caller hands to `git checkout` or matches against a release page, so it is the tag verbatim.
 A sentence that puts `v0.3.0` next to `0.2.0` reads like two different kinds of thing, so the prose says `0.3.0` — presentation, which guarantee 5 leaves free.
@@ -130,6 +133,9 @@ Neither field changed meaning when the second clock arrived; `fits` and the exit
   Not a machine surface: `simmer update --json` is how anything else asks, so this stays an implementation detail rather than a fifth format to keep append-only.
   It records whether the check was `seamed`, and an unseamed reader discards a seamed record — a `SIMMER_FAKE_LATEST` left exported in a shell rc must not put "Update available: 9.9.9" in a person's menu bar.
 - `update-check.off` — present when a person has turned the app's once-a-day check off.
+- `update-announced` — the newest release a person has already been TOLD about, `key=value`.
+  A different fact from what the last check found, and therefore a different file: `update-check` is overwritten by every check, including the ones nobody sees, while this records what was said rather than what was read.
+  It is what makes the app's daily check post one banner per new version instead of one a day — and a check somebody asked for by hand records it too, so tomorrow's background check does not repeat what they have just read.
 - additionally, an append-only `events.jsonl` (one JSON object per transition: `v`, `ts`, `event`, `reason`, `owner`, …).
 
 A `format=1` lease is read **once**, converted into a claim, and deleted.
@@ -171,6 +177,7 @@ Any implementation MUST honour these, or it cannot be tested without root and wi
 | `SIMMER_NOTIFIER_APP=<path>` | **retired in the rewrite** (was: notifier bundle override). The spool lives under `XDG_STATE_HOME`, so notification routing is seam-isolated by construction; see PLATFORM-FACTS.md on per-executable grants |
 | `SIMMER_FAKE_LATEST=<tag\|error>` | the newest published release, e.g. `v0.3.0`; `error` is the offline path. **A process that is seamed at all and has not been given this reads nothing over the network** — while a `SIMMER_FAKE_*` is in force nothing this process reports is about this machine, and a live network read would be the one exception. That is what makes the suite hermetic without a rule anyone has to remember |
 | `SIMMER_FAKE_APPLY=<file>` | `--apply`'s steps are appended to this file and reported as having succeeded, instead of being run. `--apply` spawns `git` and `make`, and anything spawned has a seam — the suite that called itself hermetic leaked 222 `caffeinate` processes through exactly this gap |
+| `SIMMER_FAKE_APPLY_FAIL=<phase>` | which recorded step reports failure instead of success: `fetching`, `switching`, `installing` or `relaunching`. With `SIMMER_FAKE_APPLY` alone every step succeeds, so the failure half of `--apply` — the sentence a person reads on the worst day this feature has — was reachable only by breaking a real install. Named by phase because the phase decides the sentence, and because `relaunching` is not one of the plan's own steps. Anything that is not a phase fails nothing: a typo must not silently turn a failure test green |
 | `SIMMER_FAKE_BATTERY_TIME=<seconds>` | macOS's own time-to-empty estimate, which `budget` scales into the battery clock — see § Two clocks |
 | `SIMMER_BIN=<path>` | which binary integrations exec, **honoured only while `SIMMER_FAKE_PMSET` is also set**. It decides what a menu-bar or launcher row executes, which is not a decision one unguarded environment variable may make on a real install; there it is redundant anyway, because the binary knows its own path |
 | `SIMMER_SKILL_DIR=<dir>` | where the generated agent protocol lives, for `doctor`'s staleness row. Needed because `homeDirectoryForCurrentUser` reads the passwd entry and ignores `HOME`, so this one read would otherwise reach the tester's real `~/.claude` |
@@ -284,7 +291,8 @@ All additive to the surface above:
   `doctor` therefore answers the same on a train as in the office.
 - **One outbound request, and it is the only one.** A `HEAD` to `github.com/moralesl/simmer/releases/latest`, whose redirect names the newest tag.
   It carries a `simmer/<version>` User-Agent and nothing else: no identifier, no machine detail, no telemetry, ever.
-  The app makes it at most once a day and posts no banner for it; `simmer update` makes it when asked.
+  The app makes it at most once a day; `simmer update` makes it when asked.
+  A check that finds a version nobody has been told about posts **one** banner and records the tag in `update-announced` (§ State), so the cost of the feature is one banner per release rather than one a day — and being months behind is no longer something a Mac can be silently.
 - **`--apply` runs the command it would have printed, and never anything else.** Three properties hold, and they are what make it something this tool can offer at all rather than a convenience bolted on:
   1. **It never pipes the network into a shell.** The printed command for a bundle install is `curl … | bash`; the plan updates the installer's own checkout (`~/.local/share/simmer`) and runs `make install` there — local files, the same recipe `bootstrap.sh` would have run.
      An acceptance test asserts that nothing executed contains `curl`, `bash` or a pipe.
@@ -293,6 +301,9 @@ All additive to the surface above:
   3. **It refuses rather than guesses.** A developer's own checkout is never moved onto a tag: it may hold local commits, an unfinished branch or a stash, and a person running from a checkout has a terminal by definition.
      An install this cannot place, or one with no checkout to build from, is refused with the command that does work.
      Not knowing whether there is an update refuses too.
+- **A step that fails says what did not finish, and what to do.** Each step carries the part of the update it is doing — fetching the release, switching to it, installing it, relaunching the app — and the first line of the failure is a sentence naming that part, whether anything on the Mac changed, and the command that works from a terminal.
+  The failing command and its stderr tail stay underneath it, and in `--json`'s `apply_error` unchanged: the sentence is for the person, the command is what a caller has always parsed.
+  `relaunching` is the one phase that is not a failed install — the update landed and the menu bar did not come back — so it exits 0, keeps `applied: true`, sets no `apply_error`, and says to open the app rather than to run the installer again.
 - **`simmer guard`** is the tick's CLI spelling — what the LaunchAgent runs.
   It never prompts (sudo -n or nothing) and exits 1 only when the switch could not be moved.
 

@@ -96,7 +96,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                   updateLine: UpdateCommand.statusLine(update),
                                   updateCommand: update.install.updateCommand,
                                   versionLine: UpdateCommand.footerLine(update),
-                                  canApplyUpdate: AppState.shared.canApplyUpdate(update))
+                                  canApplyUpdate: AppState.shared.canApplyUpdate(update),
+                                  releaseNotesURL: update.releaseNotesURL)
         let model = MenuModel.build(aggregate: ctx.aggregate(), batteryLine: batteryLine,
                                     install: install)
         for entry in model {
@@ -173,6 +174,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         case .copyCLI(let command):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(command, forType: .string)
+            // The menu is already closing, so the banner is the only place
+            // this can be said. What to say is `MenuModel.copied`'s decision.
+            Notifier.shared.post(MenuModel.copied(command).notifications)
         case .openSetup:
             SetupWindow.shared.show()
         case .checkForUpdates:
@@ -185,6 +189,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             }
         case .applyUpdate:
             AppState.shared.applyUpdate()
+        case .openReleaseNotes(let url):
+            // The browser fetches the notes; simmer does not. Its one
+            // outbound request stays the `HEAD` that names the newest tag
+            // (CONTRACTS.md § One outbound request).
+            if let url = URL(string: url) { NSWorkspace.shared.open(url) }
         case .quit:
             NSApp.terminate(nil)
         }

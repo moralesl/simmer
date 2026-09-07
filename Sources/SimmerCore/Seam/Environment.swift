@@ -162,6 +162,22 @@ public struct SimmerEnvironment: Sendable {
         env["SIMMER_FAKE_APPLY"].flatMap { $0.isEmpty ? nil : $0 }
     }
 
+    /// Which step of a recorded plan reports failure instead of success.
+    ///
+    /// `SIMMER_FAKE_APPLY` alone can only record success, so the whole failure
+    /// half of `--apply` — the sentence a person reads when an update breaks,
+    /// the exit code, the banner — was reachable only by breaking a real
+    /// install. Named by phase rather than by index because the phase is what
+    /// decides the sentence, and because the relaunch is not one of the plan's
+    /// own steps and an index could not address it.
+    ///
+    /// Nil for anything that is not a phase: a typo must not silently mean
+    /// "fail nothing", which is the same reading `--json` is honoured or
+    /// refused for.
+    public var applyFailurePhase: UpdateCommand.ApplyPhase? {
+        env["SIMMER_FAKE_APPLY_FAIL"].flatMap { UpdateCommand.ApplyPhase(rawValue: $0) }
+    }
+
     /// The home directory, `HOME` first.
     ///
     /// `homeDirectoryForCurrentUser` reads the passwd entry and ignores `HOME`,

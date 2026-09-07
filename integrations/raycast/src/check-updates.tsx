@@ -111,10 +111,20 @@ export default function Command() {
             icon={Icon.ArrowClockwise}
             onAction={revalidate}
           />
+          {/*
+            One row, pointed as precisely as simmer can point it: the notes
+            for the release it named when there is one, the index otherwise.
+            The URL comes from the field rather than being composed here, so
+            this and the menu bar cannot disagree about which page it is.
+          */}
           <Action
-            title="Open the Releases Page"
+            title={
+              data?.release_notes_url ? "Open Release Notes" : "Open the Releases Page"
+            }
             icon={Icon.Globe}
-            onAction={() => open(`${REPO}/releases`)}
+            onAction={() =>
+              open(data?.release_notes_url ?? `${REPO}/releases`)
+            }
           />
         </ActionPanel>
       }
@@ -133,7 +143,7 @@ function body(update: SimmerUpdate): string {
     : "";
   switch (update.verdict) {
     case "available":
-      return `# simmer ${update.latest} is out\n\nYou have ${update.installed}, ${describe(update)}.\n\n**⏎ Install it now**, or take the command:\n\n\`\`\`\n${update.update_command}\n\`\`\`\n\nInstalling asks for no password and never pipes a script from the internet into a shell. Simmer.app quits and comes back; a claim you are holding survives it.${drift}`;
+      return `# simmer ${update.latest} is out\n\nYou have ${update.installed}, ${describe(update)}.\n\n**⏎ Install it now**, or take the command:\n\n\`\`\`\n${update.update_command}\n\`\`\`\n\nInstalling asks for no password and never pipes a script from the internet into a shell. Simmer.app quits and comes back; a claim you are holding survives it.${notes(update)}${drift}`;
     case "current":
       return `# Up to date\n\nsimmer ${update.installed} is the newest release, ${describe(update)}.${drift}`;
     case "ahead":
@@ -141,6 +151,17 @@ function body(update: SimmerUpdate): string {
     case "unknown":
       return `# Could not tell\n\n${update.error ?? "no reason given"}\n\nYou have simmer ${update.installed}.`;
   }
+}
+
+/**
+ * What is in it, before you install it. simmer composes the URL from the tag
+ * and fetches nothing — its one outbound request is the `HEAD` that names the
+ * newest release.
+ */
+function notes(update: SimmerUpdate): string {
+  return update.release_notes_url
+    ? `\n\nRead what changed first: [release notes](${update.release_notes_url}).`
+    : "";
 }
 
 function describe(update: SimmerUpdate): string {

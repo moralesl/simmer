@@ -17,10 +17,19 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   A bundle install has the one-paste installer's checkout at `~/.local/share/simmer`, so the plan fetches the new tag there and runs `make install`; Homebrew gets `brew upgrade simmer`.
   It refuses in a developer's own checkout — that may hold local commits, an unfinished branch or a stash — and refuses when it cannot tell whether there is anything to install.
   `applied`, `steps` and `apply_error` on `--json`; exit 0 means nothing is left to do.
+- **An update that fails says what did not finish.** `git -C … checkout --quiet v0.9.0 failed — fatal: reference is not a tree` names a command nobody typed, in a checkout most people do not know they have, and answers neither of the two questions that matter.
+  The first line is now a sentence: which part of the update stopped — fetching the release, switching to it, installing it, relaunching the app — whether anything on the Mac changed, and the command that works from a terminal. The failing command and its stderr tail follow it, and the banner carries the sentence.
+  A relaunch that fails is the one case that is not a failed install: the update landed, the exit code stays 0, and the sentence says to open Simmer.app rather than to run the installer again. Before this its only sign was the absence of "· Simmer.app relaunched" from a success line.
+- **A menu row that copies says so.** Handing a command to the clipboard was the one menu action with no visible consequence: the menu closed, the clipboard had changed, and nothing on screen said which — indistinguishable from a row that did nothing.
+  It now posts a banner naming the command. Raycast needed nothing: its own copy action shows a HUD when it fires.
+- **The release notes, before you install anything.** `simmer update` prints the release's own page under the install command, the menu bar's update group carries **Release notes…**, and Raycast's check gets an *Open Release Notes* action.
+  simmer composes the URL from the tag and fetches nothing for it — its one outbound request is still the `HEAD` that names the newest release, and the browser does the reading.
 - **The same answer in four more places.** A conditional row in the menu bar carrying **Install it now** and the command to copy, plus a permanent "Check for Updates…" item; a footer that always says which version you are on and which is newest; an informational row in `doctor`; a row in the Raycast claims list and a "Simmer Check for Updates" command.
   All of them render from one `UpdateCommand` in the core, so they cannot disagree about what "up to date" means.
-- **`Simmer.app` checks once a day**, off the main thread, and posts no banner for it — it updates the menu and stops there.
-  Off via the setup window's new checkbox or `SIMMER_NO_UPDATE_CHECK=1`.
+- **`Simmer.app` checks once a day**, off the main thread, and posts **one banner per new version** — never the same version twice, and nothing at all when you are current, ahead of the newest release, or the check could not answer.
+  Before this the daily check updated the menu and said nothing, so a colleague who never opens the menu bar could be months behind with no way to find out; a banner a day for the same release would have been the other failure.
+  A check you ask for by hand answers with its own banner and records the version too, so tomorrow's background check does not repeat what you have just read.
+  Off via the setup window's checkbox or `SIMMER_NO_UPDATE_CHECK=1`.
 - **`doctor` reports a half-finished install as red.** `Simmer.app` and the CLI are normally the same file, so a version disagreement between them means one was replaced and the other was not — which a package manager that upgrades only the CLI would produce routinely.
   Being merely out of date stays informational.
 
@@ -42,13 +51,15 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ### Machine surface
 
-- **New:** `update --json` (`action`, `verdict`, `installed`, `latest`, `update_available`, `provenance`, `update_command`, `app_version`, `app_drift`, `checked_at`, `cached`, `error`, `seamed`), and the `update` and `app_version` rows in `doctor --json`.
+- **New:** `update --json` (`action`, `verdict`, `installed`, `latest`, `update_available`, `provenance`, `update_command`, `app_version`, `app_drift`, `checked_at`, `cached`, `error`, `seamed`, `release_notes_url`), and the `update` and `app_version` rows in `doctor --json`.
   Nothing existing changed.
 - **New seam:** `SIMMER_FAKE_APPLY=<file>` — `--apply`'s steps are recorded instead of run, which is how the plan is asserted without a build.
+- **New seam:** `SIMMER_FAKE_APPLY_FAIL=<fetching|switching|installing|relaunching>` — which recorded step reports failure, so the failure half of `--apply` is testable without breaking an install. Anything that is not a phase fails nothing.
 - **New seam:** `SIMMER_FAKE_LATEST=<tag|error>`.
   A process that is seamed at all and has not been given it reads nothing over the network, which is what keeps both suites hermetic.
-- **New state:** `$XDG_STATE_HOME/simmer/update-check` and `update-check.off`.
-  Neither is a machine surface — `simmer update --json` is how anything else asks.
+- **New state:** `$XDG_STATE_HOME/simmer/update-check`, `update-check.off` and `update-announced`.
+  None is a machine surface — `simmer update --json` is how anything else asks.
+  `update-announced` is the version a person has been told about, which is a different fact from what the last check found and therefore a different file: `update-check` is overwritten by every check, including the ones nobody sees.
 
 ### Fixed
 
@@ -61,6 +72,8 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   **What is not pinned is why an optimised build drops it**, and this entry does not guess: `doctor --json` assembles its Outcome in the CLI in exactly the same shape and has never lost a byte, so "do not build an Outcome in the CLI" is not a rule this defect earns. The guarantee that replaces it is a lane, not a pattern — `make test-release` runs the acceptance suite against `.build/release/simmer` on both OS legs, and it failed on both the first time it ran.
 - **A new subcommand can no longer be unreachable.** The sugar layer's verb list and the parser's subcommand list are two hand-kept lists in two files, and a name missing from the first made a working command report "did not understand the duration".
   A structural test now derives both from the source and fails if they disagree.
+- **`make test-raycast` tests the checkout rather than whatever is installed.** The extension resolves its own binary — `~/.local/bin/simmer` first — so the lane measured the installed copy, and a change adding a `--json` field was red with "update --json lost release_notes_url": a message naming the field and not the cause, green again only after `make install`, while the Swift lane had been green all along.
+  It now builds and points `SIMMER_BIN` at the same debug product `make test` drives.
 
 ## 0.2.0 — 2026-08-28
 

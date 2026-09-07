@@ -73,7 +73,9 @@ enum Runtime {
     /// dozen lines nobody asked for here, and the part worth showing when it
     /// fails is the tail of stderr, which is what the failure sentence carries.
     static func execute(_ step: SimmerCore.UpdateCommand.ApplyStep,
-                        recordTo file: String?) -> (ok: Bool, detail: String) {
+                        recordTo file: String?,
+                        failing phase: SimmerCore.UpdateCommand.ApplyPhase? = nil)
+        -> (ok: Bool, detail: String) {
         if let file {
             let line = step.described + "\n"
             if let handle = FileHandle(forWritingAtPath: file) {
@@ -82,6 +84,11 @@ enum Runtime {
                 try? handle.close()
             } else {
                 try? line.write(toFile: file, atomically: true, encoding: .utf8)
+            }
+            // Recorded either way: what a plan attempted is the thing this
+            // seam exists to assert, and a step that "failed" still ran.
+            guard phase != step.phase else {
+                return (false, "SIMMER_FAKE_APPLY_FAIL=\(step.phase.rawValue)")
             }
             return (true, "recorded")
         }

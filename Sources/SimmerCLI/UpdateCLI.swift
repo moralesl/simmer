@@ -95,19 +95,28 @@ struct UpdateCLI: ParsableCommand {
                 }
             }
             for step in plan.steps {
-                let result = Runtime.execute(step, recordTo: env.applyRecordFile)
+                let result = Runtime.execute(step, recordTo: env.applyRecordFile,
+                                             failing: env.applyFailurePhase)
                 guard result.ok else {
                     answer(.failed(step: step, detail: result.detail, plan: plan))
                 }
             }
 
             var reopened = false
+            var relaunchFailure: String?
             if appWasRunning, let bundle = plan.reopenBundle {
-                reopened = Runtime.execute(
-                    .init(executable: "/usr/bin/open", arguments: [bundle]),
-                    recordTo: env.applyRecordFile).ok
+                let result = Runtime.execute(UpdateCommand.reopenStep(bundle: bundle),
+                                             recordTo: env.applyRecordFile,
+                                             failing: env.applyFailurePhase)
+                reopened = result.ok
+                // Said, not swallowed. Without this the only sign is the
+                // absence of "· Simmer.app relaunched" from a success line —
+                // which nobody reads as "your menu bar is gone". The exit code
+                // and `applied` stay as they are: the update landed.
+                if !result.ok { relaunchFailure = result.detail }
             }
-            answer(.installed(plan: plan, reopened: reopened))
+            answer(.installed(plan: plan, reopened: reopened,
+                              relaunchFailure: relaunchFailure))
         }
     }
 }

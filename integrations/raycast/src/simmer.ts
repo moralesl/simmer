@@ -70,6 +70,13 @@ export interface SimmerUpdate {
   cached: boolean;
   error: string | null;
   seamed: boolean;
+  /**
+   * The release's own page, where the notes are — composed by simmer from
+   * `latest`, never fetched. Null when there is no release to point at, and
+   * absent from a simmer too old to carry it, which is why the type is
+   * optional as well as nullable.
+   */
+  release_notes_url?: string | null;
   /** `--apply` only: something was installed. */
   applied?: boolean;
   /** `--apply` only: the commands it ran, in order. */

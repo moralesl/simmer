@@ -264,6 +264,7 @@ test("update --json carries every field the views read", { skip }, async () => {
     "cached",
     "error",
     "seamed",
+    "release_notes_url",
   ] as const) {
     assert.ok(key in update, `update --json lost ${key}`);
   }
@@ -271,6 +272,13 @@ test("update --json carries every field the views read", { skip }, async () => {
   assert.equal(update.update_available, true);
   assert.equal(update.latest, "v9.9.9");
   assert.ok(update.update_command.length > 0, "an available update must name its command");
+  // The page the "Open Release Notes" action opens. Composed by simmer from
+  // the tag, so this extension and the menu bar cannot point at different
+  // pages — and so that reading the notes costs simmer no second request.
+  assert.equal(
+    update.release_notes_url,
+    "https://github.com/moralesl/simmer/releases/tag/v9.9.9",
+  );
 });
 
 test("a check that could not be made is an answer, not a thrown refusal", { skip }, async () => {

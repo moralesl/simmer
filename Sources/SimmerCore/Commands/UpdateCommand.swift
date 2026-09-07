@@ -65,6 +65,22 @@ public enum UpdateCommand {
         }
 
         public var cacheAge: Int { max(0, now - checkedAt) }
+
+        /// The release's own page — where the notes are, for someone deciding
+        /// whether to install it.
+        ///
+        /// Composed, never fetched. simmer makes exactly one outbound request
+        /// (CONTRACTS.md § One outbound request) and this adds none: a URL is
+        /// handed to the browser, which is the program whose job that is.
+        ///
+        /// Nil unless `latest` parses as a version. It arrives as the last
+        /// path component of a redirect and survives a round-trip through a
+        /// `key=value` cache file, so it is not a string to interpolate into
+        /// something that gets opened without asking what it is first.
+        public var releaseNotesURL: String? {
+            guard !latest.isEmpty, SemanticVersion(latest) != nil else { return nil }
+            return "\(Install.repositoryURL)/releases/tag/\(latest)"
+        }
     }
 
     /// Ask the source, or read what the last ask recorded.
@@ -164,16 +180,39 @@ public enum UpdateCommand {
     //      not machinery to be moved onto a tag, and an install this cannot
     //      place is not one to run commands in.
 
+    /// Which part of the update a step is doing.
+    ///
+    /// Carried as a field rather than recognised from the command line,
+    /// because "does this argument list contain `fetch`" is a classification
+    /// that goes wrong silently the first time a plan changes shape — and what
+    /// it decides is the sentence a person reads when the update breaks.
+    ///
+    /// A one-step Homebrew plan is `.installing`: `brew upgrade` fetches,
+    /// builds and installs, and the sentences are worded to be true of both
+    /// plans.
+    public enum ApplyPhase: String, Sendable, Equatable {
+        case fetching
+        case switching
+        case installing
+        /// `make install` quits Simmer.app before replacing it, so something
+        /// has to bring it back. Not part of installing: when only this fails
+        /// the update landed, and the exit code says so.
+        case relaunching
+    }
+
     /// One thing to run. Held as data so the decision is testable without
     /// anything being executed — the seam is in the runner, not in here.
     public struct ApplyStep: Sendable, Equatable {
         public let executable: String
         public let arguments: [String]
         public let workingDirectory: String?
+        public let phase: ApplyPhase
 
-        public init(executable: String, arguments: [String], workingDirectory: String? = nil) {
+        public init(executable: String, arguments: [String], phase: ApplyPhase,
+                    workingDirectory: String? = nil) {
             self.executable = executable
             self.arguments = arguments
+            self.phase = phase
             self.workingDirectory = workingDirectory
         }
 
@@ -231,7 +270,8 @@ public enum UpdateCommand {
                 return .refused("this is a Homebrew install but brew is not where it usually is — run: \(report.install.updateCommand)")
             }
             return .run(ApplyPlan(
-                steps: [ApplyStep(executable: brew, arguments: ["upgrade", "simmer"])],
+                steps: [ApplyStep(executable: brew, arguments: ["upgrade", "simmer"],
+                                  phase: .installing)],
                 target: report.latestDisplay,
                 reopenBundle: report.install.bundle))
 
@@ -257,13 +297,16 @@ public enum UpdateCommand {
             return .run(ApplyPlan(
                 steps: [
                     ApplyStep(executable: "/usr/bin/git",
-                              arguments: ["-C", checkout, "fetch", "--tags", "--force", "--quiet"]),
+                              arguments: ["-C", checkout, "fetch", "--tags", "--force", "--quiet"],
+                              phase: .fetching),
                     ApplyStep(executable: "/usr/bin/git",
-                              arguments: ["-C", checkout, "checkout", "--quiet", report.latest]),
+                              arguments: ["-C", checkout, "checkout", "--quiet", report.latest],
+                              phase: .switching),
                     // NOTES=0: the epilogue tells a reader to do things this
                     // path has already done or is about to do.
                     ApplyStep(executable: "/usr/bin/make",
-                              arguments: ["-C", checkout, "install", "NOTES=0"]),
+                              arguments: ["-C", checkout, "install", "NOTES=0"],
+                              phase: .installing),
                 ],
                 target: report.latestDisplay,
                 reopenBundle: report.install.bundle))
@@ -276,23 +319,83 @@ public enum UpdateCommand {
             + plan.steps.map { "   \($0.described)" }
     }
 
-    public static func applied(_ plan: ApplyPlan, reopened: Bool) -> Outcome {
+    /// Bringing the app back after `make install` replaced it. Composed here
+    /// rather than in the CLI so it carries a phase like every other step and
+    /// its failure reaches the same sentence.
+    public static func reopenStep(bundle: String) -> ApplyStep {
+        ApplyStep(executable: "/usr/bin/open", arguments: [bundle], phase: .relaunching)
+    }
+
+    /// `relaunchFailure` is the stderr tail of a reopen that did not work.
+    /// Exit stays 0 and `applied` stays true: the update landed, and a menu
+    /// bar that did not come back is a sentence to read, not a failed install
+    /// for a caller to retry.
+    public static func applied(_ plan: ApplyPlan, reopened: Bool,
+                               relaunchFailure: String? = nil,
+                               updateCommand: String = "") -> Outcome {
         var outcome = Outcome()
         outcome.stdout = ["✅ simmer \(plan.target) installed"
             + (reopened ? " · Simmer.app relaunched" : "")]
+        var subtitle = reopened ? "Simmer.app was relaunched" : ""
+        var body = ""
+        if let relaunchFailure {
+            let sentence = failureSentence(phase: .relaunching, plan: plan,
+                                           updateCommand: updateCommand)
+            outcome.stdout.append("⚠️  \(sentence)")
+            outcome.stdout.append("   \(reopenStep(bundle: plan.reopenBundle ?? "").described)"
+                + " failed — \(relaunchFailure)")
+            subtitle = "Simmer.app did not come back"
+            body = sentence
+        }
         outcome.notifications = [NotificationRequest(
             title: "simmer \(plan.target) installed",
-            subtitle: reopened ? "Simmer.app was relaunched" : "", body: "", sound: false)]
+            subtitle: subtitle, body: body, sound: false)]
         return outcome
     }
 
-    /// A step failed. Names which one, because "the update failed" sends a
-    /// person to a log they do not know the location of.
-    public static func applyFailed(step: ApplyStep, detail: String) -> Outcome {
-        var outcome = Outcome.failure("\(step.described) failed — \(detail)")
+    /// What did not finish, and what to do about it — in that order, because
+    /// the person reading this is not the person who wrote the plan.
+    ///
+    /// `git -C … checkout --quiet v0.9.0 failed — fatal: reference is not a
+    /// tree` is the whole of what this used to say. It names a command nobody
+    /// typed, in a checkout most people do not know they have, and leaves the
+    /// two questions that matter — did anything change, and what do I do —
+    /// entirely to the reader.
+    public static func failureSentence(phase: ApplyPhase, plan: ApplyPlan,
+                                       updateCommand: String) -> String {
+        let target = "simmer \(plan.target)"
+        let terminal = updateCommand.isEmpty ? "" : " Run: \(updateCommand)"
+        switch phase {
+        case .fetching:
+            return "Could not fetch \(target). Nothing on this Mac was changed.\(terminal)"
+        case .switching:
+            return "Could not switch to \(target). Nothing was installed.\(terminal)"
+        case .installing:
+            // Deliberately not "was fetched but not installed": that is untrue
+            // of the one-step Homebrew plan, which does both at once.
+            return "Could not install \(target). The copy you are running is untouched.\(terminal)"
+        case .relaunching:
+            // The update DID land, so `updateCommand` would be the wrong
+            // instruction here — the thing left undone is opening the app.
+            let bundle = plan.reopenBundle
+            return "\(target) is installed, but Simmer.app did not come back."
+                + (bundle.map { " Open it again: open \($0)" } ?? "")
+        }
+    }
+
+    /// A step failed. Names what did not finish and what to do, because
+    /// "the update failed" sends a person to a log they do not know the
+    /// location of — and the failing command stays on the second line, where
+    /// it is evidence rather than the whole message.
+    public static func applyFailed(step: ApplyStep, detail: String,
+                                   plan: ApplyPlan, updateCommand: String) -> Outcome {
+        let sentence = failureSentence(phase: step.phase, plan: plan,
+                                       updateCommand: updateCommand)
+        var outcome = Outcome.failure(sentence)
+        outcome.stderr.append("   \(step.described) failed — \(detail)")
         outcome.notifications = [NotificationRequest(
             title: "The simmer update did not finish",
-            subtitle: step.described, body: detail, sound: false)]
+            subtitle: step.described, body: sentence, sound: false)]
         return outcome
     }
 
@@ -302,7 +405,10 @@ public enum UpdateCommand {
         case nothingToDo(String)
         case refused(String)
         case failed(step: ApplyStep, detail: String, plan: ApplyPlan)
-        case installed(plan: ApplyPlan, reopened: Bool)
+        /// `relaunchFailure` is the stderr tail of a reopen that did not work.
+        /// Still `installed`: the update landed, and a menu bar that did not
+        /// come back is a sentence to read rather than a failure to retry.
+        case installed(plan: ApplyPlan, reopened: Bool, relaunchFailure: String? = nil)
     }
 
     /// The whole answer for one `--apply`, human or machine, exit code
@@ -345,15 +451,26 @@ public enum UpdateCommand {
                                     plan: nil, error: why, exit: 1)
 
         case .failed(let step, let detail, let plan):
-            guard json else { return applyFailed(step: step, detail: detail) }
+            // `applyFailed` writes the sentence naming the part that stopped;
+            // `apply_error` keeps the failing command and its detail, which is
+            // what a caller has always parsed. Two audiences, one place.
+            let failure = applyFailed(step: step, detail: detail, plan: plan,
+                                      updateCommand: report.install.updateCommand)
+            guard json else { return failure }
             var outcome = jsonApplyOutcome(
                 report, seamed: seamed, applied: false, plan: plan,
                 error: "\(step.described): \(detail)", exit: 1)
-            outcome.notifications = applyFailed(step: step, detail: detail).notifications
+            outcome.notifications = failure.notifications
             return outcome
 
-        case .installed(let plan, let reopened):
-            let human = applied(plan, reopened: reopened)
+        case .installed(let plan, let reopened, let relaunchFailure):
+            // `applied: true` and exit 0 even when the relaunch failed: the
+            // update landed, and `apply_error` is for one that could not be
+            // made. The sentence reaches the person through the human lines
+            // and the banner.
+            let human = applied(plan, reopened: reopened,
+                                relaunchFailure: relaunchFailure,
+                                updateCommand: report.install.updateCommand)
             guard json else { return human }
             var outcome = jsonApplyOutcome(report, seamed: seamed, applied: true,
                                            plan: plan, error: nil, exit: 0)
@@ -425,7 +542,13 @@ public enum UpdateCommand {
         outcome.stdout.append("   \(report.install.describedSource)")
 
         if report.verdict == .available {
-            outcome.stdout.append("   update with:  \(report.install.updateCommand)")
+            outcome.stdout.append("   update with:    \(report.install.updateCommand)")
+            if let notes = report.releaseNotesURL {
+                // Under the command, not above it: the command is what most
+                // people came for, and the notes are what the careful ones
+                // want first. Both are readable before anything happens.
+                outcome.stdout.append("   release notes:  \(notes)")
+            }
         }
         if report.appDrift {
             outcome.stdout.append(contentsOf: appDriftLines(report))
@@ -462,9 +585,10 @@ public enum UpdateCommand {
     ///
     /// Silent, and not actionable: there is no Extend/Release to offer and
     /// nothing about an available release needs a sound. The once-a-day
-    /// background check posts nothing at all — it updates the menu and stops
-    /// there, which is the difference between telling someone what they asked
-    /// and interrupting them with news.
+    /// background check reuses this banner through `announcement`, and posts
+    /// it at most once per new version — which is the difference between
+    /// telling someone what they asked, telling them something once, and
+    /// interrupting them daily with the same news.
     public static func notification(_ report: Report) -> NotificationRequest {
         switch report.verdict {
         case .available:
@@ -485,6 +609,40 @@ public enum UpdateCommand {
                 title: "Could not check for updates",
                 subtitle: "", body: report.error, sound: false)
         }
+    }
+
+    /// One banner per new version — the decision, so that the app only posts.
+    ///
+    /// The once-a-day check updates the menu and, until now, said nothing at
+    /// all: a colleague who never opens the menu bar could be months behind
+    /// with no way to find out. "News, once" is the narrow thing between that
+    /// silence and nagging — the same version is never announced twice, so the
+    /// cost of the feature is one banner per release, ever.
+    public struct Announcement: Sendable, Equatable {
+        public let notification: NotificationRequest
+        /// The tag to record as announced. `latest` as published, matching
+        /// what `readAnnouncedUpdate` compares against.
+        public let announced: String
+    }
+
+    /// Nil unless this check is news. Nothing announces when:
+    ///
+    /// - there is no newer release (`current`, `ahead`, `unknown`) — a
+    ///   downgrade is not news and a failed check has nothing to say;
+    /// - this tag has been announced before, whoever's check found it;
+    /// - the process is seamed, because then the answer is about a
+    ///   `SIMMER_FAKE_LATEST` and not about the repository. A cached seamed
+    ///   record is already discarded by an unseamed reader in `check`; this
+    ///   closes the same door on the fresh path.
+    public static func announcement(_ report: Report, lastAnnounced: String,
+                                    seamed: Bool) -> Announcement? {
+        guard !seamed, report.verdict == .available, !report.latest.isEmpty,
+              report.latest != lastAnnounced else { return nil }
+        // The manual check's banner, reused: it already names the version in
+        // the title and how to get it in the body, which is exactly what this
+        // one has to say. Two wordings for one fact is how the four surfaces
+        // came to be rendered from here in the first place.
+        return Announcement(notification: notification(report), announced: report.latest)
     }
 
     /// The menu bar's footer: what you are running, and what is out there.
@@ -528,6 +686,9 @@ public enum UpdateCommand {
             ("cached", .bool(report.fromCache)),
             ("error", report.error.isEmpty ? .null : .string(report.error)),
             ("seamed", .bool(seamed)),
+            // Appended, like every field after the first release: the page
+            // for `latest`, or null when there is no release to point at.
+            ("release_notes_url", report.releaseNotesURL.map { JSONValue.string($0) } ?? .null),
         ])
     }
 

@@ -142,6 +142,27 @@ import Testing
                              env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
         #expect(result.code == 0, "\(result.combined)")
     }
+
+    /// The release's own page, so nobody has to install a version to find out
+    /// what is in it. Composed from the tag — no second outbound request.
+    @Test func theReleasePageIsAFieldAndAPrintedLine() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let json = object(sim.run(["update", "--json"],
+                                  env: ["SIMMER_FAKE_LATEST": "v9.9.9"]).out)
+        #expect(json["release_notes_url"] as? String
+            == "https://github.com/moralesl/simmer/releases/tag/v9.9.9")
+
+        let human = sim.run(["update"], env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+        #expect(human.out.contains("/releases/tag/v9.9.9"), "\(human.combined)")
+    }
+
+    /// Null rather than a URL ending in nothing, and typed the way every other
+    /// "there is no answer" field on this surface is typed.
+    @Test func aCheckThatNamedNoReleaseCarriesNoPage() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["update", "--json"], env: ["SIMMER_FAKE_LATEST": "error"])
+        #expect(object(result.out)["release_notes_url"] is NSNull, "\(result.out)")
+    }
 }
 
 /// `--apply` through the binary. Every step is recorded rather than run
@@ -250,6 +271,148 @@ import Testing
                              env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
         #expect(result.code == 1)
         #expect(result.err.contains("--cached"), "\(result.err)")
+    }
+
+    /// The failure half of `--apply`, through the binary. `SIMMER_FAKE_APPLY`
+    /// alone can only record success, so every one of these was reachable only
+    /// by breaking a real install — which is exactly the class of code that
+    /// gets read once, at the worst possible moment.
+    @Test(arguments: [
+        ("fetching", "Could not fetch simmer 9.9.9"),
+        ("switching", "Could not switch to simmer 9.9.9"),
+        ("installing", "Could not install simmer 9.9.9"),
+    ])
+    func aStepThatFailedSaysWhatDidNotFinish(_ phase: String, _ sentence: String) throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = phase
+        let result = sim.run(["update", "--apply"], env: env)
+
+        #expect(result.code == 1, "\(result.combined)")
+        // The sentence first, and the failing command under it as evidence.
+        let lines = result.err.split(separator: "\n").map(String.init)
+        #expect(lines.first?.contains(sentence) == true, "\(result.err)")
+        #expect(lines.first?.contains("bootstrap.sh") == true,
+                "the sentence names the command that works: \(result.err)")
+        #expect(result.err.contains("SIMMER_FAKE_APPLY_FAIL=\(phase)"),
+                "the failing step's own detail is kept: \(result.err)")
+    }
+
+    /// `apply_error` is unchanged — the failing command and its detail, which
+    /// is what a caller has always parsed. The sentence is for the person.
+    @Test func theMachineSurfaceKeepsTheCommandAndTheDetail() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = "installing"
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+
+        #expect(result.code == 1)
+        let json = object(result.out)
+        #expect(json["action"] as? String == "refused")
+        #expect(json["applied"] as? Bool == false)
+        let error = try #require(json["apply_error"] as? String)
+        #expect(error.contains("make -C"), "\(error)")
+        #expect(error.contains("install NOTES=0"), "\(error)")
+    }
+
+    /// The plan stops at the step that failed. A `make install` run after a
+    /// checkout that did not happen would install the version already there
+    /// and report success.
+    @Test func nothingAfterAFailedStepIsAttempted() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = "switching"
+        _ = sim.run(["update", "--apply"], env: env)
+
+        let ran = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+        #expect(ran.contains("fetch --tags"))
+        #expect(ran.contains("checkout --quiet"), "the step that failed still ran")
+        #expect(!ran.contains("install NOTES=0"), "recorded after the failure: \(ran)")
+    }
+
+    /// The fourth phase, and the only one that is not a failed install: the
+    /// update landed and the menu bar did not come back. Before this the sole
+    /// sign was the ABSENCE of "· Simmer.app relaunched" from a success line,
+    /// which nobody reads as "your menu bar is gone".
+    @Test func aRelaunchThatFailedIsSaidWithoutFailingTheUpdate() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        // A fresh heartbeat, so the plan decides to reopen the app at all —
+        // that decision is taken before the first step runs, because `make
+        // install` quits it and asking afterwards would always answer no.
+        sim.plantAppHeartbeat()
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = "relaunching"
+        let result = sim.run(["update", "--apply"], env: env)
+
+        #expect(result.code == 0, "the update installed: \(result.combined)")
+        #expect(result.out.contains("simmer 9.9.9 installed"), "\(result.out)")
+        #expect(result.out.contains("did not come back"), "\(result.out)")
+        #expect(result.out.contains("open"), "it names how to bring it back: \(result.out)")
+        // Every install step still ran, and the reopen was attempted.
+        let ran = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+        #expect(ran.contains("install NOTES=0"))
+        #expect(ran.contains("open "), "\(ran)")
+    }
+
+    /// …and the machine surface still reports the update as done, because it
+    /// was. `apply_error` is for an update that could not be made.
+    @Test func aFailedRelaunchIsNotAnApplyError() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        sim.plantAppHeartbeat()
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = "relaunching"
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+
+        #expect(result.code == 0)
+        let json = object(result.out)
+        #expect(json["action"] as? String == "updated")
+        #expect(json["applied"] as? Bool == true)
+        #expect(json["apply_error"] == nil, "\(result.out)")
+    }
+
+    /// A phase nobody spells right is not "fail nothing": the seam either
+    /// names a step or it names none, and a typo must not silently turn a
+    /// failure test green.
+    @Test func aMisspeltFailurePhaseFailsNothingAndIsVisible() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = "instaling"
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+
+        // It installs, which is how a test written against a typo shows up as
+        // a test that asserted the wrong thing rather than as a pass.
+        #expect(result.code == 0)
+        #expect(object(result.out)["applied"] as? Bool == true, "\(result.out)")
     }
 
     /// Not knowing whether there is an update is not a licence to install one.
