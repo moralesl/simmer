@@ -354,6 +354,41 @@ import Testing
         #expect(!ran.contains("install NOTES=0"), "recorded after the failure: \(ran)")
     }
 
+    /// `steps` against what actually ran, in both directions — with the app up,
+    /// which is the case where the two differ.
+    ///
+    /// Two tests here agreed on three, and only because neither had an app
+    /// heartbeat: this one asserts every step in the field was run, and that
+    /// the one extra command is the reopen and nothing else. That is what
+    /// `steps` promises after CONTRACTS.md stopped calling it "the commands it
+    /// ran" — the plan, with the relaunch reported by `applied` and the
+    /// sentence instead.
+    @Test func stepsIsThePlanAndTheOnlyExtraCommandIsTheReopen() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        sim.plantAppHeartbeat()
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+
+        #expect(result.code == 0, "\(result.combined)")
+        let steps = (object(result.out)["steps"] as? [String]) ?? []
+        let ran = ((try? String(contentsOf: log, encoding: .utf8)) ?? "")
+            .split(separator: "\n").map(String.init)
+
+        // Every step it reported was run, in the order it reported them.
+        #expect(steps == Array(ran.prefix(steps.count)), "steps \(steps) vs ran \(ran)")
+        // And the only thing run that it did not report is the reopen.
+        let extra = ran.dropFirst(steps.count)
+        #expect(extra.count == 1, "unreported commands: \(Array(extra))")
+        #expect(extra.first?.hasPrefix("open ") == true, "\(Array(extra))")
+        #expect(!steps.contains { $0.hasPrefix("open ") },
+                "the reopen is not one of the plan's steps: \(steps)")
+    }
+
     /// The plan comes before the failure, in a redirect as well as on a tty.
     ///
     /// `simmer update --apply > log 2>&1` is how anybody reports this going

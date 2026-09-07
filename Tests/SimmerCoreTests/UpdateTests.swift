@@ -345,17 +345,23 @@ import Testing
     /// app doing THAT on someone's behalf is a different kind of thing. The
     /// plan uses the checkout that install already has.
     @Test func noPlanEverPipesTheNetworkIntoAShell() {
+        var plans = 0
         for kind in [Install.Kind.bundle, .homebrew, .checkout, .unknown] {
             let decision = UpdateCommand.applyPlan(
                 for: report(installed: "0.2.0", latest: "v0.3.0", kind: kind),
                 home: "/Users/x", exists: all)
             guard case .run(let plan) = decision else { continue }
+            plans += 1
             for step in plan.steps {
                 #expect(!step.described.contains("curl"), "\(kind): \(step.described)")
                 #expect(!step.described.contains("bash"), "\(kind): \(step.described)")
                 #expect(!step.described.contains("|"), "\(kind): \(step.described)")
             }
         }
+        // Counted, because `continue` past a refusal makes a green run and a
+        // run that asserted NOTHING indistinguishable: a regression turning
+        // every provenance into a refusal would have passed this silently.
+        #expect(plans > 0, "no provenance produced a plan, so nothing above was checked")
     }
 
     /// No checkout to build from, so there is nothing to run — and the refusal
