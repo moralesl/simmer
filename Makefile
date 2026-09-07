@@ -67,13 +67,25 @@ TEST_FLAGS = -Xswiftc -F -Xswiftc $(CLT_FRAMEWORKS) \
 endif
 endif
 
-.PHONY: build test test-raycast skill app install uninstall clean release-check release-notes
+.PHONY: build test test-release test-raycast skill app install uninstall clean release-check release-notes
 
 build:
 	swift build -c release
 
 test:
 	swift test $(TEST_FLAGS)
+
+# The same acceptance suite, driving the RELEASE binary instead of the debug
+# one `swift test` builds for itself.
+#
+# `swift test` compiles and runs everything at -Onone, so every suite in this
+# repository was checking a build no user ever runs. `update --apply --json`
+# came back with empty stdout from the release binary and a full JSON object
+# from the debug one, and nothing here could see it: the acceptance suite
+# honours SIMMER_BIN, so pointing it at `.build/release/simmer` is the whole
+# gate. CI runs this on both OS legs.
+test-release: build
+	SIMMER_BIN="$(CURDIR)/.build/release/simmer" swift test $(TEST_FLAGS) --filter SimmerAcceptanceTests
 
 # `swift test` knows nothing about integrations/raycast, so a change to the
 # extension that runs only `make test` is untested and looks green — the

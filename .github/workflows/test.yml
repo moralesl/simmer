@@ -61,6 +61,20 @@ jobs:
       - name: Unit + acceptance suites
         run: make test
 
+      # The same acceptance suite again, against the RELEASE binary the step
+      # above this one already built.
+      #
+      # `swift test` compiles and runs everything at -Onone, so until this step
+      # existed every suite in this repository checked a build no user runs.
+      # That is how `update --apply --json` came to print its whole JSON object
+      # from the debug binary and *zero bytes* from the release binary on
+      # macos-15 — right exit code, empty stdout — with both legs green here
+      # and only the Raycast contract suite, which drives the release binary,
+      # able to see it. The suite honours SIMMER_BIN, so pointing it at
+      # `.build/release/simmer` is the whole gate.
+      - name: Acceptance suite against the release binary
+        run: make test-release
+
       - name: Bundle assembles and signs ad-hoc
         run: make app
 

@@ -7,6 +7,7 @@ That is the whole product, so the bar for changes is less "does it work" and mor
 
 ```bash
 make test          # both Swift suites, hermetic: no sudo, no real power state, fake clock
+make test-release  # the acceptance suite again, against the release binary — see Tests, below
 make test-raycast  # only if you are touching integrations/raycast — see Tests, below
 ```
 
@@ -43,10 +44,15 @@ Three lanes, three questions:
 |---|---|---|
 | `Tests/SimmerCoreTests` | `make test` | do the mechanics work — parsing, the codec, aggregate ties, settle |
 | `Tests/SimmerAcceptanceTests` | `make test` | does the **built binary** honour the contract |
+| `Tests/SimmerAcceptanceTests` | `make test-release` | does the **release** binary honour it too |
 | `integrations/raycast/tests` | `make test-raycast` | does the extension still read the contract the binary emits |
 
 The acceptance suite honours `SIMMER_BIN`, so it can be pointed at any implementation of `CONTRACTS.md` — that is what makes it the executable form of the contract rather than a description of this code.
 `bridge.test.mts` is the same idea from the other side of the pipe.
+
+`swift test` compiles and runs at -Onone, so `make test` alone answers its question about a build nobody installs.
+`make test-release` asks it again of `.build/release/simmer`, which is what every user runs: `update --apply --json` once printed its whole object from the debug binary and zero bytes from the release one, and both Swift lanes were green.
+Optimised builds are free to differ, so a surface guarantee is only guaranteed where this lane says so.
 
 `make test` cannot see `integrations/raycast`, so a change to the extension with only `make test` green is a change nothing checked.
 Touching both sides means both commands; CI runs all three either way.
