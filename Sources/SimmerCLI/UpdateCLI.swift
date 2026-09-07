@@ -26,6 +26,15 @@ struct UpdateCLI: ParsableCommand {
           help: "Install it, instead of printing the command. Needs no password.")
     var apply = false
 
+    // Taken as text and validated below, like `--min-battery` and
+    // `budget --need`: as an enum, ArgumentParser diagnoses a bad value in its
+    // own voice, names the internal `simmer update` spelling in a usage block,
+    // and writes nothing to stdout — so a `--json` caller gets an empty stream
+    // instead of the contracted refusal object (AGENTS.md, iron rules).
+    @Option(name: .customLong("auto"),
+            help: "Unattended installs: on | off | status. Off by default.")
+    var auto: String?
+
     @OptionGroup var common: CommonOptions
 
     func run() throws {
@@ -39,6 +48,19 @@ struct UpdateCLI: ParsableCommand {
             Runtime.deliver(.failure(
                 "--apply always checks first, so it cannot be combined with --cached",
                 json: common.json))
+        }
+
+        // `--auto` is a setting, not a question about a release: it makes no
+        // request and installs nothing, so pairing it with either of the two
+        // flags that do would leave one of them silently dropped.
+        if let auto {
+            if apply || cached {
+                Runtime.deliver(.failure(
+                    "--auto sets whether updates install themselves; it cannot be combined with "
+                        + (apply ? "--apply" : "--cached"),
+                    json: common.json))
+            }
+            deliverAuto(auto, env: env)
         }
 
         // `binPath` rather than the raw executable path, so the suite can
@@ -118,5 +140,47 @@ struct UpdateCLI: ParsableCommand {
             answer(.installed(plan: plan, reopened: reopened,
                               relaunchFailure: relaunchFailure))
         }
+    }
+
+    /// `--auto on|off|status`. Reads and writes one marker file and answers;
+    /// it never checks for a release, which is what keeps `--auto status`
+    /// answerable on a train.
+    ///
+    /// The decision itself belongs to `AutoUpdate` in the core and is made by
+    /// the app on its daily check — this only records the person's answer.
+    private func deliverAuto(_ value: String, env: SimmerEnvironment) -> Never {
+        let ledger = Ledger(stateDir: env.stateDir)
+        var enabled = ledger.autoUpdateEnabled
+        var changed = false
+        switch value {
+        case "on", "off":
+            let wanted = value == "on"
+            changed = wanted != enabled
+            if changed { ledger.setAutoUpdate(enabled: wanted) }
+            enabled = wanted
+        case "status":
+            break
+        default:
+            Runtime.deliver(.failure(
+                "--auto takes on, off or status — not '\(value)'", json: common.json))
+        }
+
+        // Both halves, because unattended installs ride on the once-a-day
+        // check: with the check off this switch is one that does nothing, and
+        // a setting that silently cannot fire is the shape of promise this
+        // tool does not make.
+        let backgroundChecks = ledger.backgroundUpdateChecksEnabled
+            && !env.backgroundUpdateCheckDisabled
+
+        if common.json {
+            var outcome = Outcome()
+            outcome.stdout = [AutoUpdate.settingJSON(
+                enabled: enabled, changed: changed,
+                backgroundChecksEnabled: backgroundChecks,
+                seamed: env.isSeamed).serialized()]
+            Runtime.deliver(outcome)
+        }
+        Runtime.deliver(AutoUpdate.settingOutcome(
+            enabled: enabled, changed: changed, backgroundChecksEnabled: backgroundChecks))
     }
 }

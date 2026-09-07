@@ -83,6 +83,9 @@ CHECKING ON IT
                              is your repository, not simmer's machinery
   simmer update --cached     the last check, without asking the network
                              (which is what the menu bar and doctor read)
+  simmer update --auto on    let the daily check install a release by itself,
+                             but never while a claim is live. Off by default;
+                             --auto off | status for the other two
   simmer --version
 
 REMOVING IT

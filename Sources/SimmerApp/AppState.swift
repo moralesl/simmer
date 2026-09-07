@@ -127,7 +127,22 @@ final class AppState {
                 // just now. That is also why the recording happens on both
                 // paths and the posting on only one.
                 let banner = self.recordUpdateAnnouncement(report, ledger: ledger)
-                if !force, let banner { Notifier.shared.post([banner]) }
+
+                // Only the BACKGROUND pass may install unattended. `force` is
+                // a person who just clicked "Check for Updates…", and they get
+                // the report and the button — installing under a click that
+                // asked a question would be the surprise this whole feature is
+                // built to avoid.
+                let installing = !force && self.considerUnattendedUpdate(report)
+
+                // "One banner per new version" is why the availability banner
+                // is dropped when the install is already starting: the update
+                // path posts its own two about that same version ("Updating
+                // simmer…", then the completion banner through the spool), and
+                // a third saying it is available would be the repetition that
+                // rule exists to prevent. The announcement is still RECORDED
+                // above, so nothing announces it again tomorrow either.
+                if !force, !installing, let banner { Notifier.shared.post([banner]) }
                 finished?(report)
                 NotificationCenter.default.post(name: .simmerStateChanged, object: nil)
             }
@@ -144,6 +159,57 @@ final class AppState {
             seamed: environment.isSeamed) else { return nil }
         ledger.writeAnnouncedUpdate(announcement.announced, now: environment.now())
         return announcement.notification
+    }
+
+    /// The unattended half: the daily check found something — may it install it?
+    ///
+    /// Every part of that question is answered in the core by
+    /// `AutoUpdate.decide`, and this obeys the answer. `Aggregate.compute` is
+    /// what says whether a claim is live, via `context()` — never the claims
+    /// directory, because a surface that reads the ledger itself becomes a
+    /// second implementation of the aggregate and the two disagree the first
+    /// time cap clipping changes (AGENTS.md, iron rules).
+    ///
+    /// A release skipped because a claim was live is picked up by the NEXT
+    /// daily check, not by the claim ending. That is deliberately simple: an
+    /// update that starts compiling the moment someone's overnight job hands
+    /// the lid back is an update nobody is expecting, and a day's delay on a
+    /// feature that exists for a Mac nobody opens costs nothing.
+    ///
+    /// Returns whether an install was started, because the caller has a banner
+    /// to suppress when one was.
+    @discardableResult
+    private func considerUnattendedUpdate(_ report: UpdateCommand.Report) -> Bool {
+        let ctx = context()
+        let decision = AutoUpdate.decide(
+            enabled: ctx.ledger.autoUpdateEnabled,
+            report: report,
+            aggregate: ctx.aggregate(),
+            plan: UpdateCommand.applyPlan(
+                for: report, home: environment.homeDirectory,
+                exists: { FileManager.default.fileExists(atPath: $0) }))
+        switch decision {
+        case .apply:
+            // The same hand-off a person's click makes — `simmer update
+            // --apply`, one implementation, one set of tests. It posts its own
+            // completion banner through the spool, which is what makes the
+            // banner survive this app being replaced and relaunched in the
+            // middle of it.
+            applyUpdate()
+            return true
+        case .notNow(let why, let sentence):
+            // Recorded only where the reason is worth reading later. "It is
+            // off" and "nothing is newer" are the ordinary daily answers, and
+            // a line a day for each would bury the two that mean something.
+            switch why {
+            case .claimIsLive, .planRefused:
+                ctx.ledger.log("unattended update deferred (\(why.rawValue)): \(sentence)",
+                               now: ctx.now)
+            case .off, .nothingNewer:
+                break
+            }
+            return false
+        }
     }
 
     /// Is there a plan for this install, or only a command to copy.

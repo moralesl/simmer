@@ -518,6 +518,30 @@ public struct Ledger: Sendable {
         }
     }
 
+    /// Present = the person has asked for the once-a-day check to *install*
+    /// what it finds, without anybody clicking.
+    ///
+    /// The name spells the "on" where `update-check.off` spells the "off",
+    /// because each file's absence has to be the safe default: checking is on
+    /// unless turned off, installing is off unless turned on. One fact per
+    /// file, and `doctor` reads both without asking the app anything.
+    public var autoUpdateOnFile: URL { stateDir.appendingPathComponent("auto-update.on") }
+
+    /// Whether an unattended install is permitted at all. **Off by default** —
+    /// a tool whose whole promise is "nothing happens to your Mac that you did
+    /// not ask for" does not replace its own binary on a default install.
+    public var autoUpdateEnabled: Bool {
+        FileManager.default.fileExists(atPath: autoUpdateOnFile.path)
+    }
+
+    public func setAutoUpdate(enabled: Bool) {
+        if enabled {
+            _ = atomicWrite("on\n", to: autoUpdateOnFile)
+        } else {
+            try? FileManager.default.removeItem(at: autoUpdateOnFile)
+        }
+    }
+
     // MARK: the app's heartbeat — what doctor reads instead of asking UN
     //
     // The CLI must never ask UNUserNotificationCenter anything: it would be

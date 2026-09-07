@@ -97,6 +97,17 @@ final class SetupWindow: NSObject {
                  target: self, action: #selector(toggleUpdateChecks))
     }()
 
+    /// The unattended half, and it is deliberately the *second* checkbox and
+    /// indented under the first: it does nothing on its own. The once-a-day
+    /// check is the only thing in simmer that looks for a release without
+    /// being asked, so this rides on it — and a switch that can be on while
+    /// the thing it depends on is off is a switch that lies. It disables
+    /// itself instead.
+    private lazy var autoUpdateBox: NSButton = {
+        NSButton(checkboxWithTitle: "…and install it, when nothing is claimed",
+                 target: self, action: #selector(toggleAutoUpdate))
+    }()
+
     private func build() {
         sudoRow.button.target = self
         sudoRow.button.action = #selector(setUpSudo)
@@ -151,7 +162,23 @@ final class SetupWindow: NSObject {
         updateCaption.font = .systemFont(ofSize: 11)
         updateCaption.textColor = .tertiaryLabelColor
         updateCaption.preferredMaxLayoutWidth = 460
-        let updates = NSStackView(views: [updateCheckBox, updateCaption])
+        let autoCaption = NSTextField(wrappingLabelWithString:
+            "Off by default. An update quits Simmer.app, replaces the binary the guard "
+            + "runs, and takes a minute or two to compile — so it never starts while a "
+            + "claim is live, which is exactly the walked-away window simmer exists to "
+            + "protect. A release skipped for that reason is retried at the next daily "
+            + "check. Going back is one command: docs/FAQ.md.")
+        autoCaption.font = .systemFont(ofSize: 11)
+        autoCaption.textColor = .tertiaryLabelColor
+        autoCaption.preferredMaxLayoutWidth = 440
+
+        let auto = NSStackView(views: [autoUpdateBox, autoCaption])
+        auto.orientation = .vertical
+        auto.alignment = .leading
+        auto.spacing = 4
+        auto.edgeInsets = NSEdgeInsets(top: 0, left: 18, bottom: 0, right: 0)
+
+        let updates = NSStackView(views: [updateCheckBox, updateCaption, auto])
         updates.orientation = .vertical
         updates.alignment = .leading
         updates.spacing = 4
@@ -186,6 +213,14 @@ final class SetupWindow: NSObject {
         // Asked for it just now: look immediately rather than at the next
         // six-hour pass, so the switch visibly does something.
         if enabled { AppState.shared.refreshUpdateCheck() }
+        // The dependent row changes with it, in both directions: turning the
+        // check off must visibly disable the thing that rides on it rather
+        // than leaving a ticked box that can never fire.
+        refresh()
+    }
+
+    @objc private func toggleAutoUpdate() {
+        AppState.shared.context().ledger.setAutoUpdate(enabled: autoUpdateBox.state == .on)
     }
 
     private func refresh() {
@@ -199,6 +234,17 @@ final class SetupWindow: NSObject {
         updateCheckBox.title = environmentSaysNo
             ? "Check for a newer simmer once a day — off via SIMMER_NO_UPDATE_CHECK"
             : "Check for a newer simmer once a day"
+
+        // The stored answer is shown even while the box is disabled: it is the
+        // person's decision and it survives the check being turned off and
+        // back on. What the disabled state says is "this cannot fire", not
+        // "you never asked for it".
+        let ledger = AppState.shared.context().ledger
+        autoUpdateBox.state = ledger.autoUpdateEnabled ? .on : .off
+        autoUpdateBox.isEnabled = updateCheckBox.isEnabled && updateCheckBox.state == .on
+        autoUpdateBox.title = autoUpdateBox.isEnabled
+            ? "…and install it, when nothing is claimed"
+            : "…and install it, when nothing is claimed — needs the daily check above"
 
         sudoState { ok, foreign in
             DispatchQueue.main.async {

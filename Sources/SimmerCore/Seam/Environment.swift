@@ -90,6 +90,29 @@ public struct SimmerEnvironment: Sendable {
         skillDir.deletingLastPathComponent().deletingLastPathComponent()
     }
 
+    // MARK: the Raycast extension — SIMMER_FAKE_RAYCAST
+
+    /// Where Raycast keeps locally built extensions, so `doctor` can notice
+    /// one that has fallen behind the checkout.
+    ///
+    /// Seamed for the reason `skillDir` is: this read reaches a directory
+    /// under a person's `$HOME`, and without a substitute a hermetic test
+    /// would inspect the tester's own registered extension and pass or fail on
+    /// machine state. `HOME` first, then the passwd entry, same as there.
+    ///
+    /// The variable names the *extensions directory* rather than the
+    /// extension, so a fixture can plant an extension beside nothing else and
+    /// so that "Raycast is not installed" — the directory missing entirely —
+    /// stays reachable in a test.
+    public var raycastExtensionsDir: URL {
+        if let override = env["SIMMER_FAKE_RAYCAST"], !override.isEmpty {
+            return URL(fileURLWithPath: override)
+        }
+        let home = env["HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent(RaycastExtension.extensionsSubpath)
+    }
+
     // MARK: who is asking, and whether they are a person
 
     /// SIMMER_OWNER, else a terminal is a terminal, else a script — which is
