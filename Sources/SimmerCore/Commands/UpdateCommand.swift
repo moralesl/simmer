@@ -462,9 +462,10 @@ public enum UpdateCommand {
     ///
     /// Silent, and not actionable: there is no Extend/Release to offer and
     /// nothing about an available release needs a sound. The once-a-day
-    /// background check posts nothing at all — it updates the menu and stops
-    /// there, which is the difference between telling someone what they asked
-    /// and interrupting them with news.
+    /// background check reuses this banner through `announcement`, and posts
+    /// it at most once per new version — which is the difference between
+    /// telling someone what they asked, telling them something once, and
+    /// interrupting them daily with the same news.
     public static func notification(_ report: Report) -> NotificationRequest {
         switch report.verdict {
         case .available:
@@ -485,6 +486,40 @@ public enum UpdateCommand {
                 title: "Could not check for updates",
                 subtitle: "", body: report.error, sound: false)
         }
+    }
+
+    /// One banner per new version — the decision, so that the app only posts.
+    ///
+    /// The once-a-day check updates the menu and, until now, said nothing at
+    /// all: a colleague who never opens the menu bar could be months behind
+    /// with no way to find out. "News, once" is the narrow thing between that
+    /// silence and nagging — the same version is never announced twice, so the
+    /// cost of the feature is one banner per release, ever.
+    public struct Announcement: Sendable, Equatable {
+        public let notification: NotificationRequest
+        /// The tag to record as announced. `latest` as published, matching
+        /// what `readAnnouncedUpdate` compares against.
+        public let announced: String
+    }
+
+    /// Nil unless this check is news. Nothing announces when:
+    ///
+    /// - there is no newer release (`current`, `ahead`, `unknown`) — a
+    ///   downgrade is not news and a failed check has nothing to say;
+    /// - this tag has been announced before, whoever's check found it;
+    /// - the process is seamed, because then the answer is about a
+    ///   `SIMMER_FAKE_LATEST` and not about the repository. A cached seamed
+    ///   record is already discarded by an unseamed reader in `check`; this
+    ///   closes the same door on the fresh path.
+    public static func announcement(_ report: Report, lastAnnounced: String,
+                                    seamed: Bool) -> Announcement? {
+        guard !seamed, report.verdict == .available, !report.latest.isEmpty,
+              report.latest != lastAnnounced else { return nil }
+        // The manual check's banner, reused: it already names the version in
+        // the title and how to get it in the body, which is exactly what this
+        // one has to say. Two wordings for one fact is how the four surfaces
+        // came to be rendered from here in the first place.
+        return Announcement(notification: notification(report), announced: report.latest)
     }
 
     /// The menu bar's footer: what you are running, and what is out there.

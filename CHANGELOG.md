@@ -19,8 +19,10 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   `applied`, `steps` and `apply_error` on `--json`; exit 0 means nothing is left to do.
 - **The same answer in four more places.** A conditional row in the menu bar carrying **Install it now** and the command to copy, plus a permanent "Check for Updates…" item; a footer that always says which version you are on and which is newest; an informational row in `doctor`; a row in the Raycast claims list and a "Simmer Check for Updates" command.
   All of them render from one `UpdateCommand` in the core, so they cannot disagree about what "up to date" means.
-- **`Simmer.app` checks once a day**, off the main thread, and posts no banner for it — it updates the menu and stops there.
-  Off via the setup window's new checkbox or `SIMMER_NO_UPDATE_CHECK=1`.
+- **`Simmer.app` checks once a day**, off the main thread, and posts **one banner per new version** — never the same version twice, and nothing at all when you are current, ahead of the newest release, or the check could not answer.
+  Before this the daily check updated the menu and said nothing, so a colleague who never opens the menu bar could be months behind with no way to find out; a banner a day for the same release would have been the other failure.
+  A check you ask for by hand answers with its own banner and records the version too, so tomorrow's background check does not repeat what you have just read.
+  Off via the setup window's checkbox or `SIMMER_NO_UPDATE_CHECK=1`.
 - **`doctor` reports a half-finished install as red.** `Simmer.app` and the CLI are normally the same file, so a version disagreement between them means one was replaced and the other was not — which a package manager that upgrades only the CLI would produce routinely.
   Being merely out of date stays informational.
 
@@ -47,8 +49,9 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 - **New seam:** `SIMMER_FAKE_APPLY=<file>` — `--apply`'s steps are recorded instead of run, which is how the plan is asserted without a build.
 - **New seam:** `SIMMER_FAKE_LATEST=<tag|error>`.
   A process that is seamed at all and has not been given it reads nothing over the network, which is what keeps both suites hermetic.
-- **New state:** `$XDG_STATE_HOME/simmer/update-check` and `update-check.off`.
-  Neither is a machine surface — `simmer update --json` is how anything else asks.
+- **New state:** `$XDG_STATE_HOME/simmer/update-check`, `update-check.off` and `update-announced`.
+  None is a machine surface — `simmer update --json` is how anything else asks.
+  `update-announced` is the version a person has been told about, which is a different fact from what the last check found and therefore a different file: `update-check` is overwritten by every check, including the ones nobody sees.
 
 ### Fixed
 

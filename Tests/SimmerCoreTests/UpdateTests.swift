@@ -437,3 +437,110 @@ import Testing
         #expect(items.last?.title == "simmer 0.2.0")
     }
 }
+
+/// One banner per new version, and never the same one twice.
+///
+/// The once-a-day check used to update the menu and say nothing, so a
+/// colleague who never opens the menu bar could be months behind silently.
+/// What stops "news" from becoming "nagging" is entirely in this decision, so
+/// every way it could announce twice has a test.
+@Suite struct UpdateAnnouncementTests {
+    private func report(installed: String, latest: String,
+                        seamed: Bool = false) -> UpdateCommand.Report {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-announce-\(UUID().uuidString)")
+        return UpdateCommand.check(
+            now: 1_800_000_000, installed: installed,
+            install: Install.detect(executablePath: "/Applications/Simmer.app/Contents/MacOS/simmer",
+                                    exists: { _ in false }),
+            appVersion: nil, ledger: Ledger(stateDir: dir),
+            source: FakeReleaseSource(value: latest), cached: false, seamed: seamed)
+    }
+
+    @Test func aNewerReleaseNobodyHasBeenToldAboutIsNews() throws {
+        let announcement = try #require(UpdateCommand.announcement(
+            report(installed: "0.2.0", latest: "v0.3.0"), lastAnnounced: "", seamed: false))
+
+        #expect(announcement.announced == "v0.3.0", "the tag as published, `v` and all")
+        // The title names the version and the body names how to get it — the
+        // manual check's banner, because two wordings for one fact is what
+        // rendering every surface from here exists to prevent.
+        #expect(announcement.notification.title.contains("0.3.0"))
+        #expect(announcement.notification.body.contains("bootstrap.sh"))
+        #expect(announcement.notification.sound == false, "news is not an alarm")
+    }
+
+    /// The whole point: the cost of this feature is one banner per release,
+    /// ever, and that is what makes it something the app may do unasked.
+    @Test func theSameVersionIsNeverAnnouncedTwice() {
+        #expect(UpdateCommand.announcement(
+            report(installed: "0.2.0", latest: "v0.3.0"),
+            lastAnnounced: "v0.3.0", seamed: false) == nil)
+    }
+
+    /// …and the one after it still is. A record that suppressed everything
+    /// once it existed would be indistinguishable from the old silence.
+    @Test func theNextVersionAfterAnAnnouncedOneIsNewsAgain() throws {
+        let announcement = try #require(UpdateCommand.announcement(
+            report(installed: "0.2.0", latest: "v0.4.0"),
+            lastAnnounced: "v0.3.0", seamed: false))
+        #expect(announcement.announced == "v0.4.0")
+    }
+
+    /// Nothing to say: being current, being ahead of the newest release, and a
+    /// check that could not answer. A downgrade in particular is not news —
+    /// the maintainer's own working tree is ahead of the last tag every day.
+    @Test func onlyANewerReleaseAnnouncesAtAll() {
+        #expect(UpdateCommand.announcement(
+            report(installed: "0.2.0", latest: "v0.2.0"),
+            lastAnnounced: "", seamed: false) == nil)
+        #expect(UpdateCommand.announcement(
+            report(installed: "0.3.0", latest: "v0.2.0"),
+            lastAnnounced: "", seamed: false) == nil)
+        #expect(UpdateCommand.announcement(
+            report(installed: "0.2.0", latest: "error"),
+            lastAnnounced: "", seamed: false) == nil)
+    }
+
+    /// A `SIMMER_FAKE_LATEST` left exported in a shell rc must not put
+    /// "simmer 9.9.9 is available" in a person's notification centre. `check`
+    /// already discards a seamed record on the cached path; this is the same
+    /// door on the fresh one.
+    @Test func aSeamedCheckAnnouncesNothing() {
+        #expect(UpdateCommand.announcement(
+            report(installed: "0.2.0", latest: "v9.9.9", seamed: true),
+            lastAnnounced: "", seamed: true) == nil)
+    }
+}
+
+/// The announced version is its own fact on disk, because `update-check` is
+/// overwritten by every check — including the ones nobody sees.
+@Suite struct AnnouncedUpdateRecordTests {
+    private func ledger() -> Ledger {
+        Ledger(stateDir: FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-announced-\(UUID().uuidString)"))
+    }
+
+    @Test func nothingAnnouncedReadsAsEmptyRatherThanFailing() {
+        #expect(ledger().readAnnouncedUpdate() == "")
+    }
+
+    @Test func whatWasAnnouncedSurvivesTheNextCheck() {
+        let ledger = self.ledger()
+        ledger.writeAnnouncedUpdate("v0.3.0", now: 1_800_000_000)
+        // A later check finds the same release again and rewrites its own
+        // record; the announcement is a different file and is untouched.
+        ledger.writeUpdateRecord(.init(checkedAt: 1_800_003_600, installed: "0.2.0",
+                                       latest: "v0.3.0", error: ""))
+        #expect(ledger.readAnnouncedUpdate() == "v0.3.0")
+    }
+
+    /// A tag is free-ish text arriving from a redirect, and this record is a
+    /// newline-delimited key=value file — the shape a `--owner` newline once
+    /// walked straight through.
+    @Test func aTagCannotForgeASecondLine() {
+        let ledger = self.ledger()
+        ledger.writeAnnouncedUpdate("v0.3.0\nannounced_at=0", now: 1_800_000_000)
+        #expect(!ledger.readAnnouncedUpdate().contains("\n"))
+    }
+}

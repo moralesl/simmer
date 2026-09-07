@@ -130,6 +130,9 @@ Neither field changed meaning when the second clock arrived; `fits` and the exit
   Not a machine surface: `simmer update --json` is how anything else asks, so this stays an implementation detail rather than a fifth format to keep append-only.
   It records whether the check was `seamed`, and an unseamed reader discards a seamed record — a `SIMMER_FAKE_LATEST` left exported in a shell rc must not put "Update available: 9.9.9" in a person's menu bar.
 - `update-check.off` — present when a person has turned the app's once-a-day check off.
+- `update-announced` — the newest release a person has already been TOLD about, `key=value`.
+  A different fact from what the last check found, and therefore a different file: `update-check` is overwritten by every check, including the ones nobody sees, while this records what was said rather than what was read.
+  It is what makes the app's daily check post one banner per new version instead of one a day — and a check somebody asked for by hand records it too, so tomorrow's background check does not repeat what they have just read.
 - additionally, an append-only `events.jsonl` (one JSON object per transition: `v`, `ts`, `event`, `reason`, `owner`, …).
 
 A `format=1` lease is read **once**, converted into a claim, and deleted.
@@ -284,7 +287,8 @@ All additive to the surface above:
   `doctor` therefore answers the same on a train as in the office.
 - **One outbound request, and it is the only one.** A `HEAD` to `github.com/moralesl/simmer/releases/latest`, whose redirect names the newest tag.
   It carries a `simmer/<version>` User-Agent and nothing else: no identifier, no machine detail, no telemetry, ever.
-  The app makes it at most once a day and posts no banner for it; `simmer update` makes it when asked.
+  The app makes it at most once a day; `simmer update` makes it when asked.
+  A check that finds a version nobody has been told about posts **one** banner and records the tag in `update-announced` (§ State), so the cost of the feature is one banner per release rather than one a day — and being months behind is no longer something a Mac can be silently.
 - **`--apply` runs the command it would have printed, and never anything else.** Three properties hold, and they are what make it something this tool can offer at all rather than a convenience bolted on:
   1. **It never pipes the network into a shell.** The printed command for a bundle install is `curl … | bash`; the plan updates the installer's own checkout (`~/.local/share/simmer`) and runs `make install` there — local files, the same recipe `bootstrap.sh` would have run.
      An acceptance test asserts that nothing executed contains `curl`, `bash` or a pipe.
