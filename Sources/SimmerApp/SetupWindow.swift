@@ -156,8 +156,9 @@ final class SetupWindow: NSObject {
 
         let updateCaption = NSTextField(wrappingLabelWithString:
             "One request to github.com, asking which release is newest. It sends "
-            + "nothing about you or this Mac, and simmer never installs anything "
-            + "on its own — it shows you the command. Turn it off here, or set "
+            + "nothing about you or this Mac. Finding a newer one puts a row in the "
+            + "menu bar and posts one banner per version — installing it is the "
+            + "checkbox below, or a command you run. Turn the check off here, or set "
             + "SIMMER_NO_UPDATE_CHECK=1.")
         updateCaption.font = .systemFont(ofSize: 11)
         updateCaption.textColor = .tertiaryLabelColor

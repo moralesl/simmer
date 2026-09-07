@@ -84,13 +84,14 @@ It asks for no password, and it never pipes a script from the internet into a sh
 Simmer.app quits and comes back; a claim you are holding survives it.
 In your own checkout it refuses and tells you to `git pull && make install` — that is your repository, not simmer's machinery.
 
-`Simmer.app` makes the same check once a day and puts one row in the menu bar when there is something newer — no banner, no nagging.
+`Simmer.app` makes the same check once a day, puts one row in the menu bar when there is something newer, and posts **one banner per new version** — never the same one twice, and nothing at all when you are current.
 The bottom of the menu always says which version you are on and which is newest.
 That is a single `HEAD` request to `github.com`, carrying a `simmer/<version>` User-Agent and nothing else: no identifier, no machine detail, no telemetry, ever.
 It is also the only outbound request simmer makes, and you can turn it off in the setup window or with `SIMMER_NO_UPDATE_CHECK=1`.
 
 **`simmer update --auto on` lets that daily check install the release too**, so a copy nobody opens keeps itself current.
-It is off by default, and it **never installs while a claim is live** — an update quits `Simmer.app`, replaces the binary the guard runs and compiles for a minute or two, which is exactly the walked-away window a claim exists to protect. A release skipped for that reason is retried at the next daily check.
+It is off by default, and it **never installs while a claim is live** — an update quits `Simmer.app`, replaces the binary the guard runs and compiles for a minute or two, which is exactly the walked-away window a claim exists to protect.
+A release skipped for that reason is retried at the next daily check.
 A second checkbox in the setup window says the same thing, and going back if a release breaks something is one command per install type — [`docs/FAQ.md`](docs/FAQ.md).
 
 ## How it compares

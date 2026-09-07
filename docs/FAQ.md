@@ -36,11 +36,13 @@ One tested machine carried a rule called `awake` from before the tool was rename
 | `homebrew` | Homebrew has no way back to a version it has already replaced — see below |
 
 The bundle row is the same checkout `simmer update --apply` builds from, moved onto an older tag instead of a newer one, so it is the same recipe `bootstrap.sh` ran and it needs no password.
-`make install` quits `Simmer.app` and reopens it; the guard's LaunchAgent is rewritten to point at the older binary.
+`make install` quits `Simmer.app`; open it again afterwards (`open -a Simmer`), because nothing else will — bringing the app back is `simmer update --apply`'s last step, and a rollback is not an `--apply`.
+The guard's LaunchAgent is rewritten to point at the older binary.
 
 **Turn the unattended install off first, or it comes straight back.** `simmer update --auto off`.
 With it on, the app's next daily check finds the newer release again and installs it — a rollback and an unattended update disagree, and the update wins because it runs later.
-**A rollback pins nothing, and nothing here pretends otherwise.** `simmer update --apply` installs the **newest** release every time it is run — that is the only thing it does. It does not know you went back on purpose and it has no memory of the version you chose, so the next `--apply`, whether you type it or press **Install it now** in the menu bar, undoes the rollback.
+**A rollback pins nothing, and nothing here pretends otherwise.** `simmer update --apply` installs the **newest** release every time it is run — that is the only thing it does.
+It does not know you went back on purpose and it has no memory of the version you chose, so the next `--apply`, whether you type it or press **Install it now** in the menu bar, undoes the rollback.
 There is no pin, deliberately: a switch that suppresses updates indefinitely is a switch people leave on.
 So while you are waiting out a bad release, do not run `--apply` and do not press that row — `simmer update` on its own is safe, it only reports.
 Take the fix when it ships.
@@ -51,7 +53,8 @@ Files an older simmer never heard of — `update-check`, `update-check.off`, `au
 Two wrinkles, both only when going back **below 0.2.0**:
 
 - **The cap stops lifting itself.** `0.2.0` added `expires=` and the 09:00 rollover; `0.1.0` ignores the field and has no rollover, so an evening ceiling holds until you run `simmer cap off`.
-- **A claim whose owner had a capital letter** was written under the case-folded id (`Terminal` → `terminal`), which `0.1.0` does not derive. On APFS — the stock Mac — those are one file and the owner still addresses it; only a case-sensitive volume separates them, and there the claim expires on its deadline rather than being releasable by name.
+- **A claim whose owner had a capital letter** was written under the case-folded id (`Terminal` → `terminal`), which `0.1.0` does not derive.
+  On APFS — the stock Mac — those are one file and the owner still addresses it; only a case-sensitive volume separates them, and there the claim expires on its deadline rather than being releasable by name.
 
 **Why not `brew` for the Homebrew row?** Because Homebrew does not offer it.
 `brew switch` was removed, and `brew cleanup` deletes the old keg, so once `brew upgrade` has run there is usually nothing left to switch back to.
@@ -137,7 +140,8 @@ Human sentences may be reworded at any time.
 **Is there a Raycast extension?** Yes — [`integrations/raycast/`](../integrations/raycast/), six commands, install in one `npm ci && npm run dev`.
 It shows the claims list, which is the thing a one-line launcher cannot: who holds the lid, until when, and why.
 It reads `status --json` for the list, so it can never disagree with the CLI about what is held, and `simmer render raycast` for the countdown it shows under the command title in the root search — the same one-line surface a script command would use.
-Alfred is not supported. The Raycast extension is the launcher surface, and one that is used beats two that are half-kept.
+Alfred is not supported.
+The Raycast extension is the launcher surface, and one that is used beats two that are half-kept.
 A SwiftBar plugin is deliberately never coming — the app is the menu bar.
 
 **Where is the bash version?** In the maintainer's development archive, at its `v0.1` tag — a complete, tested implementation of the same contract that proved the model and bought the platform facts.

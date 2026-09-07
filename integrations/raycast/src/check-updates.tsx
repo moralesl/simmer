@@ -24,9 +24,13 @@ const REPO = "https://github.com/moralesl/simmer";
  *
  * Everything else — the claims view's row, the menu bar, `simmer doctor` —
  * reads the record the app keeps warm, so this is the only place a person
- * waits. It reports and hands over the command; it never installs anything,
- * because an update replaces a running app and the binary the guard's
- * LaunchAgent points at, and it can be asked for while a claim is live.
+ * waits.
+ *
+ * It is also the only surface here that installs: ⏎ runs `simmer update
+ * --apply`, which is the same command the view hands out — no password, and
+ * never a script piped from the internet into a shell. The claims list
+ * deliberately only copies it, because a launcher row nobody came to is the
+ * wrong place to replace a running app from.
  */
 export default function Command() {
   const bin = useMemo(() => resolveBinary(preferredPath()), []);
