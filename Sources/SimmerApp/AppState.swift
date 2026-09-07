@@ -257,7 +257,7 @@ final class AppState {
             body: "", sound: false)])
     }
 
-    // MARK: the in-process assertion — belt and braces for idle sleep    // MARK: the in-process assertion — belt and braces for idle sleep
+    // MARK: the in-process assertion — belt and braces for idle sleep
     //
     // An IOKit assertion cannot hold a closed lid (PLATFORM-FACTS.md closed
     // that negatively); pmset -a disablesleep is the mechanism. This is only

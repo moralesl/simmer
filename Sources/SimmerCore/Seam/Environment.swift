@@ -211,7 +211,7 @@ public struct SimmerEnvironment: Sendable {
         return FileManager.default.homeDirectoryForCurrentUser.path
     }
 
-    /// Ordinary configuration rather than a seam: it turns off the app's own    /// Ordinary configuration rather than a seam: it turns off the app's own
+    /// Ordinary configuration rather than a seam: it turns off the app's own
     /// once-a-day check. `simmer update`, typed by a person who is asking, is
     /// never suppressed by it — a command that answers "not checking" to the
     /// question "check" would be the silent-drop failure in a new place.
