@@ -5,6 +5,13 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ## Unreleased
 
+### Changed
+
+- **The setup window says less.** The two update checkboxes had a paragraph each — eight sentences between them, in a window whose other three rows are a title and one line.
+  Each is one line now, and each is the promise that decides its box: how little the daily check does, and that an install can never land on a live claim.
+  Everything the paragraphs carried moved into `docs/FAQ.md` § The update check, which a new **Learn more…** link under the pair opens — so nothing is lost and nothing is on screen twice.
+  `StructureTests` holds both halves: a caption that grows a second line fails, and so does a link whose anchor the FAQ no longer has.
+
 ### Releasing
 
 - **The release is a pull request that is always open, and merging it is the release.**

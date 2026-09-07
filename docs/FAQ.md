@@ -38,7 +38,8 @@ Turn it off in the setup window, or set `SIMMER_NO_UPDATE_CHECK=1`.
 `simmer update`, typed by a person who is asking, is never suppressed by either — a command that answered "not checking" to the question "check" would be a silent drop in a new place.
 
 **What an unattended install does.** It is off by default, and it rides on the daily check: with the check off it cannot fire, and the setup window disables it rather than showing a switch that lies.
-An update quits `Simmer.app`, replaces the binary the guard's LaunchAgent points at, and takes a minute or two to compile.
+An update quits `Simmer.app`, replaces the binary the guard's LaunchAgent points at, takes a minute or two to compile, and opens the app again as its last step.
+Your state is not part of it: the sudo rule, the claims under `claims/` and the cap are exactly where they were afterwards.
 So it never starts while a claim is live — that is exactly the walked-away window simmer exists to protect, and an update is the one thing that would end it.
 A release skipped for that reason is retried at the next daily check; nothing is lost by waiting.
 
