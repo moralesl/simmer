@@ -1,0 +1,97 @@
+# The half of `make release-check` a pull request can answer.
+#
+# `make release-check` asks six things before a tag exists: a clean tree, the
+# branch is main, the version is not already tagged, the CHANGELOG section
+# exists and is not empty, and both suites are green. Three of those are about
+# a laptop and one is the suites, which `test.yml` already runs on every pull
+# request. What is left is about two files, and two files are exactly what a
+# pull request can be judged on — so it is judged here, before the merge that
+# is now the release.
+#
+# It runs on EVERY pull request, not only the release one, and on most of them
+# it asks one question and stops: the version is already released, so this
+# branch is not cutting one and there is nothing else to ask. What it catches
+# is the pull request that DOES move the version — notes that are missing, a
+# heading with no date, a section with nothing in it, a fresh `## Unreleased`
+# written below the release instead of above it — and, on `release/next`, a
+# number that no longer matches what the version rule says now that somebody
+# has added the `release: major` label.
+#
+# That last one is why this is worth requiring rather than merely running. CI
+# computes the number when it writes the branch; a label added afterwards
+# changes the answer and nothing recomputes until the next push to `main`. This
+# is what stands between that and a major published as a patch.
+#
+# A workflow of its own rather than a seventh job in `test.yml` for one
+# mechanical reason: it needs `pull-requests: read` to see the label, and
+# `test.yml` is called by `release.yml`, where a nested workflow may not ask
+# for more than its caller was granted. A check that fails to START is worse
+# than no check.
+#
+# No `paths:` filter, deliberately. A required check that does not report is a
+# pull request that can never merge.
+name: release-check
+
+on:
+  pull_request:
+  # Events raised by the workflow token do not create workflow runs, so the
+  # release pull request `release-pr.yml` opens triggers nothing on its own.
+  # `workflow_dispatch` is the documented exception — it always creates a run —
+  # so `release-pr.yml` asks for this one by name after it pushes the branch.
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  release-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: The two files still agree about what a release is
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # X.Y.Z tags only. This repository also carries `v0.1` and
+          # `v0.0-lease` from before the version rule existed, and matching
+          # against those answers a different question.
+          released="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' | tr '\n' ' ')"
+          args=(check --released "$released")
+
+          # On the release branch, and only there, the NUMBER is checkable too:
+          # re-derive it from main's CHANGELOG exactly the way `release-pr.yml`
+          # did, label included.
+          if [ "$BRANCH" = "release/next" ]; then
+            git fetch --no-tags --quiet origin main
+            git show origin/main:CHANGELOG.md > "$RUNNER_TEMP/main-changelog.md"
+            git show origin/main:Sources/SimmerCore/Version.swift > "$RUNNER_TEMP/main-version.swift"
+
+            rule=(next-version
+                  --changelog "$RUNNER_TEMP/main-changelog.md"
+                  --version-file "$RUNNER_TEMP/main-version.swift")
+            if gh pr list --head release/next --state open \
+                 --json labels --jq '.[0].labels[].name' 2>/dev/null \
+                 | grep -qx 'release: major'; then
+              echo "labelled 'release: major'"
+              rule+=(--major)
+            fi
+
+            expected="$(./scripts/release.sh "${rule[@]}" | sed -n 's/^version=//p')"
+            if [ -z "$expected" ]; then
+              echo "::error::main's ## Unreleased is empty, so this branch has nothing left to release — the notes it was built from are already out. Close this pull request; the next push to main with notes under ## Unreleased opens a fresh one."
+              exit 1
+            fi
+            args+=(--expect-version "$expected")
+          fi
+
+          ./scripts/release.sh "${args[@]}"

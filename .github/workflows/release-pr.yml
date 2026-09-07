@@ -1,0 +1,291 @@
+# The release, as a pull request that is always there.
+#
+# 0.3.0 was cut by hand: six steps from a laptop shell, each one remembered.
+# The decision — whether to release, and what number it is — stays a person's,
+# because a tag decides what every new machine installs and what every existing
+# one is told (docs/RELEASING.md). What does not have to be a person's is the
+# typing.
+#
+# So on every push to `main` this keeps exactly one pull request open, titled
+# `release: X.Y.Z`, containing the two files a release commit changes and
+# carrying the notes GitHub would publish. Reading it is the review. Merging it
+# is the release: the merge lands a release commit on `main`, this workflow
+# sees a version with no tag, tags it, and hands over to `release.yml`.
+#
+# Nothing about what a release IS changes. Every check that stood before a tag
+# still stands before it, on the same commit, in the same order.
+name: release-pr
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release this version instead of the one the rule computes (X.Y.Z)"
+        required: false
+        type: string
+
+# Read by default; each job below asks for exactly what it writes.
+permissions:
+  contents: read
+
+jobs:
+  # What should happen, decided once and read by everything below — so the two
+  # halves of this workflow cannot disagree about which commit is a release.
+  decide:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      release_version: ${{ steps.plan.outputs.release_version }}
+      next_version: ${{ steps.plan.outputs.next_version }}
+      bump: ${{ steps.plan.outputs.bump }}
+      major_label: ${{ steps.plan.outputs.major_label }}
+    steps:
+      # Tags, because "is this version already released" is the whole question.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: What the CHANGELOG says should happen next
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_OVERRIDE: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          # Only X.Y.Z tags. This repository also carries `v0.1` and
+          # `v0.0-lease` from before the version rule existed, and a
+          # substring match against those is a wrong answer waiting.
+          released="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' | tr '\n' ' ')"
+          current="$(sed -n 's/.*string = "\(.*\)".*/\1/p' Sources/SimmerCore/Version.swift)"
+          echo "Version.swift says $current; released: $released"
+
+          # A release is a STATE, not an event: a version in Version.swift that
+          # no tag names. Reading it that way rather than as "did this commit
+          # touch Version.swift" means a re-run after a failed tag push still
+          # does the right thing, and a comment edit in that file does not
+          # start a release.
+          if ! printf ' %s ' "$released" | grep -q " $current "; then
+            echo "$current has no tag — this commit is a release"
+            {
+              echo "release_version=$current"
+              echo "next_version="
+              echo "bump=none"
+              echo "major_label=false"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "release_version=" >> "$GITHUB_OUTPUT"
+
+          # `release: major` on the open release pull request. A major is never
+          # inferred from prose — a removed field and an added one read exactly
+          # alike — so this label is the only thing that can say so, and it is
+          # a person who puts it there.
+          major=false
+          if gh pr list --head release/next --state open \
+               --json labels --jq '.[0].labels[].name' 2>/dev/null \
+               | grep -qx 'release: major'; then
+            major=true
+            echo "the open release pull request is labelled 'release: major'"
+          fi
+          echo "major_label=$major" >> "$GITHUB_OUTPUT"
+
+          args=(next-version)
+          [ "$major" = true ] && args+=(--major)
+          plan="$(./scripts/release.sh "${args[@]}")"
+          echo "$plan"
+          bump="$(printf '%s\n' "$plan" | sed -n 's/^bump=//p')"
+          version="$(printf '%s\n' "$plan" | sed -n 's/^version=//p')"
+
+          # A dispatch can name the number outright. It is the escape hatch for
+          # the release the rule cannot see — and it is still only a number:
+          # every check below runs the same way.
+          if [ -n "${VERSION_OVERRIDE:-}" ]; then
+            echo "::notice::version overridden by hand: $VERSION_OVERRIDE (the rule said ${version:-nothing})"
+            version="$VERSION_OVERRIDE"
+            bump=dispatch
+          fi
+
+          {
+            echo "bump=$bump"
+            echo "next_version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ -z "$version" ]; then
+            echo "::notice::## Unreleased is empty — there is nothing to release, so no pull request."
+          else
+            echo "::notice::next release would be $version ($bump)"
+          fi
+
+  # ── keeping the pull request current ──────────────────────────────────────
+
+  pull-request:
+    needs: decide
+    if: needs.decide.outputs.next_version != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # push release/next
+      pull-requests: write   # open or retitle the pull request
+      actions: write         # start test.yml on the branch — see below
+    # Two pushes to main in quick succession: the later answer is the right
+    # one, and the earlier run has nothing worth finishing.
+    concurrency:
+      group: release-pr-branch
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Write the release commit onto release/next
+        env:
+          VERSION: ${{ needs.decide.outputs.next_version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Built fresh from main every time rather than amended, so the branch
+          # is always exactly "main plus one commit" — which is what makes two
+          # pushes in a row leave one pull request with one commit in it.
+          git switch -c release/next
+          ./scripts/release.sh write "$VERSION" --date "$(date -u +%F)"
+          git add CHANGELOG.md Sources/SimmerCore/Version.swift
+          git commit -m "release: $VERSION"
+
+          # Force, because this is CI's branch and its history is disposable.
+          # `main` is protected against exactly this; release/next is not, and
+          # should not be.
+          git push --force origin release/next
+          echo "RELEASE_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Open it, or bring the open one up to date
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.decide.outputs.next_version }}
+          BUMP: ${{ needs.decide.outputs.bump }}
+        run: |
+          set -euo pipefail
+
+          # The notes GitHub will publish, read out of the same section
+          # `release.yml` will read at publish time. One extractor, so the
+          # pull request cannot preview notes other than the ones that ship.
+          notes="$(make release-notes VERSION="$VERSION")"
+
+          # Markdown, so the backticks below are code spans and the single
+          # quotes are exactly right — SC2016 reads every one as a mistake.
+          # shellcheck disable=SC2016
+          {
+            printf 'Merging this **is** the %s release.\n\n' "$VERSION"
+            printf 'It lands `release: %s` on `main`; a job there tags `v%s` and `release.yml` publishes the notes below, unchanged.\n\n' "$VERSION" "$VERSION"
+            printf 'The number is `%s` because the rule in `docs/RELEASING.md` § What a version number means read this as a **%s**.\n' "$VERSION" "$BUMP"
+            case "$BUMP" in
+              minor) printf 'If any of those machine-surface entries **removes, renames or changes the type of** a field, this is a major: add the `release: major` label and push anything to `main` to recompute.\n' ;;
+              patch) printf 'If something here touches a machine surface, it belongs under `### Machine surface` in `## Unreleased` — move it there and this becomes a minor.\n' ;;
+            esac
+            printf '\nThis branch is rebuilt from `main` on every push, so do not commit to it — edit `CHANGELOG.md` on `main` instead and it will come back changed.\n'
+            printf '\n---\n\n'
+            printf '%s\n' "$notes"
+          } > /tmp/body.md
+
+          number="$(gh pr list --head release/next --state open --json number --jq '.[0].number')"
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "release: $VERSION" --body-file /tmp/body.md
+            echo "updated #$number → release: $VERSION"
+          else
+            # This is the step the repository setting gates. Say which one,
+            # here, rather than leaving a 403 to be interpreted.
+            gh pr create \
+              --base main --head release/next \
+              --title "release: $VERSION" --body-file /tmp/body.md || {
+              echo "::error::could not open the pull request. If this was 'GitHub Actions is not permitted to create or approve pull requests', that is one repository setting: gh api -X PUT repos/${GITHUB_REPOSITORY}/actions/permissions/workflow -F default_workflow_permissions=read -F can_approve_pull_request_reviews=true"
+              exit 1
+            }
+            number="$(gh pr list --head release/next --state open --json number --jq '.[0].number')"
+            echo "opened #$number → release: $VERSION"
+          fi
+
+      # The checks, which do not start on their own.
+      #
+      # Events raised by the workflow token do not create workflow runs, so the
+      # push above and the pull request it belongs to trigger nothing — the
+      # branch protection's required checks would sit "expected" forever, and
+      # the one pull request that must be mergeable would be the one that never
+      # is. The documented exception is `workflow_dispatch`, which always
+      # creates a run, so this asks for the same legs by name. They report
+      # against the branch head, which is this pull request's head, which is
+      # what the protection reads.
+      #
+      # https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow
+      - name: Start the checks on the branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for workflow in test.yml release-check.yml; do
+            gh workflow run "$workflow" --ref release/next
+            echo "dispatched $workflow on release/next ($RELEASE_HEAD)"
+          done
+
+  # ── the merge that is a release ───────────────────────────────────────────
+
+  tag:
+    needs: decide
+    if: needs.decide.outputs.release_version != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Everything `make release-check` asks that a runner can ask, on the
+      # exact commit, BEFORE a tag exists. A tag is the one thing here that
+      # cannot be taken back by the next commit.
+      - name: The two files agree, and say something
+        run: |
+          ./scripts/release.sh check \
+            --released "$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' | tr '\n' ' ')"
+
+      - name: Tag it
+        id: tag
+        env:
+          VERSION: ${{ needs.decide.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+
+          # Refuses rather than overwrites, the same way `publish` refuses an
+          # existing release: a tag people may already have installed is not
+          # something a re-run gets to move.
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "::error::$tag already exists on origin. Nothing was changed. If you meant to replace it, delete it first — and read docs/RELEASING.md § Undoing one before you do."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "simmer $VERSION"
+          git push origin "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "tagged $tag at $(git rev-parse HEAD)"
+
+  # The publish path, unchanged and by reference — the same file a hand-pushed
+  # tag still runs. Called rather than dispatched: a tag pushed with the
+  # workflow token does not start `on: push: tags`, and calling it keeps the
+  # whole release in one run somebody can watch, instead of a second run to go
+  # and find.
+  publish:
+    needs: tag
+    uses: ./.github/workflows/release.yml
+    permissions:
+      contents: write
+    with:
+      tag: ${{ needs.tag.outputs.tag }}

@@ -13,9 +13,30 @@
 # again where the answer cannot be "it worked locally".
 name: release
 
+# Three ways in, one behaviour.
+#
+# A tag pushed by a person still starts this directly — that is the escape
+# hatch, and it is the path `docs/RELEASING.md` documented before any of this
+# was automated. The other two exist because a tag pushed by CI does NOT:
+# events raised by the workflow token do not create workflow runs, so
+# `release-pr.yml` calls this file instead of hoping the tag would.
+#
+# https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: "The tag to publish, e.g. v0.3.1"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag to publish, e.g. v0.3.1"
+        required: true
+        type: string
 
 # Only the release needs writing, and only in the job that writes it.
 permissions:
@@ -31,11 +52,19 @@ jobs:
   tag:
     runs-on: ubuntu-latest
     steps:
+      # The tag's own tree, whichever way this was reached. Called from
+      # `release-pr.yml` the default checkout would be `main`, which is the
+      # same commit today and would not be the day someone pushes while a
+      # release is in flight.
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: The tag names the version the binary reports
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          tag="${GITHUB_REF_NAME}"
+          tag="$TAG"
           version="$(sed -n 's/.*string = "\(.*\)".*/\1/p' Sources/SimmerCore/Version.swift)"
           echo "tag=$tag  Version.swift=$version"
           # A `v0.3.0` tag on a tree that says 0.2.0 is not a cosmetic
@@ -62,12 +91,15 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Publish the release from the CHANGELOG section
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          tag="${GITHUB_REF_NAME}"
+          tag="$TAG"
           version="${tag#v}"
 
           # Refuses rather than overwrites. A published release is a thing
