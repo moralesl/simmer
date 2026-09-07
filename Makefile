@@ -14,7 +14,8 @@ PREFIX       ?= $(HOME)/Applications
 # Ids spent on the maintainer's Mac, and therefore unusable:
 #   .dev   — denied on first install
 #   .dev2  — the id the rewrite was developed under
-# Development after this point uses .dev3 (make BUNDLE_ID=…dev3 app), which is
+#   .dev3  — denied, spent rendering the setup window (0.3.1)
+# Development after this point uses .dev4 (make BUNDLE_ID=…dev4 app), which is
 # then spent too. There is no supply problem; there is no recovery either.
 BUNDLE_ID    ?= io.github.moralesl.simmer
 GUARD_LABEL   = io.github.moralesl.simmer.guard
