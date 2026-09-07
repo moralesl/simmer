@@ -541,7 +541,7 @@ import Testing
         ledger.writeAnnouncedUpdate("v0.3.0", now: 1_800_000_000)
         // A later check finds the same release again and rewrites its own
         // record; the announcement is a different file and is untouched.
-        ledger.writeUpdateRecord(.init(checkedAt: 1_800_003_600, installed: "0.2.0",
+        ledger.writeUpdateRecord(.init(checkedAt: 1_800_003_600,
                                        latest: "v0.3.0", error: ""))
         #expect(ledger.readAnnouncedUpdate() == "v0.3.0")
     }

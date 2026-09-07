@@ -429,7 +429,6 @@ public struct Ledger: Sendable {
 
     public struct UpdateRecord: Sendable, Equatable {
         public var checkedAt: Int
-        public var installed: String
         /// The newest release tag, or empty when the check could not answer.
         public var latest: String
         /// Why it could not answer. Empty on success.
@@ -440,10 +439,9 @@ public struct Ledger: Sendable {
         /// and an unseamed reader needs to know not to believe this one.
         public var seamed: Bool
 
-        public init(checkedAt: Int, installed: String, latest: String, error: String,
+        public init(checkedAt: Int, latest: String, error: String,
                     seamed: Bool = false) {
             self.checkedAt = checkedAt
-            self.installed = installed
             self.latest = latest
             self.error = error
             self.seamed = seamed
@@ -465,7 +463,6 @@ public struct Ledger: Sendable {
         // and not a fifth machine surface to keep append-only.
         _ = atomicWrite("""
         checked=\(record.checkedAt)
-        installed=\(Claim.singleLine(record.installed, limit: 64))
         latest=\(Claim.singleLine(record.latest, limit: 64))
         error=\(Claim.singleLine(record.error, limit: 200))
         seamed=\(record.seamed ? 1 : 0)
@@ -476,7 +473,7 @@ public struct Ledger: Sendable {
     public func readUpdateRecord() -> UpdateRecord? {
         guard let text = try? String(contentsOf: updateCheckFile, encoding: .utf8) else { return nil }
         var checked = 0
-        var installed = "", latest = "", error = ""
+        var latest = "", error = ""
         var seamed = false
         for line in text.split(separator: "\n") {
             let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
@@ -484,7 +481,6 @@ public struct Ledger: Sendable {
             let value = String(parts[1])
             switch parts[0] {
             case "checked": checked = Int(value) ?? 0
-            case "installed": installed = value
             case "latest": latest = value
             case "error": error = value
             case "seamed": seamed = value == "1"
@@ -492,7 +488,7 @@ public struct Ledger: Sendable {
             }
         }
         guard checked > 0 else { return nil }
-        return UpdateRecord(checkedAt: checked, installed: installed, latest: latest,
+        return UpdateRecord(checkedAt: checked, latest: latest,
                             error: error, seamed: seamed)
     }
 

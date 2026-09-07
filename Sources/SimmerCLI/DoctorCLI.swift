@@ -401,15 +401,19 @@ struct DoctorCLI: ParsableCommand {
             break
         case .current(let commands):
             rows.append(Row(id: "raycast_extension",
-                            label: "Raycast extension registered and current (\(commands) commands)",
+                            label: "Raycast extension registered and current"
+                                + " (\(commands) \(commands == 1 ? "command" : "commands"))",
                             ok: nil))
         case .stale(let missing, let changed):
+            // The commands by name, and no count: the list is right there, and
+            // "1 command(s)" is the one line in this report that reads like a
+            // form letter. Every other sentence here picks a number.
             var what: [String] = []
             if !missing.isEmpty {
-                what.append("\(missing.count) command(s) it does not have (\(missing.joined(separator: ", ")))")
+                what.append("it does not have \(missing.joined(separator: ", "))")
             }
             if !changed.isEmpty {
-                what.append("\(changed.count) that changed (\(changed.joined(separator: ", ")))")
+                what.append("\(changed.joined(separator: ", ")) changed")
             }
             rows.append(Row(
                 id: "raycast_extension",

@@ -133,8 +133,8 @@ public enum UpdateCommand {
         // is the answer the other surfaces need, and without recording it the
         // menu would show "not checked yet" forever on a machine that has been
         // checking every day and failing.
-        ledger.writeUpdateRecord(.init(checkedAt: now, installed: installed,
-                                       latest: latest, error: error, seamed: seamed))
+        ledger.writeUpdateRecord(.init(checkedAt: now, latest: latest,
+                                       error: error, seamed: seamed))
         return report(now: now, installed: installed, install: install,
                       appVersion: appVersion, latest: latest, error: error,
                       checkedAt: now, fromCache: false,
