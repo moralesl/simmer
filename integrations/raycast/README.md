@@ -87,6 +87,10 @@ It does **not** run `ray lint` or `ray build`: the `ray` CLI is macOS-only and e
 - **Installing runs `simmer update --apply`**, which is the same command the view hands out: no password, and never a script piped from the internet into a shell.
   It compiles, so it takes a minute or two behind an animated toast, and Simmer.app quits and comes back while it happens.
   In a developer's own checkout simmer refuses and says so — that is a repository, not machinery.
+- **`simmer doctor` says when this is stale.** `make install` never touches this directory, so a release can move the CLI, the app and the guard forward and leave the extension where Raycast last built it — with the new commands simply not in the root search.
+  The `raycast_extension` row compares the commands `package.json` declares against the ones the registered copy at `~/.config/raycast/extensions/simmer/` can actually run, and prints `npm ci && npm run dev` when they disagree.
+  Informational, never red, and absent entirely on a Mac without Raycast.
+  It compares the manifest rather than a version because a Raycast extension has none — [Raycast's own docs](https://developers.raycast.com) are explicit that a manifest declares no `version` during development.
 - **No polling.** The countdown ticks locally from `until`; the list re-reads only when `$STATE/claims` or `$STATE/cap` changes, which is the same watch `LedgerWatcher` arms.
 - **The icon** is `assets/simmer.png`, the 512px face out of the shared `assets/icon.icns`.
   To regenerate: `iconutil -c iconset ../../assets/icon.icns -o /tmp/simmer.iconset` and copy `icon_512x512.png`.

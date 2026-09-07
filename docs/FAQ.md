@@ -26,6 +26,39 @@ Your state (`~/.local/state/simmer/`) is left alone; delete it if you want the l
 **I removed simmer but `sudo -l` still shows the pmset rule.** Look for it under another name: `sudo grep -rn disablesleep /etc/sudoers /etc/sudoers.d/`.
 One tested machine carried a rule called `awake` from before the tool was renamed, and every simmer install adopted it silently instead of writing its own.
 
+**A release broke something — how do I go back?** One command, and which one depends on how this copy got here.
+`simmer update --json` prints it as `provenance`; `simmer update` says it in prose ("installed as Simmer.app", "running from the checkout at …").
+
+| provenance | going back to `v0.2.0` |
+|---|---|
+| `bundle` — the one-paste installer | `git -C ~/.local/share/simmer checkout v0.2.0 && make -C ~/.local/share/simmer install` |
+| `checkout` — your own repository | `git checkout v0.2.0 && make install`, in it |
+| `homebrew` | Homebrew has no way back to a version it has already replaced — see below |
+
+The bundle row is the same checkout `simmer update --apply` builds from, moved onto an older tag instead of a newer one, so it is the same recipe `bootstrap.sh` ran and it needs no password.
+`make install` quits `Simmer.app` and reopens it; the guard's LaunchAgent is rewritten to point at the older binary.
+
+**Turn the unattended install off first, or it comes straight back.** `simmer update --auto off`.
+With it on, the app's next daily check finds the newer release again and installs it — a rollback and an unattended update disagree, and the update wins because it runs later.
+Even with it off, `simmer update --apply` installs the newest release whenever it is next run, by you or from the menu; a rollback pins nothing.
+If you need the older version to stay, stay off `--apply` until the release that fixed the problem is out.
+
+**What it does to your state: nothing.** Claims are `format=2` key=value files in every tagged release, the key set has not changed since `0.1.0`, and every parser ignores keys it does not know — that is what "machine surfaces are append-only" buys you in the one direction nobody plans for.
+So an older binary reads state a newer one wrote, and a claim you are relying on survives the rollback.
+Files an older simmer never heard of — `update-check`, `update-check.off`, `auto-update.on` — sit there inert, because nothing enumerates the state directory.
+Two wrinkles, both only when going back **below 0.2.0**:
+
+- **The cap stops lifting itself.** `0.2.0` added `expires=` and the 09:00 rollover; `0.1.0` ignores the field and has no rollover, so an evening ceiling holds until you run `simmer cap off`.
+- **A claim whose owner had a capital letter** was written under the case-folded id (`Terminal` → `terminal`), which `0.1.0` does not derive. On APFS — the stock Mac — those are one file and the owner still addresses it; only a case-sensitive volume separates them, and there the claim expires on its deadline rather than being releasable by name.
+
+**Why not `brew` for the Homebrew row?** Because Homebrew does not offer it.
+`brew switch` was removed, and `brew cleanup` deletes the old keg, so once `brew upgrade` has run there is usually nothing left to switch back to.
+Homebrew's own documented route to an older version is `brew version-install`, which extracts that formula version into a personal tap you then maintain yourself ([docs.brew.sh/Versions](https://docs.brew.sh/Versions)).
+`brew pin simmer` stops it happening again, at the cost of stopping every later upgrade too.
+For simmer this is currently theory: there is no tap yet (`docs/ROADMAP.md`), so nobody has a Homebrew install to roll back.
+
+**A release broke something for everyone, not just me.** It is fixed forward with a new patch version, never by deleting the tag — `docs/RELEASING.md` § Undoing one says why, and it is the same reason a rollback is a local action rather than a published one.
+
 **What is a claim?** Your request for awake time: a deadline, a reason, a battery floor, and your name on it.
 The Mac stays awake until the latest live claim ends.
 

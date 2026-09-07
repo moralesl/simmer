@@ -30,6 +30,19 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   Before this the daily check updated the menu and said nothing, so a colleague who never opens the menu bar could be months behind with no way to find out; a banner a day for the same release would have been the other failure.
   A check you ask for by hand answers with its own banner and records the version too, so tomorrow's background check does not repeat what you have just read.
   Off via the setup window's checkbox or `SIMMER_NO_UPDATE_CHECK=1`.
+- **`simmer update --auto on` lets the daily check install a release by itself** — off by default, and never while a claim is live.
+  It exists for the copy nobody opens at all: a colleague's Mac where the menu bar is the only surface and "there is an update" has been sitting in it for three weeks.
+  An update quits `Simmer.app`, replaces the binary the guard's LaunchAgent points at and compiles for a minute or two, so while somebody is holding the lid open it waits — that is precisely the walked-away window a claim exists to protect — and `Aggregate.compute` is what answers "is a claim live", never the claims directory.
+  A release skipped that way is retried at the **next daily check**, not when the claim ends: an update that starts compiling the moment an overnight job hands the lid back is an update nobody is expecting.
+  The whole decision is one pure function in the core with each refusal named (off · nothing newer · a claim is live · the plan was refused), so "nothing happened" is always attributable.
+  Only the background pass installs; clicking "Check for Updates…" still gets the report and the button.
+  `--auto off | status` for the other two, a second checkbox in the setup window that disables itself when the daily check above it is off, and `auto_update` on `update --json`.
+  When it does install, it **replaces** the availability banner rather than adding to it: the announcement is recorded so nothing repeats it tomorrow, and the update path's own two banners are what you see.
+- **`doctor` says when the Raycast extension has fallen behind.** It is the one installed part of simmer that `make install` cannot touch — TypeScript with its own npm tree, built and registered by Raycast — so a release moves the CLI, the app, the guard and the agent protocol forward and leaves the launcher surface where it was, with the new commands simply not in the root search and nothing anywhere saying so.
+  A Raycast manifest carries no version, so the row compares the commands the checkout declares against the ones the registered copy can actually run, and the declarations of those on both sides.
+  Absent where Raycast or the extension is not installed, ℹ where one side cannot be read, and never red — a stale renderer is not a broken install.
+  The fix it prints is `npm ci && npm run dev`, which is what registers an extension; `npm run build` produces the store's artifact and hands Raycast nothing.
+- **`docs/FAQ.md` § A release broke something — how do I go back?** The exact command per provenance, what a rollback does to your state (nothing: `format=2` since `0.1.0`, and every parser ignores keys it does not know), the two wrinkles below `0.2.0`, why Homebrew has no way back, and the one step that has to come first — `simmer update --auto off`, or the next daily check reinstalls what was rolled back.
 - **`doctor` reports a half-finished install as red.** `Simmer.app` and the CLI are normally the same file, so a version disagreement between them means one was replaced and the other was not — which a package manager that upgrades only the CLI would produce routinely.
   Being merely out of date stays informational.
 
@@ -60,6 +73,13 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 - **New state:** `$XDG_STATE_HOME/simmer/update-check`, `update-check.off` and `update-announced`.
   None is a machine surface — `simmer update --json` is how anything else asks.
   `update-announced` is the version a person has been told about, which is a different fact from what the last check found and therefore a different file: `update-check` is overwritten by every check, including the ones nobody sees.
+- **New:** `auto_update` (boolean) on `update --json`, and the `raycast_extension` row in `doctor --json`.
+  Nothing existing changed.
+- **New:** `update --auto <on|off|status> --json` is its own object — `action` (`auto_update_on`·`auto_update_off`·`checked`), `auto_update`, `background_check`, `seamed` — because it answers about a setting rather than about a release.
+  It refuses `--apply` and `--cached` rather than dropping one of them, and a value other than `on`/`off`/`status` is refused in simmer's voice with the refusal object on stdout.
+- **New seam:** `SIMMER_FAKE_RAYCAST=<dir>` — where Raycast keeps locally built extensions, for the `raycast_extension` row.
+- **New state:** `$XDG_STATE_HOME/simmer/auto-update.on`, present when unattended installs are on.
+  It spells the opposite direction to `update-check.off` on purpose: each file's absence has to be the safe default.
 
 ### Fixed
 
