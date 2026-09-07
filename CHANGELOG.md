@@ -5,6 +5,8 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ## Unreleased
 
+<!-- release: patch -->
+
 ### Changed
 
 - **The setup window says less.** The two update checkboxes had a paragraph each — eight sentences between them, in a window whose other three rows are a title and one line.
@@ -21,13 +23,19 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   So a release can be taken from a phone, and the decision stays exactly where it was: a person, in front of something they can read first.
   Nothing about what a release IS moves — `release.yml` is called rather than copied, so every check that stood before a tag still stands before it, on the same commit, in the same order.
   Only `main` acts: run from any other ref the workflow reports what a release would be and stops, so a dispatch from a branch cannot open a pull request out of that branch or tag a commit nobody released.
+- **A release declares its own number, next to the notes that earned it.**
+  One line anywhere under `## Unreleased` — `<!-- release: patch -->`, `minor` or `major` — travels with the change, in the pull request that makes it, reviewed by whoever reviews the notes.
+  Without it the only override was a label on the release pull request, which made the mechanism's first act in front of somebody a wrong number to be corrected: this release would have opened as 0.4.0 and been relabelled to 0.3.1.
+  An HTML comment rather than a visible line because it is an instruction to CI and not a note to whoever reads the release, because a visible *"released as a patch"* under a heading called **Unreleased** is a claim about something that has not happened, and because a `.md` diff is raw markdown — so it is visible exactly where it is reviewed and nowhere else.
+  It is **consumed** when the section is renamed: a directive to CI has no business in published notes, and a one-release decision must not repeat itself at the next one. `release-check` refuses a release section that still carries one.
+  Precedence is **label → declaration → the category rule**, because the label is the later decision and the one taken looking at the release itself; a misspelt or duplicated declaration is refused rather than ignored, since ignoring it ships the release at whatever the rule said while somebody believes they declared otherwise.
 - **The version number is read out of the CHANGELOG rather than remembered.**
   `scripts/release.sh` is `docs/RELEASING.md` § What a version number means, as code: an entry under `### Machine surface` or `### The test seam` in `## Unreleased` makes the next release a **minor**, an empty section means there is nothing to release, and anything else is a **patch**.
   A minor is *declared* by writing under one of those headings, never guessed from prose — "adds a `--json` field" and "adds a menu row" are the same sentence to a machine.
   A **major** is not inferred at all: removing a field, renaming one and changing one's type read exactly like adding one, so it takes a label on the release pull request.
   All three kinds are declarable the same way — `release: major`, `release: minor`, `release: patch`, exactly one, two refused rather than chosen between — because "the rule was too cautious" is not the only reason to overrule it.
   Sometimes it is *we are shipping this as a patch anyway, and we know what that costs*, and a rule with no override is one that gets worked around outside the mechanism, where nothing records who decided or what the rule had said.
-  So the pull request prints both: *"a **patch**, declared by label, where the rule read this as a **minor**"*.
+  So the pull request prints both, and which of the two said so: *"a **patch**, declared in the CHANGELOG, where the rule read this as a **minor**"*.
   A table test drives the rule from `swift test`, so it rides every CI leg.
 - **`release-check` is a check on the pull request**, and it is what makes the label safe.
   CI computes the number when it writes the branch; a label added afterwards changes the answer and nothing recomputes until the next push to `main`.

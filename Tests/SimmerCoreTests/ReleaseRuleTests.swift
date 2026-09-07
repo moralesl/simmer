@@ -197,6 +197,198 @@ import Testing
         #expect(result.err.contains("--bump takes major, minor or patch"))
     }
 
+    // ── the declaration in the CHANGELOG ────────────────────────────────────
+
+    /// A release declares its own number, next to the notes that earned it.
+    ///
+    /// The label was the only override at first, and that made the mechanism's
+    /// first act in front of somebody a wrong number to be corrected: 0.3.1
+    /// would have opened as 0.4.0 and been relabelled. A declaration under
+    /// `## Unreleased` travels with the change, in the pull request that makes
+    /// it, reviewed by whoever reviews the notes — so the release pull request
+    /// opens right.
+    ///
+    /// `<!-- release: patch -->` rather than a visible line: it is an
+    /// instruction to CI and not a note to whoever reads the release, a
+    /// visible "released as a patch" under a heading called *Unreleased* is a
+    /// claim about something that has not happened, and a `.md` diff is raw
+    /// markdown — so it is perfectly visible exactly where it is reviewed.
+    @Test(arguments: [
+        // (what sits under ## Unreleased, the bump, the version)
+        ("\n<!-- release: patch -->\n\n### Machine surface\n\n- a field\n", "patch", "0.3.1"),
+        ("\n<!-- release: minor -->\n\n### Fixed\n\n- a crash\n", "minor", "0.4.0"),
+        ("\n<!-- release: major -->\n\n### Fixed\n\n- a crash\n", "major", "1.0.0"),
+        // Placement is not policed: anywhere in the section is the section.
+        ("\n### Fixed\n\n- a crash\n\n<!-- release: minor -->\n", "minor", "0.4.0"),
+        // Spacing inside the comment is a person typing, not a different
+        // instruction.
+        ("\n<!--release:patch-->\n\n### Machine surface\n\n- a field\n", "patch", "0.3.1"),
+    ])
+    func theChangelogDeclaresItsOwnBump(body: String, bump: String, version: String) {
+        let result = Self.run(["next-version"], changelog: Self.changelog(unreleased: body))
+        #expect(result.code == 0, "\(result.err)")
+        #expect(result.value("bump") == bump)
+        #expect(result.value("version") == version)
+    }
+
+    /// Prose about the syntax is not the syntax.
+    ///
+    /// This is not hypothetical: the CHANGELOG entry announcing this feature
+    /// sits under `## Unreleased` and says the words `<!-- release: patch -->`
+    /// in the middle of a sentence, in the same section as the real
+    /// declaration. Anything but a whole-line match would have read that as a
+    /// second declaration and refused the release that introduced the feature.
+    @Test func onlyAWholeLineIsADeclaration() {
+        let result = Self.run(["next-version"], changelog: Self.changelog(unreleased: """
+
+            <!-- release: patch -->
+
+            ### Releasing
+
+            - One line under `## Unreleased` — `<!-- release: patch -->`, `minor` or
+              `major` — declares the number. Text mentioning `<!-- release: major -->`
+              is text.
+
+            ### Machine surface
+
+            - a field, so the rule reads a minor and the declaration overrules it
+
+            """))
+        #expect(result.code == 0, "prose was read as a declaration: \(result.err)")
+        #expect(result.value("bump") == "patch")
+        #expect(result.value("declared_by") == "changelog")
+    }
+
+    /// Precedence, and the reason for it: the label is the LATER decision,
+    /// taken looking at the release pull request itself, where the CHANGELOG
+    /// declaration was taken with the notes before there was a release to look
+    /// at. Both beat the category rule, which is the only one of the three
+    /// that guessed — and whichever won has to say so, or an override is
+    /// indistinguishable from the rule having agreed all along.
+    @Test func aLabelOverrulesAChangelogDeclarationAndTheOutputSaysWhich() {
+        let declared = Self.changelog(unreleased: """
+
+            <!-- release: patch -->
+
+            ### Machine surface
+
+            - a field
+
+            """)
+
+        let fromFile = Self.run(["next-version"], changelog: declared)
+        #expect(fromFile.value("version") == "0.3.1")
+        #expect(fromFile.value("declared_by") == "changelog")
+        #expect(fromFile.value("rule_bump") == "minor")
+
+        let fromLabel = Self.run(["next-version", "--bump", "major"], changelog: declared)
+        #expect(fromLabel.value("version") == "1.0.0", "the label is the later decision, so it wins")
+        #expect(fromLabel.value("declared_by") == "label")
+        #expect(fromLabel.value("rule_bump") == "minor",
+                "the rule is still what was overruled, whoever did the overruling")
+
+        // A label agreeing with the file is not an override of anything.
+        let agreeing = Self.run(["next-version", "--bump", "patch"], changelog: declared)
+        #expect(agreeing.value("version") == "0.3.1")
+        #expect(agreeing.value("declared_by") == "label")
+    }
+
+    /// Nothing was declared, so nothing claims to have been.
+    @Test func anUndeclaredReleaseReportsNoDeclaration() {
+        let result = Self.run(["next-version"],
+                              changelog: Self.changelog(unreleased: "\n### Fixed\n\n- a crash\n"))
+        #expect(result.value("bump") == "patch")
+        #expect(result.value("declared_by") == nil)
+        #expect(result.value("rule_bump") == nil)
+    }
+
+    /// A misspelling is refused, never ignored.
+    ///
+    /// Ignoring it ships the release at whatever the rule said while somebody
+    /// believes they declared otherwise — which is exactly the failure this
+    /// mechanism exists to prevent, arrived at through the mechanism itself.
+    @Test(arguments: [
+        ("\n<!-- release: sideways -->\n\n### Fixed\n\n- a crash\n",
+         "a bump is major, minor or patch"),
+        ("\n<!-- release: patch -->\n<!-- release: major -->\n\n### Fixed\n\n- a crash\n",
+         "declares more than one bump"),
+    ])
+    func aMalformedDeclarationIsRefused(body: String, refusal: String) {
+        let result = Self.run(["next-version"], changelog: Self.changelog(unreleased: body))
+        #expect(result.code != 0, "this should not have passed: \(result.out)")
+        #expect(result.err.contains(refusal), "the refusal said: \(result.err)")
+    }
+
+    /// A declaration in a section that is already released is somebody's
+    /// history, not an instruction. Only `## Unreleased` is read.
+    @Test func onlyTheUnreleasedSectionIsReadForADeclaration() {
+        let result = Self.run(["next-version"], changelog: """
+        # Changelog
+
+        ## Unreleased
+
+        ### Fixed
+
+        - a crash
+
+        ## 0.3.0 — 2026-09-07
+
+        <!-- release: major -->
+
+        - the release before this one
+
+        """)
+        #expect(result.value("bump") == "patch")
+        #expect(result.value("version") == "0.3.1")
+    }
+
+    /// The declaration is CONSUMED by the rename, in both directions: it must
+    /// not reach the published notes, where it would be a directive to CI in
+    /// something people read, and it must not stay in the fresh
+    /// `## Unreleased`, where it would be a decision nobody took repeating
+    /// itself at the next release.
+    @Test func writeConsumesTheDeclaration() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-consume-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let changelogPath = dir.appendingPathComponent("CHANGELOG.md")
+        let versionPath = dir.appendingPathComponent("Version.swift")
+        try Self.changelog(unreleased: """
+
+            <!-- release: patch -->
+
+            ### Machine surface
+
+            - a field
+
+            """)
+            .write(to: changelogPath, atomically: true, encoding: .utf8)
+        try """
+        public enum SimmerVersion {
+            public static let string = "0.3.0"
+        }
+        """.write(to: versionPath, atomically: true, encoding: .utf8)
+
+        let process = Process()
+        process.executableURL = Self.repoRoot.appendingPathComponent("scripts/release.sh")
+        process.arguments = ["write", "0.3.1", "--date", "2026-09-08",
+                             "--changelog", changelogPath.path,
+                             "--version-file", versionPath.path]
+        process.standardOutput = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+
+        let written = try String(contentsOf: changelogPath, encoding: .utf8)
+        #expect(!written.contains("release: patch"),
+                "the declaration survived the rename:\n\(written)")
+        #expect(written.contains("- a field"), "the notes have to survive it, though")
+        #expect(!written.contains("\n\n\n"),
+                "consuming the line should not leave a doubled blank:\n\(written)")
+    }
+
     // ── the labels, read once for both halves of CI ─────────────────────────
 
     /// `bump-label` is the single reader of the release pull request's labels.
@@ -372,6 +564,26 @@ import Testing
                               changelog: changelog, version: "0.3.1")
         #expect(result.code != 0, "this should not have passed:\n\(result.out)")
         #expect(result.err.contains(refusal), "the refusal said: \(result.err)")
+    }
+
+    /// A declaration that outlived the rename would put a directive to CI in
+    /// the published notes and repeat a one-release decision at the next one.
+    @Test func checkRefusesADeclarationThatSurvivedTheRename() {
+        let result = Self.run(["check", "--released", "0.1.0 0.2.0 0.3.0"],
+                              changelog: """
+                              # Changelog
+
+                              ## Unreleased
+
+                              ## 0.3.1 — 2026-09-08
+
+                              <!-- release: patch -->
+
+                              - something
+
+                              """, version: "0.3.1")
+        #expect(result.code != 0)
+        #expect(result.err.contains("still carries a release declaration"), "\(result.err)")
     }
 
     /// The label case, which is the whole reason this check is required rather
