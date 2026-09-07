@@ -42,6 +42,8 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   It pulls that checkout and re-runs `make install` — the two commands the same copy already prints — and only when the tree is clean and on the branch the remote calls default.
   Anything else refuses by name: uncommitted changes, another branch, a detached head, a remote whose default branch cannot be read locally, or a recorded checkout that has been moved or deleted.
   "A developer's own checkout is never moved onto a tag" still holds; it was about local commits and unfinished branches, and no checkout but the installer's is moved onto a tag.
+- **The Raycast check says the same thing the CLI does.** Its provenance line read "installed as Simmer.app" for every bundle, which is what the CLI's own prose used to say; it now names the checkout the bundle was built in, or says that checkout is no longer there.
+  A simmer too old to carry the fields says what it said before.
 
 ### Machine surface
 
