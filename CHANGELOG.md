@@ -35,6 +35,9 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   Previously CI only asked whether the installer parsed.
 - **`SIMMER_NO_LAUNCH=1`** installs everything except opening the app, for a machine with no login session — CI, or an install over SSH.
   The notification permission is a click by design, and the installer now says so instead of implying the install is finished.
+- **The acceptance suite also runs against the release binary.** `swift test` compiles and runs everything at -Onone, so every lane here was answering its question about a build nobody installs — which is how `update --apply --json` came to behave differently in the binary users get than in the one the suites drive (see Fixed, below).
+  `make test-release` points the suite at `.build/release/simmer` through the `SIMMER_BIN` seam it already honours, and CI runs it on both OS legs.
+  A machine surface is only guaranteed for a build something actually exercises.
 - **`docs/RELEASING.md`** — what happens when a pull request merges (nothing: the notes go under `Unreleased` and the version does not move), how a release is cut, and what a version number promises.
 
 ### Machine surface
