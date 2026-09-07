@@ -52,12 +52,14 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ### Fixed
 
-- **`update --apply --json` answered with nothing at all from the binary users get.** On macOS 15 with Swift 6.2.4, the release build recorded every step of the plan, exited 0, and emitted zero bytes on stdout — not even a newline — where the debug build of the same source emitted the whole object; the human form of the same command and `update --json` both printed normally, and so did every other `--json` surface.
+- **`update --apply --json` answered with nothing at all from the binary users get.** In the RELEASE build it ran the whole plan, exited with the right code, and emitted zero bytes on stdout: `Runtime.emit` was reached with an *empty* `stdout` array, which a probe binary writing through a bare `write(2)` loop confirmed by emitting nothing for it.
+  Not one toolchain's quirk — macOS 14 with Swift 6.0.3 and macOS 15 with Swift 6.2.4 both lost it, while the same source at `-Onone`, the debug build every suite drove, and `update --json` — whose answer is built in `SimmerCore` and delivered unmodified — all printed.
   To a caller, exit 0 with an empty stream is indistinguishable from a command that worked and had nothing to say, which is the one shape "honoured or refused, never accepted and dropped" exists to prevent.
-  Every line a command emits now goes straight to its descriptor through `write(2)` rather than through `print`, so no contracted surface depends on a stdio buffer surviving `exit` or on an optimiser's view of the standard library.
+  The whole answer for an `--apply`, human and machine, is now assembled in one place in the core (`UpdateCommand.applyOutcome`) and delivered unmodified, instead of the CLI taking an Outcome and overwriting its `stdout` on the way past at three call sites.
+  That is also where it belonged: SimmerCore stays pure and the surfaces render over it, and four surfaces render an update.
   No field, no exit code and no seam changed.
-  What is *not* pinned is the compiler-level mechanism: nine probes cleared every side effect in that path, and instrumenting the two lines that emit made the defect vanish, so the reading stops at "codegen-sensitive under -O on that toolchain" and the fix removes the dependency rather than the symptom.
-  Two gates keep it: `theOneRendererWritesRatherThanPrints` fails if machine output is routed through `print` again, and `make test-release` is the lane in which any of this was visible.
+  What is *not* pinned is the compiler-level mechanism. Nine probes cleared every side effect in the path, and instrumenting the CLI's copy of the Outcome made the defect vanish — so the reading stops at "the optimised build loses that array" and the fix removes the construction rather than naming the cause.
+  `make test-release` is the lane in which any of this was visible at all: both OS legs were green for as long as the only binary the suites drove was the debug one.
 - **A new subcommand can no longer be unreachable.** The sugar layer's verb list and the parser's subcommand list are two hand-kept lists in two files, and a name missing from the first made a working command report "did not understand the duration".
   A structural test now derives both from the source and fails if they disagree.
 

@@ -296,6 +296,78 @@ public enum UpdateCommand {
         return outcome
     }
 
+    /// What `--apply` actually did. All four endings, so that deciding which
+    /// one happened and deciding what to say about it are separate jobs.
+    public enum ApplyResult: Sendable {
+        case nothingToDo(String)
+        case refused(String)
+        case failed(step: ApplyStep, detail: String, plan: ApplyPlan)
+        case installed(plan: ApplyPlan, reopened: Bool)
+    }
+
+    /// The whole answer for one `--apply`, human or machine, exit code
+    /// included — the counterpart to `jsonOutcome` for the check.
+    ///
+    /// It exists because the CLI used to assemble this itself: take an Outcome
+    /// from here, then overwrite `stdout` with `applyJSON(…).serialized()` at
+    /// three call sites. On macOS 14 with Swift 6.0.3 and macOS 15 with Swift
+    /// 6.2.4, the RELEASE build of `update --apply --json` then reached
+    /// `Runtime.emit` with an EMPTY `stdout` array — every step of the plan
+    /// recorded, the exit code correct, the array gone. `-Onone` prints, the
+    /// debug build prints, the check path — whose Outcome is built here and
+    /// delivered unmodified — prints, and instrumenting the CLI's copy made
+    /// the defect vanish, which is why the mechanism is not pinned and this
+    /// function does not try to name it.
+    ///
+    /// It is also where this belonged: SimmerCore stays pure and the CLI is a
+    /// renderer over it (AGENTS.md, iron rules). Four surfaces render an
+    /// update; none of them should own the shape of its answer.
+    public static func applyOutcome(_ result: ApplyResult, report: Report,
+                                    seamed: Bool, json: Bool) -> Outcome {
+        switch result {
+        case .nothingToDo(let sentence):
+            guard json else {
+                var outcome = Outcome()
+                outcome.stdout = ["✅ \(sentence)"]
+                return outcome
+            }
+            return jsonApplyOutcome(report, seamed: seamed, applied: false,
+                                    plan: nil, error: nil, exit: 0)
+
+        case .refused(let why):
+            guard json else { return Outcome.failure(why) }
+            return jsonApplyOutcome(report, seamed: seamed, applied: false,
+                                    plan: nil, error: why, exit: 1)
+
+        case .failed(let step, let detail, let plan):
+            guard json else { return applyFailed(step: step, detail: detail) }
+            var outcome = jsonApplyOutcome(
+                report, seamed: seamed, applied: false, plan: plan,
+                error: "\(step.described): \(detail)", exit: 1)
+            outcome.notifications = applyFailed(step: step, detail: detail).notifications
+            return outcome
+
+        case .installed(let plan, let reopened):
+            let human = applied(plan, reopened: reopened)
+            guard json else { return human }
+            var outcome = jsonApplyOutcome(report, seamed: seamed, applied: true,
+                                           plan: plan, error: nil, exit: 0)
+            outcome.notifications = human.notifications
+            return outcome
+        }
+    }
+
+    /// One object, one exit code, built where the object is built.
+    private static func jsonApplyOutcome(_ report: Report, seamed: Bool,
+                                         applied: Bool, plan: ApplyPlan?,
+                                         error: String?, exit: Int32) -> Outcome {
+        var outcome = Outcome()
+        outcome.stdout = [applyJSON(report, seamed: seamed, applied: applied,
+                                    plan: plan, error: error).serialized()]
+        outcome.exit = exit
+        return outcome
+    }
+
     public static func applyJSON(_ report: Report, seamed: Bool,
                                  applied: Bool, plan: ApplyPlan?,
                                  error: String?) -> JSONValue {

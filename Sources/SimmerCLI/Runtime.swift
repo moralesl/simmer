@@ -139,37 +139,15 @@ enum Runtime {
         exit(outcome.exit)
     }
 
-    /// Every line this binary is asked to emit, written straight to a
-    /// descriptor — no `print`, no stdio buffer between the string and the
-    /// kernel.
-    ///
-    /// `print` lost a whole line here. On macOS 15 with Swift 6.2.4, the
-    /// release build of `update --apply --json` recorded all three plan steps,
-    /// exited 0, and produced ZERO bytes on stdout — not even the newline
-    /// `print("")` would leave — while the debug build of the same source
-    /// printed the object, the human form of the same command printed, and
-    /// `update --json` printed. Nine probes cleared every side effect in the
-    /// path: the record file, the `FileHandle`, the fd numbers, the plan
-    /// itself (the nothing-to-do case, which runs no steps at all, was empty
-    /// too), and `status --json`, which carries a `JSONValue.array` like the
-    /// object that vanished, was fine. What was left was the two lines below,
-    /// and adding *instrumentation* to them made the defect disappear — so
-    /// what the compiler did to `emit` is not pinned, and does not need to be.
-    ///
-    /// What is pinned is the rule: `--json` and the exit codes are API
-    /// (AGENTS.md, iron rules), and a contracted surface must not depend on
-    /// stdio buffering surviving `exit`, or on an optimiser's view of the
-    /// stdlib. `write(2)` in a loop is the shortest path there is between a
-    /// String and fd 1, and it is what stderr already used.
     static func emit(_ outcome: Outcome, human: HumanStream = .stdout) {
         for line in outcome.stdout {
             switch human {
-            case .stdout: writeLine(line, to: 1)
-            case .stderr: writeLine(line, to: 2)
+            case .stdout: print(line)
+            case .stderr: FileHandle.standardError.write(Data((line + "\n").utf8))
             }
         }
         for line in outcome.stderr {
-            writeLine(line, to: 2)
+            FileHandle.standardError.write(Data((line + "\n").utf8))
         }
         // The app is the only poster — macOS binds the notification grant to
         // the executable that asked, and this executable never asks
@@ -182,29 +160,6 @@ enum Runtime {
         let ledger = Ledger(stateDir: env.stateDir)
         for notification in outcome.notifications {
             ledger.enqueueNotification(notification, now: env.now())
-        }
-    }
-
-    /// One line and its newline, to one descriptor, whatever it takes.
-    ///
-    /// A short write is legal on any descriptor and routine on a pipe, so the
-    /// loop keeps going until every byte is gone; `EINTR` is a retry and not a
-    /// failure. If the descriptor is genuinely dead there is nowhere left to
-    /// report it, and the exit code the caller chose still stands.
-    private static func writeLine(_ line: String, to descriptor: Int32) {
-        let bytes = Array((line + "\n").utf8)
-        var sent = 0
-        while sent < bytes.count {
-            let written = bytes[sent...].withUnsafeBufferPointer {
-                write(descriptor, $0.baseAddress, $0.count)
-            }
-            if written > 0 {
-                sent += written
-            } else if written < 0 && errno == EINTR {
-                continue
-            } else {
-                return
-            }
         }
     }
 }

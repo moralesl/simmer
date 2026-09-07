@@ -270,9 +270,6 @@ All additive to the surface above:
   (`render`'s surfaces *are* its machine output; `--json` there would be a fourth surface nobody asked for.)
   `everyVerbHonoursJSON` is the gate — it walks the whole verb list, so a new command cannot join the surface without answering this question one way or the other.
   A refusal with `--json` prints `{"action":"refused","error":"…"}` and still exits 1.
-- **The machine surfaces are written, not printed.** Every line a command emits goes straight to its descriptor through `write(2)` (`Runtime.writeLine`), stdout and stderr alike.
-  A contracted surface may not depend on a stdio buffer surviving `exit`, and this one did not: the release build of `update --apply --json` on macOS 15 exited 0 having emitted zero bytes, while the debug build of the same source printed the object in full.
-  `theOneRendererWritesRatherThanPrints` is the gate, and `make test-release` is the lane that can see it at all — a guarantee only holds for a build something actually runs.
 - **The exit-code table is complete and published** (in `--help` and here): budget 0/1/3 · run passes through · claim/extend/release/cap 0 ok, 1 refused · doctor 0/1.
   Parse errors are 1, never an ArgumentParser 64.
 - **The anonymous-claimer nudge.** A non-tty caller taking a claim without naming itself gets one stderr line — not an error, not repeated, invisible to humans in a terminal.
