@@ -100,8 +100,11 @@ A sentence that puts `v0.3.0` next to `0.2.0` reads like two different kinds of 
 Telling a Homebrew user to re-run the one-paste installer would put a second, unmanaged copy beside the managed one; telling someone with a checkout to `brew upgrade` names a formula they do not have.
 Both are derived from the path the running binary resolves to, never from a preference.
 
-**`update --apply` adds `applied` (boolean), `steps` (the commands it ran, in order) and `apply_error`** (only when it could not).
+**`update --apply` adds `applied` (boolean), `steps` (**the plan's steps**, in order) and `apply_error`** (only when it could not).
 `action` is `updated` when something was installed, `checked` when there was nothing to install, and `refused` when it could not be done.
+`steps` is the plan — what installing this copy consists of — and it is the same list whether every step ran, one failed, or there was nothing to do (then it is empty).
+Bringing `Simmer.app` back afterwards is **not** in it: the reopen is decided from the app's heartbeat rather than from the plan, it carries the `relaunching` phase precisely because it is not one of the plan's own steps, and what reports it is `applied` staying true with the sentence naming what did not finish.
+A caller that wants to know whether the menu bar came back reads that sentence, not the array.
 
 **`doctor`'s `raycast_extension` row is informational and often absent.** The Raycast extension is the one installed part of simmer that `make install` cannot touch — TypeScript with its own npm tree, built and registered by Raycast — so a release can move the CLI, the app, the guard and the agent protocol forward and leave the launcher surface where it was, with the new commands simply not in the root search.
 A Raycast manifest carries **no version** (Raycast's own documentation: during development a manifest declares no `version`), so the comparison is the set of commands the checkout declares against the commands the registered copy can actually run — in its manifest *and* with a built `<name>.js` beside it — plus, for commands present on both sides, whether the declaration differs.
