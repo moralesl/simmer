@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import SimmerCore
 
-/// Two structural decisions that nothing in the code can express, and that a
+/// Structural decisions that nothing in the code can express, and that a
 /// person can therefore undo by accident in one line. They were prose in a
 /// document; they are assertions now, which is the only form that survives a
 /// contributor who has not read the document.
