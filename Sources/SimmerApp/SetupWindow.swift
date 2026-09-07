@@ -216,21 +216,32 @@ final class SetupWindow: NSObject {
         // The dependent row changes with it, in both directions: turning the
         // check off must visibly disable the thing that rides on it rather
         // than leaving a ticked box that can never fire.
-        refresh()
+        //
+        // These two rows only, not the whole window: `refresh()` shells out to
+        // `sudo -nl` and asks UserNotifications for the grant, and neither of
+        // those has any bearing on a checkbox somebody just clicked.
+        refreshUpdateRows()
     }
 
     @objc private func toggleAutoUpdate() {
         AppState.shared.context().ledger.setAutoUpdate(enabled: autoUpdateBox.state == .on)
+        // Read back rather than trusting the click: an unwritable state
+        // directory means the answer did not land, and a ticked box over a
+        // file that was never written is the one thing this row must not show.
+        refreshUpdateRows()
     }
 
-    private func refresh() {
+    /// The two update checkboxes, and nothing else. Cheap: two file reads and
+    /// one environment lookup, so it is safe to call on every click.
+    private func refreshUpdateRows() {
         // The environment wins over the checkbox, and says so rather than
         // showing a switch that does nothing: a variable exported in a shell
         // rc is not something a click in this window can overrule.
+        let ledger = AppState.shared.context().ledger
         let environmentSaysNo = AppState.shared.environment.backgroundUpdateCheckDisabled
         updateCheckBox.isEnabled = !environmentSaysNo
         updateCheckBox.state = environmentSaysNo
-            || !AppState.shared.context().ledger.backgroundUpdateChecksEnabled ? .off : .on
+            || !ledger.backgroundUpdateChecksEnabled ? .off : .on
         updateCheckBox.title = environmentSaysNo
             ? "Check for a newer simmer once a day — off via SIMMER_NO_UPDATE_CHECK"
             : "Check for a newer simmer once a day"
@@ -239,12 +250,15 @@ final class SetupWindow: NSObject {
         // person's decision and it survives the check being turned off and
         // back on. What the disabled state says is "this cannot fire", not
         // "you never asked for it".
-        let ledger = AppState.shared.context().ledger
         autoUpdateBox.state = ledger.autoUpdateEnabled ? .on : .off
         autoUpdateBox.isEnabled = updateCheckBox.isEnabled && updateCheckBox.state == .on
         autoUpdateBox.title = autoUpdateBox.isEnabled
             ? "…and install it, when nothing is claimed"
             : "…and install it, when nothing is claimed — needs the daily check above"
+    }
+
+    private func refresh() {
+        refreshUpdateRows()
 
         sudoState { ok, foreign in
             DispatchQueue.main.async {
