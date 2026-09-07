@@ -675,3 +675,161 @@ import Testing
         #expect(children.first?.action == .copyCLI("brew upgrade simmer"))
     }
 }
+
+/// A person reading "git -C … checkout --quiet v0.9.0 failed — fatal:
+/// reference is not a tree" learns a command they did not type, in a checkout
+/// they may not know they have, and neither of the two things that matter: did
+/// anything change, and what do I do now.
+@Suite struct ApplyFailureSentenceTests {
+    private func plan(kind: Install.Kind = .bundle) -> UpdateCommand.ApplyPlan {
+        UpdateCommand.ApplyPlan(
+            steps: [], target: "0.9.0",
+            reopenBundle: kind == .checkout ? nil : "/Applications/Simmer.app")
+    }
+
+    private func sentence(_ phase: UpdateCommand.ApplyPhase,
+                          updateCommand: String = "brew upgrade simmer") -> String {
+        UpdateCommand.failureSentence(phase: phase, plan: plan(),
+                                      updateCommand: updateCommand)
+    }
+
+    /// Every sentence names the version, says whether anything changed, and
+    /// ends with something to do. Those three are the whole point of it.
+    @Test(arguments: [UpdateCommand.ApplyPhase.fetching, .switching, .installing])
+    func eachInstallPhaseSaysWhatHappenedAndWhatToRun(_ phase: UpdateCommand.ApplyPhase) {
+        let text = sentence(phase)
+        #expect(text.contains("simmer 0.9.0"), "\(text)")
+        #expect(text.contains("Run: brew upgrade simmer"), "\(text)")
+        #expect(!text.contains("git "), "a command nobody typed is not the message")
+    }
+
+    /// The three are distinguishable, which is the reason the phase is a field
+    /// at all — one sentence for three failures would name none of them.
+    @Test func theThreeInstallPhasesReadDifferently() {
+        let all = [sentence(.fetching), sentence(.switching), sentence(.installing)]
+        #expect(Set(all).count == 3, "\(all)")
+        #expect(sentence(.fetching).contains("Nothing on this Mac was changed"))
+        #expect(sentence(.switching).contains("Nothing was installed"))
+        #expect(sentence(.installing).contains("untouched"))
+    }
+
+    /// Homebrew's plan is one step that fetches, builds and installs, and it
+    /// is `.installing`. A sentence claiming the release "was fetched but not
+    /// installed" would be false of it.
+    @Test func theInstallingSentenceIsTrueOfAOneStepPlanToo() {
+        #expect(!sentence(.installing).contains("fetched"))
+    }
+
+    /// The update landed; what did not finish is the app coming back. Telling
+    /// someone to re-run the installer here would be the wrong instruction,
+    /// so this is the one phase that does not.
+    @Test func theRelaunchSentenceNamesTheAppAndNotTheInstaller() {
+        let text = sentence(.relaunching)
+        #expect(text.contains("is installed"), "\(text)")
+        #expect(text.contains("open /Applications/Simmer.app"), "\(text)")
+        #expect(!text.contains("brew upgrade"), "the install worked — do not send them round again")
+    }
+
+    /// A plan with no bundle to reopen still gets a whole sentence rather than
+    /// one ending in a dangling "open ".
+    @Test func aPlanWithNoBundleStillEndsItsSentence() {
+        let text = UpdateCommand.failureSentence(
+            phase: .relaunching, plan: plan(kind: .checkout), updateCommand: "")
+        #expect(text.hasSuffix("."), "\(text)")
+        #expect(!text.contains("open "), "\(text)")
+    }
+
+    /// The sentence is the message; the failing command and its stderr tail
+    /// stay underneath it as evidence, and in the banner's subtitle.
+    @Test func theFailingCommandIsTheSecondLineNotTheFirst() throws {
+        let step = UpdateCommand.ApplyStep(
+            executable: "/usr/bin/git",
+            arguments: ["-C", "/x", "checkout", "--quiet", "v0.9.0"], phase: .switching)
+        let outcome = UpdateCommand.applyFailed(
+            step: step, detail: "fatal: reference is not a tree",
+            plan: plan(), updateCommand: "brew upgrade simmer")
+
+        #expect(outcome.exit == 1)
+        #expect(outcome.stderr.count == 2, "\(outcome.stderr)")
+        #expect(outcome.stderr[0].contains("Could not switch to simmer 0.9.0"))
+        #expect(outcome.stderr[1].contains("git -C /x checkout --quiet v0.9.0 failed"))
+        #expect(outcome.stderr[1].contains("fatal: reference is not a tree"),
+                "the stderr tail is kept verbatim")
+
+        let banner = try #require(outcome.notifications.first)
+        #expect(banner.title == "The simmer update did not finish")
+        #expect(banner.subtitle == step.described)
+        #expect(banner.body.contains("Could not switch to simmer 0.9.0"),
+                "the banner gets the sentence")
+    }
+
+    /// A reopen that failed is not a failed install: the exit code, the
+    /// success line and `applied` all stay as they were, and the sentence is
+    /// added rather than substituted.
+    @Test func aFailedRelaunchIsSaidWithoutBecomingAFailure() throws {
+        let outcome = UpdateCommand.applied(
+            plan(), reopened: false, relaunchFailure: "The application cannot be opened.",
+            updateCommand: "brew upgrade simmer")
+
+        #expect(outcome.exit == 0, "the update landed")
+        #expect(outcome.stdout.first == "✅ simmer 0.9.0 installed")
+        #expect(outcome.stdout.contains { $0.contains("did not come back") })
+        #expect(outcome.stdout.contains { $0.contains("The application cannot be opened.") })
+        let banner = try #require(outcome.notifications.first)
+        #expect(banner.title == "simmer 0.9.0 installed")
+        #expect(banner.body.contains("did not come back"))
+    }
+
+    /// And a reopen that worked says exactly what it always said.
+    @Test func aRelaunchThatWorkedIsUnchanged() throws {
+        let outcome = UpdateCommand.applied(plan(), reopened: true)
+        #expect(outcome.stdout == ["✅ simmer 0.9.0 installed · Simmer.app relaunched"])
+        #expect(try #require(outcome.notifications.first).body.isEmpty)
+    }
+}
+
+/// The phase is a field on the step rather than something recognised from its
+/// arguments, and the plans have to keep filling it in correctly — it decides
+/// which sentence a person reads on the worst day this feature has.
+@Suite struct ApplyPhaseTests {
+    private func report(kind: Install.Kind, home: String = "/Users/x") -> UpdateCommand.Report {
+        let path = kind == .homebrew
+            ? "/opt/homebrew/Cellar/simmer/9.9.9/Simmer.app/Contents/MacOS/simmer"
+            : "\(home)/Applications/Simmer.app/Contents/MacOS/simmer"
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-phase-\(UUID().uuidString)")
+        return UpdateCommand.check(
+            now: 1_800_000_000, installed: "0.2.0",
+            install: Install.detect(executablePath: path, exists: { _ in true }),
+            appVersion: nil, ledger: Ledger(stateDir: dir),
+            source: FakeReleaseSource(value: "v9.9.9"), cached: false, seamed: false)
+    }
+
+    private func steps(_ kind: Install.Kind) -> [UpdateCommand.ApplyStep] {
+        guard case .run(let plan) = UpdateCommand.applyPlan(
+            for: report(kind: kind), home: "/Users/x", exists: { _ in true })
+        else { #expect(Bool(false), "no plan for \(kind)"); return [] }
+        return plan.steps
+    }
+
+    @Test func theBundlePlanIsFetchThenSwitchThenInstall() {
+        #expect(steps(.bundle).map(\.phase) == [.fetching, .switching, .installing])
+    }
+
+    /// One step that does all three, so it is the last one — the phase whose
+    /// sentence says the running copy is untouched.
+    @Test func homebrewsOneStepIsInstalling() {
+        #expect(steps(.homebrew).map(\.phase) == [.installing])
+    }
+
+    /// No plan may leave a step on a phase that describes something else, and
+    /// every phase a plan uses must be one whose sentence is written.
+    @Test func noStepIsMisfiled() {
+        for kind in [Install.Kind.bundle, .homebrew] {
+            for step in steps(kind) {
+                #expect(step.phase != .relaunching, "\(kind) has no relaunch in its steps")
+            }
+        }
+        #expect(UpdateCommand.reopenStep(bundle: "/Applications/Simmer.app").phase == .relaunching)
+    }
+}

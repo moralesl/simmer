@@ -17,6 +17,9 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   A bundle install has the one-paste installer's checkout at `~/.local/share/simmer`, so the plan fetches the new tag there and runs `make install`; Homebrew gets `brew upgrade simmer`.
   It refuses in a developer's own checkout — that may hold local commits, an unfinished branch or a stash — and refuses when it cannot tell whether there is anything to install.
   `applied`, `steps` and `apply_error` on `--json`; exit 0 means nothing is left to do.
+- **An update that fails says what did not finish.** `git -C … checkout --quiet v0.9.0 failed — fatal: reference is not a tree` names a command nobody typed, in a checkout most people do not know they have, and answers neither of the two questions that matter.
+  The first line is now a sentence: which part of the update stopped — fetching the release, switching to it, installing it, relaunching the app — whether anything on the Mac changed, and the command that works from a terminal. The failing command and its stderr tail follow it, and the banner carries the sentence.
+  A relaunch that fails is the one case that is not a failed install: the update landed, the exit code stays 0, and the sentence says to open Simmer.app rather than to run the installer again. Before this its only sign was the absence of "· Simmer.app relaunched" from a success line.
 - **A menu row that copies says so.** Handing a command to the clipboard was the one menu action with no visible consequence: the menu closed, the clipboard had changed, and nothing on screen said which — indistinguishable from a row that did nothing.
   It now posts a banner naming the command. Raycast needed nothing: its own copy action shows a HUD when it fires.
 - **The release notes, before you install anything.** `simmer update` prints the release's own page under the install command, the menu bar's update group carries **Release notes…**, and Raycast's check gets an *Open Release Notes* action.
@@ -51,6 +54,7 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 - **New:** `update --json` (`action`, `verdict`, `installed`, `latest`, `update_available`, `provenance`, `update_command`, `app_version`, `app_drift`, `checked_at`, `cached`, `error`, `seamed`, `release_notes_url`), and the `update` and `app_version` rows in `doctor --json`.
   Nothing existing changed.
 - **New seam:** `SIMMER_FAKE_APPLY=<file>` — `--apply`'s steps are recorded instead of run, which is how the plan is asserted without a build.
+- **New seam:** `SIMMER_FAKE_APPLY_FAIL=<fetching|switching|installing|relaunching>` — which recorded step reports failure, so the failure half of `--apply` is testable without breaking an install. Anything that is not a phase fails nothing.
 - **New seam:** `SIMMER_FAKE_LATEST=<tag|error>`.
   A process that is seamed at all and has not been given it reads nothing over the network, which is what keeps both suites hermetic.
 - **New state:** `$XDG_STATE_HOME/simmer/update-check`, `update-check.off` and `update-announced`.

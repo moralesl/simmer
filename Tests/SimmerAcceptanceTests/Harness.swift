@@ -117,6 +117,21 @@ struct Sim {
                             atomically: true, encoding: .utf8)
     }
 
+    /// A fresh app heartbeat, so a command that asks "is Simmer.app running"
+    /// is answered yes.
+    ///
+    /// Only the app writes this file, and only when it is running — so a
+    /// decision that depends on it (`--apply` reopening the bundle afterwards)
+    /// is otherwise unreachable from a suite that must never launch the app.
+    /// Modelling the file rather than the app, the way `plantInClaims` models
+    /// the directory's contents.
+    func plantAppHeartbeat(at ts: Int = Sim.epoch) {
+        try? FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
+        try? "pid=1\nnotify=authorized\nlogin=enabled\nts=\(ts)\n"
+            .write(to: stateDir.appendingPathComponent("app.status"),
+                   atomically: true, encoding: .utf8)
+    }
+
     func claimFileNames() -> [String] {
         ((try? FileManager.default.contentsOfDirectory(atPath: claimsDir.path)) ?? []).sorted()
     }
