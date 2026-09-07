@@ -187,9 +187,16 @@ final class AppState {
             aggregate: ctx.aggregate(),
             plan: UpdateCommand.applyPlan(
                 for: report, home: environment.homeDirectory,
-                exists: { FileManager.default.fileExists(atPath: $0) }))
+                exists: { FileManager.default.fileExists(atPath: $0) }),
+            alreadyTried: ctx.ledger.readAttemptedUpdate())
         switch decision {
         case .apply:
+            // Recorded BEFORE the hand-off, because the hand-off ends this
+            // process: `make install` quits Simmer.app, so there is nothing
+            // here afterwards to write down what was attempted. Still seeing
+            // this release tomorrow is what tells the next check the attempt
+            // did not land.
+            ctx.ledger.writeAttemptedUpdate(report.latest, now: ctx.now)
             // The same hand-off a person's click makes — `simmer update
             // --apply`, one implementation, one set of tests. It posts its own
             // completion banner through the spool, which is what makes the
@@ -200,9 +207,11 @@ final class AppState {
         case .notNow(let why, let sentence):
             // Recorded only where the reason is worth reading later. "It is
             // off" and "nothing is newer" are the ordinary daily answers, and
-            // a line a day for each would bury the two that mean something.
+            // a line a day for each would bury the ones that mean something —
+            // which is why a check that could not be made has its own reason
+            // rather than being filed under "nothing newer" and never logged.
             switch why {
-            case .claimIsLive, .planRefused:
+            case .cannotTell, .alreadyTried, .claimIsLive, .planRefused:
                 ctx.ledger.log("unattended update deferred (\(why.rawValue)): \(sentence)",
                                now: ctx.now)
             case .off, .nothingNewer:
@@ -257,7 +266,7 @@ final class AppState {
             body: "", sound: false)])
     }
 
-    // MARK: the in-process assertion — belt and braces for idle sleep    // MARK: the in-process assertion — belt and braces for idle sleep
+    // MARK: the in-process assertion — belt and braces for idle sleep
     //
     // An IOKit assertion cannot hold a closed lid (PLATFORM-FACTS.md closed
     // that negatively); pmset -a disablesleep is the mechanism. This is only

@@ -13,6 +13,7 @@ import { preferredPath } from "./preference.ts";
 import {
   applyUpdate,
   checkUpdate,
+  latestDisplay,
   resolveBinary,
   SimmerUpdate,
 } from "./simmer.ts";
@@ -24,9 +25,13 @@ const REPO = "https://github.com/moralesl/simmer";
  *
  * Everything else — the claims view's row, the menu bar, `simmer doctor` —
  * reads the record the app keeps warm, so this is the only place a person
- * waits. It reports and hands over the command; it never installs anything,
- * because an update replaces a running app and the binary the guard's
- * LaunchAgent points at, and it can be asked for while a claim is live.
+ * waits.
+ *
+ * It is also the only surface here that installs: ⏎ runs `simmer update
+ * --apply`, which is the same command the view hands out — no password, and
+ * never a script piped from the internet into a shell. The claims list
+ * deliberately only copies it, because a launcher row nobody came to is the
+ * wrong place to replace a running app from.
  */
 export default function Command() {
   const bin = useMemo(() => resolveBinary(preferredPath()), []);
@@ -55,7 +60,7 @@ export default function Command() {
             <Detail.Metadata.Label title="Installed" text={data.installed} />
             <Detail.Metadata.Label
               title="Newest release"
-              text={data.latest ?? "unknown"}
+              text={latestDisplay(data) || "unknown"}
             />
             <Detail.Metadata.Label title="Installed by" text={data.provenance} />
             {data.app_version !== null && (
@@ -84,7 +89,7 @@ export default function Command() {
                   const done = await applyUpdate(bin!);
                   toast.style = Toast.Style.Success;
                   toast.title = done.applied
-                    ? `simmer ${done.latest?.replace(/^v/, "") ?? ""} installed`
+                    ? `simmer ${latestDisplay(done)} installed`
                     : "already up to date";
                   toast.message = undefined;
                 } catch (error) {
@@ -143,11 +148,11 @@ function body(update: SimmerUpdate): string {
     : "";
   switch (update.verdict) {
     case "available":
-      return `# simmer ${update.latest} is out\n\nYou have ${update.installed}, ${describe(update)}.\n\n**⏎ Install it now**, or take the command:\n\n\`\`\`\n${update.update_command}\n\`\`\`\n\nInstalling asks for no password and never pipes a script from the internet into a shell. Simmer.app quits and comes back; a claim you are holding survives it.${notes(update)}${drift}`;
+      return `# simmer ${latestDisplay(update)} is out\n\nYou have ${update.installed}, ${describe(update)}.\n\n**⏎ Install it now**, or take the command:\n\n\`\`\`\n${update.update_command}\n\`\`\`\n\nInstalling asks for no password and never pipes a script from the internet into a shell. Simmer.app quits and comes back; a claim you are holding survives it.${notes(update)}${drift}`;
     case "current":
       return `# Up to date\n\nsimmer ${update.installed} is the newest release, ${describe(update)}.${drift}`;
     case "ahead":
-      return `# Ahead of the newest release\n\nsimmer ${update.installed} is newer than ${update.latest}, the newest published release. Nothing to do.${drift}`;
+      return `# Ahead of the newest release\n\nsimmer ${update.installed} is newer than ${latestDisplay(update)}, the newest published release. Nothing to do.${drift}`;
     case "unknown":
       return `# Could not tell\n\n${update.error ?? "no reason given"}\n\nYou have simmer ${update.installed}.`;
   }

@@ -23,20 +23,31 @@ import Foundation
 /// the single place that knows what is held (AGENTS.md, iron rules — a surface
 /// that reads the ledger itself becomes a second implementation of it).
 public enum AutoUpdate {
-    /// Why not now. Four reasons, enumerated rather than collapsed into one
-    /// boolean, because "nothing happened" is the answer a person gets from
-    /// their menu bar and each of these needs a different thing done about it:
-    /// turn it on, nothing to do, wait, or read the refusal.
+    /// Why not now. Enumerated rather than collapsed into one boolean, because
+    /// "nothing happened" is the answer a person gets from their menu bar and
+    /// each of these needs a different thing done about it: turn it on,
+    /// nothing to do, look at the network, install it by hand, wait, or read
+    /// the refusal.
     public enum NotNow: String, Sendable, Equatable {
         /// The person has not asked for unattended installs.
         case off
         /// Already current, or ahead of the newest release.
         case nothingNewer
+        /// The check could not answer, so there is no question to decide yet.
+        /// Its own reason rather than `nothingNewer`: a Mac that cannot reach
+        /// GitHub is not a Mac with nothing to install, and the two need
+        /// different things done about them. It is also the one this path used
+        /// to file under "nothing newer" and therefore never log.
+        case cannotTell
+        /// This release has already been tried unattended, once, and this Mac
+        /// is still not on it — so the attempt did not land and repeating it
+        /// daily would be a banner a day about the same failure. A person's
+        /// `simmer update --apply` always tries; only this path stands down.
+        case alreadyTried
         /// Someone — a person, an agent, a `run` — is holding this Mac awake.
         case claimIsLive
         /// There is something to install and no way to install it here: a
-        /// developer's own checkout, a bundle with no installer checkout, or a
-        /// check that could not be made.
+        /// developer's own checkout, or a bundle with no installer checkout.
         case planRefused
     }
 
@@ -46,25 +57,42 @@ public enum AutoUpdate {
         case notNow(NotNow, String)
     }
 
-    /// Pure: the person's switch, the check's answer, what is held, and the
-    /// plan — one decision out.
+    /// Pure: the person's switch, the check's answer, what has already been
+    /// tried, what is held, and the plan — one decision out.
     ///
-    /// The order of the four questions is the order in which they stop
-    /// mattering. `off` first, so a Mac whose owner said no is never asked
-    /// what it is holding; `nothingNewer` next, because with nothing to
-    /// install there is no decision to make; only then the claim, which is the
-    /// one reason that will be gone by tomorrow.
+    /// The order is the order in which the reasons stop mattering, permanent
+    /// before transient. `off` first, so a Mac whose owner said no is never
+    /// asked what it is holding; then the check, because an answer nobody has
+    /// is not a decision; then whether this exact release has already been
+    /// tried, which no amount of waiting changes; and the claim last, because
+    /// it is the one reason that will be gone by tomorrow. Reporting the
+    /// transient reason over a permanent one would tell a person to wait for
+    /// something that is never going to happen.
+    ///
+    /// `alreadyTried` is the tag this path last attempted, or empty. Still
+    /// seeing that release means the attempt did not land — nothing else can
+    /// leave a Mac on the old version with the new tag published — so it is
+    /// not attempted again unattended.
     public static func decide(enabled: Bool,
                               report: UpdateCommand.Report,
                               aggregate: Aggregate,
-                              plan: UpdateCommand.ApplyDecision) -> Decision {
+                              plan: UpdateCommand.ApplyDecision,
+                              alreadyTried: String) -> Decision {
         guard enabled else {
             return .notNow(.off, "unattended updates are off — turn them on with simmer update --auto on")
         }
+        guard report.verdict != .unknown else {
+            return .notNow(.cannotTell,
+                           "cannot tell whether there is anything to install — \(report.error)")
+        }
         guard report.verdict == .available else {
-            return .notNow(.nothingNewer, report.verdict == .unknown
-                ? "cannot tell whether there is anything to install — \(report.error)"
-                : "simmer \(report.installed) has nothing newer to install")
+            return .notNow(.nothingNewer, "simmer \(report.installed) has nothing newer to install")
+        }
+        guard alreadyTried.isEmpty || alreadyTried != report.latest else {
+            return .notNow(.alreadyTried,
+                "simmer \(report.latestDisplay) was already installed unattended once and this Mac"
+                    + " is still on \(report.installed) — install it with simmer update --apply,"
+                    + " or simmer update --auto on to let this try again")
         }
         guard aggregate.count == 0 else {
             // Named rather than counted: "3 claims" tells a reader nothing

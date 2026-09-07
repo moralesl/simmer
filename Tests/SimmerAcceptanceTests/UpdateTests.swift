@@ -354,6 +354,69 @@ import Testing
         #expect(!ran.contains("install NOTES=0"), "recorded after the failure: \(ran)")
     }
 
+    /// `steps` against what actually ran, in both directions — with the app up,
+    /// which is the case where the two differ.
+    ///
+    /// Two tests here agreed on three, and only because neither had an app
+    /// heartbeat: this one asserts every step in the field was run, and that
+    /// the one extra command is the reopen and nothing else. That is what
+    /// `steps` promises after CONTRACTS.md stopped calling it "the commands it
+    /// ran" — the plan, with the relaunch reported by `applied` and the
+    /// sentence instead.
+    @Test func stepsIsThePlanAndTheOnlyExtraCommandIsTheReopen() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        sim.plantAppHeartbeat()
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+
+        #expect(result.code == 0, "\(result.combined)")
+        let steps = (object(result.out)["steps"] as? [String]) ?? []
+        let ran = ((try? String(contentsOf: log, encoding: .utf8)) ?? "")
+            .split(separator: "\n").map(String.init)
+
+        // Every step it reported was run, in the order it reported them.
+        #expect(steps == Array(ran.prefix(steps.count)), "steps \(steps) vs ran \(ran)")
+        // And the only thing run that it did not report is the reopen.
+        let extra = ran.dropFirst(steps.count)
+        #expect(extra.count == 1, "unreported commands: \(Array(extra))")
+        #expect(extra.first?.hasPrefix("open ") == true, "\(Array(extra))")
+        #expect(!steps.contains { $0.hasPrefix("open ") },
+                "the reopen is not one of the plan's steps: \(steps)")
+    }
+
+    /// The plan comes before the failure, in a redirect as well as on a tty.
+    ///
+    /// `simmer update --apply > log 2>&1` is how anybody reports this going
+    /// wrong, and it used to read back with "Could not install simmer 9.9.9"
+    /// on line 1 and "▸ updating simmer 0.2.0 → 9.9.9" on line 3: stdio
+    /// block-buffers stdout when it is not a tty, and the failure goes
+    /// straight to the descriptor. Asserted through one descriptor for both
+    /// streams, because two pipes cannot see a sequence at all.
+    @Test func theFailureLandsAfterThePlanItDescribes() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = "installing"
+        let text = sim.runInterleaved(["update", "--apply"], env: env)
+
+        guard let plan = text.range(of: "updating simmer"),
+              let failure = text.range(of: "Could not install") else {
+            #expect(Bool(false), "\(text)")
+            return
+        }
+        #expect(plan.lowerBound < failure.lowerBound,
+                "the failure sentence overtook the plan it describes:\n\(text)")
+    }
+
     /// The fourth phase, and the only one that is not a failed install: the
     /// update landed and the menu bar did not come back. Before this the sole
     /// sign was the ABSENCE of "· Simmer.app relaunched" from a success line,
@@ -482,6 +545,31 @@ import Testing
 
         sim.run(["update", "--auto", "off"])
         #expect(!FileManager.default.fileExists(atPath: marker))
+    }
+
+    /// Turning it on forgets the release the daily check already tried, so
+    /// asking for unattended installs is asking for an attempt.
+    ///
+    /// The state file is where the contract says and it holds one tag; the
+    /// decision that reads it is `AutoUpdate.decide`, tested in the core where
+    /// nothing can be installed. This pins the file and the clearing, which
+    /// are the parts a person's command can reach.
+    @Test func askingAgainForgetsTheReleaseItAlreadyTried() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let attempted = sim.stateDir.appendingPathComponent("update-attempted")
+        try? FileManager.default.createDirectory(at: sim.stateDir,
+                                                 withIntermediateDirectories: true)
+        try? "latest=v9.9.9\nattempted_at=1800000000\n"
+            .write(to: attempted, atomically: true, encoding: .utf8)
+
+        // Off does not forget it: nothing reads it while off, and clearing it
+        // there would make the answer depend on which way the switch moved last.
+        sim.run(["update", "--auto", "off"])
+        #expect(FileManager.default.fileExists(atPath: attempted.path))
+
+        sim.run(["update", "--auto", "on"])
+        #expect(!FileManager.default.fileExists(atPath: attempted.path),
+                "asking for unattended installs did not clear the attempt it stood down from")
     }
 
     /// `--auto status` answers from the marker file alone. The source is

@@ -100,8 +100,11 @@ A sentence that puts `v0.3.0` next to `0.2.0` reads like two different kinds of 
 Telling a Homebrew user to re-run the one-paste installer would put a second, unmanaged copy beside the managed one; telling someone with a checkout to `brew upgrade` names a formula they do not have.
 Both are derived from the path the running binary resolves to, never from a preference.
 
-**`update --apply` adds `applied` (boolean), `steps` (the commands it ran, in order) and `apply_error`** (only when it could not).
+**`update --apply` adds `applied` (boolean), `steps` (**the plan's steps**, in order) and `apply_error`** (only when it could not).
 `action` is `updated` when something was installed, `checked` when there was nothing to install, and `refused` when it could not be done.
+`steps` is the plan — what installing this copy consists of — and it is the same list whether every step ran, one failed, or there was nothing to do (then it is empty).
+Bringing `Simmer.app` back afterwards is **not** in it: the reopen is decided from the app's heartbeat rather than from the plan, it carries the `relaunching` phase precisely because it is not one of the plan's own steps, and what reports it is `applied` staying true with the sentence naming what did not finish.
+A caller that wants to know whether the menu bar came back reads that sentence, not the array.
 
 **`doctor`'s `raycast_extension` row is informational and often absent.** The Raycast extension is the one installed part of simmer that `make install` cannot touch — TypeScript with its own npm tree, built and registered by Raycast — so a release can move the CLI, the app, the guard and the agent protocol forward and leave the launcher surface where it was, with the new commands simply not in the root search.
 A Raycast manifest carries **no version** (Raycast's own documentation: during development a manifest declares no `version`), so the comparison is the set of commands the checkout declares against the commands the registered copy can actually run — in its manifest *and* with a built `<name>.js` beside it — plus, for commands present on both sides, whether the declaration differs.
@@ -157,6 +160,11 @@ Neither field changed meaning when the second clock arrived; `fits` and the exit
   A different fact from what the last check found, and therefore a different file: `update-check` is overwritten by every check, including the ones nobody sees, while this records what was said rather than what was read.
   It is what makes the app's daily check post one banner per new version instead of one a day — and a check somebody asked for by hand records it too, so tomorrow's background check does not repeat what they have just read.
   An unattended install suppresses that banner rather than adding to it: the update path posts its own two about the same version, and the announcement is still recorded so nothing repeats it tomorrow.
+- `update-attempted` — the release the once-a-day check has already TRIED to install by itself, `key=value`.
+  A third fact about the same tag, and therefore a third file: what the last check found, what a person has been told, and what this Mac has tried.
+  Written **before** the attempt starts, because the attempt quits `Simmer.app` and there is nothing left to write it afterwards; still seeing that release on the next daily check is what proves the attempt did not land.
+  Its absence is the safe default in the same way `auto-update.on`'s presence is: with no record, the next check tries.
+  Cleared when a person turns unattended installs **on**, so asking for them is asking for an attempt — and not when they turn them off, because nothing reads it while off and forgetting it there would make the answer depend on which way the switch moved last.
 - additionally, an append-only `events.jsonl` (one JSON object per transition: `v`, `ts`, `event`, `reason`, `owner`, …).
 
 A `format=1` lease is read **once**, converted into a claim, and deleted.
@@ -328,10 +336,15 @@ All additive to the surface above:
   The failing command and its stderr tail stay underneath it, and in `--json`'s `apply_error` unchanged: the sentence is for the person, the command is what a caller has always parsed.
   `relaunching` is the one phase that is not a failed install — the update landed and the menu bar did not come back — so it exits 0, keeps `applied: true`, sets no `apply_error`, and says to open the app rather than to run the installer again.
 - **The unattended install is off by default, and a live claim refuses it.** With `simmer update --auto on`, the app's once-a-day check may install what it finds — the same `simmer update --apply` a person's click runs, so there is one implementation and one set of tests.
-  Four things must all hold, and the decision is one pure function in the core with each refusal named (`off`, `nothingNewer`, `claimIsLive`, `planRefused`) so that "nothing happened" is always attributable.
+  Everything must hold, and the decision is one pure function in the core with each refusal named — `off`, `cannotTell`, `nothingNewer`, `alreadyTried`, `claimIsLive`, `planRefused` — so that "nothing happened" is always attributable.
+  They are answered permanent-reason-first: a person told to wait for a claim to end, when the release will not be attempted after it ends either, has been told to wait for nothing.
+  `cannotTell` is its own reason rather than a shade of `nothingNewer` because a Mac that cannot reach GitHub and a Mac with nothing to install need different things done about them — and it is logged, which the ordinary daily answers (`off`, `nothingNewer`) are not.
   **`Aggregate.compute` is what answers "is a claim live"**, never the claims directory: a surface that reads the ledger itself becomes a second implementation of the aggregate.
   An update quits `Simmer.app`, replaces the binary the guard's LaunchAgent points at, and compiles for a minute or two — while a claim is live that is exactly the walked-away window a claim exists to protect, so it waits.
   A release skipped for that reason is retried at the **next daily check**, not when the claim ends: an update that starts compiling the moment an overnight job hands the lid back is an update nobody is expecting.
+  **One unattended attempt per release**, recorded in `update-attempted` (§ State) before it starts.
+  A release that cannot be installed — a tag that will not fetch, a build that fails — otherwise fails again at every daily check, with a banner each time, which is the repetition "one banner per new version" exists to prevent applied to the half of the feature that can go wrong.
+  So this path stands down from that one release and from nothing else: the next release is attempted, a person's `simmer update --apply` always attempts, the menu bar's **Install it now** always attempts, and turning `--auto on` again clears the record.
   Only the background pass may install; `force` — a person who just clicked "Check for Updates…" — gets the report and the button, because installing under a click that asked a question is the surprise the whole feature is built to avoid.
   The completion banner is `--apply`'s own, through the spool, which is what lets it survive the app being replaced and relaunched in between; nothing posts a second one.
   And it does not add to the availability banner, it **replaces** it: when the check's answer is about to be installed, the "one banner per new version" announcement is recorded and not posted, because the update path is already going to post two about that same version.
