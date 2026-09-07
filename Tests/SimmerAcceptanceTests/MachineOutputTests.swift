@@ -499,7 +499,7 @@ import Testing
     /// gate is mechanical rather than a promise to remember.
     @Test(arguments: ["claim", "extend", "release", "cap", "status", "budget",
                       "run", "guard", "doctor", "log", "render", "notify-test",
-                      "uninstall"])
+                      "uninstall", "update"])
     func everyDocumentedVerbResolves(_ verb: String) {
         let sim = Sim(); defer { sim.tearDown() }
         let result = sim.run([verb, "--help"])
@@ -516,7 +516,8 @@ import Testing
     /// rather than the four that were wrong: a new command cannot join the
     /// surface without answering the question one way or the other.
     @Test(arguments: ["claim", "extend", "release", "cap", "status", "budget",
-                      "doctor", "log", "render", "notify-test", "uninstall"])
+                      "doctor", "log", "render", "notify-test", "uninstall",
+                      "update"])
     func everyVerbHonoursJSON(_ verb: String) {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["2h", "--owner", "terminal"]) // something for them to describe
@@ -986,5 +987,141 @@ import Testing
         let stillAwake = sim.switchValue == "1"
         #expect(promised == stillAwake,
                 "budget said \(promised ? "fits" : "does not fit") and the guard left the switch \(sim.switchValue)")
+    }
+}
+
+/// `doctor`'s `raycast_extension` row, through the binary and through the
+/// seam that substitutes Raycast's extensions directory.
+///
+/// The Harness sets `HOME` to its own temp root, so a run with no
+/// `SIMMER_FAKE_RAYCAST` at all looks at a `$HOME/.config/raycast/extensions`
+/// that does not exist — the "no Raycast" case, hermetic without anyone
+/// remembering an extra variable, exactly as `SIMMER_FAKE_LATEST` is.
+@Suite struct DoctorRaycastRowTests {
+    private func rows(_ sim: Sim, env: [String: String] = [:]) -> [[String: Any]] {
+        let result = sim.run(["doctor", "--json"], env: env)
+        return (sim.json(result)["checks"] as? [[String: Any]]) ?? []
+    }
+
+    private func row(_ sim: Sim, env: [String: String] = [:]) -> [String: Any]? {
+        rows(sim, env: env).first { $0["id"] as? String == "raycast_extension" }
+    }
+
+    /// One extension in Raycast's extensions directory, built from `commands`,
+    /// and one checkout declaring `declares`.
+    private func plant(_ sim: Sim, built: [String], declares: [String]) -> [String: String] {
+        let fm = FileManager.default
+        let extensions = sim.root.appendingPathComponent("raycast-extensions")
+        let installed = extensions.appendingPathComponent("simmer")
+        try? fm.createDirectory(at: installed, withIntermediateDirectories: true)
+        for command in built {
+            fm.createFile(atPath: installed.appendingPathComponent("\(command).js").path,
+                          contents: nil)
+            fm.createFile(atPath: installed.appendingPathComponent("\(command).js.map").path,
+                          contents: nil)
+        }
+        try? manifest(built).write(
+            to: installed.appendingPathComponent("package.json"), atomically: true, encoding: .utf8)
+
+        // The checkout side, where provenance will look for it: the bundle
+        // path's installer checkout under HOME, which the Harness points at
+        // its own root.
+        let checkout = sim.root.appendingPathComponent(".local/share/simmer/integrations/raycast")
+        try? fm.createDirectory(at: checkout, withIntermediateDirectories: true)
+        try? manifest(declares).write(
+            to: checkout.appendingPathComponent("package.json"), atomically: true, encoding: .utf8)
+
+        return [
+            "SIMMER_FAKE_RAYCAST": extensions.path,
+            // A bundle install, so `RaycastExtension.checkout` resolves to
+            // ~/.local/share/simmer rather than to this repository.
+            "SIMMER_BIN": sim.root
+                .appendingPathComponent("Applications/Simmer.app/Contents/MacOS/simmer").path,
+        ]
+    }
+
+    private func manifest(_ commands: [String]) -> String {
+        let declarations = commands.map {
+            "{\"name\":\"\($0)\",\"title\":\"Simmer \($0)\",\"mode\":\"view\"}"
+        }
+        return "{\"name\":\"simmer\",\"commands\":[\(declarations.joined(separator: ","))]}"
+    }
+
+    /// No Raycast at all: no row. An uninstalled launcher is not a finding,
+    /// and a line about it would be a line about nothing.
+    @Test func noRaycastMeansNoRowAtAll() {
+        let sim = Sim(); defer { sim.tearDown() }
+        #expect(row(sim) == nil, "a Mac without Raycast got a row about the extension")
+    }
+
+    /// The extensions directory exists and holds no simmer: still no row.
+    @Test func raycastWithoutTheExtensionMeansNoRow() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let extensions = sim.root.appendingPathComponent("raycast-extensions")
+        try? FileManager.default.createDirectory(
+            at: extensions.appendingPathComponent("something-else"),
+            withIntermediateDirectories: true)
+        #expect(row(sim, env: ["SIMMER_FAKE_RAYCAST": extensions.path]) == nil)
+    }
+
+    @Test func anExtensionThatMatchesTheCheckoutIsAnInformationalGreenRow() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let six = ["status", "claims", "claim", "extend", "release", "cap"]
+        let env = plant(sim, built: six, declares: six)
+
+        guard let found = row(sim, env: env) else {
+            #expect(Bool(false), "no raycast_extension row")
+            return
+        }
+        #expect(found["ok"] is NSNull, "the row is informational, never a check")
+        #expect((found["label"] as? String)?.contains("6 commands") == true, "\(found)")
+    }
+
+    /// The case the row exists for: a release added a command and nothing
+    /// rebuilt the extension, so it is simply not in the root search.
+    @Test func anExtensionMissingACommandIsReportedAndStillNotRed() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let six = ["status", "claims", "claim", "extend", "release", "cap"]
+        let env = plant(sim, built: six, declares: six + ["check-updates"])
+
+        let before = sim.run(["doctor", "--json"]).code
+        guard let found = row(sim, env: env) else {
+            #expect(Bool(false), "no raycast_extension row")
+            return
+        }
+        #expect(found["ok"] is NSNull,
+                "a stale renderer is not a broken install — a red row here teaches people to skim")
+        #expect((found["label"] as? String)?.contains("check-updates") == true, "\(found)")
+        #expect(sim.run(["doctor", "--json"], env: env).code == before,
+                "a stale extension moved doctor's exit code")
+    }
+
+    /// The live shape on the maintainer's Mac: the installer's checkout sat at
+    /// a tag from before the extension existed. ℹ, never red.
+    @Test func anExtensionWithNoCheckoutToCompareAgainstIsInformational() {
+        let sim = Sim(); defer { sim.tearDown() }
+        var env = plant(sim, built: ["status"], declares: ["status"])
+        // Remove the checkout side and leave the registered extension.
+        try? FileManager.default.removeItem(
+            at: sim.root.appendingPathComponent(".local/share/simmer"))
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+
+        guard let found = row(sim, env: env) else {
+            #expect(Bool(false), "no raycast_extension row")
+            return
+        }
+        #expect(found["ok"] is NSNull)
+        #expect((found["label"] as? String)?.contains("integrations/raycast") == true, "\(found)")
+    }
+
+    /// The fix has to register the extension, not merely build it: `ray build`
+    /// produces the store's artifact and hands Raycast nothing.
+    @Test func theHumanReportNamesTheCommandThatActuallyFixesIt() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let env = plant(sim, built: ["status"], declares: ["status", "claims"])
+        let human = sim.run(["doctor"], env: env).combined
+
+        #expect(human.contains("npm run dev"), "\(human)")
+        #expect(!human.contains("npm run build"))
     }
 }

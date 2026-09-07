@@ -344,6 +344,34 @@ public struct Ledger: Sendable {
 
     public var spoolFile: URL { stateDir.appendingPathComponent("notify-spool.jsonl") }
     public var appStatusFile: URL { stateDir.appendingPathComponent("app.status") }
+    public var updateCheckFile: URL { stateDir.appendingPathComponent("update-check") }
+    /// Present = the app's once-a-day check is off. A stamp file rather than a
+    /// preference, for the reason `login-item.offered` is one: the app keeps no
+    /// UserDefaults, all of its state is here, and `doctor` can then read a
+    /// person's decision without asking the app whether it is running.
+    public var updateCheckOffFile: URL { stateDir.appendingPathComponent("update-check.off") }
+    /// The newest release a person has been TOLD about — a different fact from
+    /// what the last check found, and therefore its own file.
+    ///
+    /// `update-check` is overwritten by every check, including the ones nobody
+    /// sees; this survives them, because it records what was said rather than
+    /// what was read. Keeping it as a field in that record would mean every
+    /// writer of the check had to carry the announcement forward, and
+    /// `UpdateCommand.check` has no business knowing what has been announced.
+    public var updateAnnouncedFile: URL { stateDir.appendingPathComponent("update-announced") }
+    /// The release the once-a-day check has already tried to install by
+    /// itself, `key=value`.
+    ///
+    /// A third fact about the same tag, and therefore a third file: what the
+    /// last check FOUND, what a person has been TOLD, and what this Mac has
+    /// TRIED. Written before the attempt starts, because the attempt replaces
+    /// this app and there is nothing left here afterwards to write it.
+    ///
+    /// Still seeing that release on the next daily check means the attempt did
+    /// not land, and one retry a day is one failure banner a day — the exact
+    /// repetition `update-announced` exists to prevent for the other half of
+    /// this feature.
+    public var updateAttemptedFile: URL { stateDir.appendingPathComponent("update-attempted") }
 
     public func enqueueNotification(_ request: NotificationRequest, now: Int) {
         let json = JSONValue.object([
@@ -390,6 +418,171 @@ public struct Ledger: Sendable {
                 actionable: object["actionable"] as? Bool ?? false))
         }
         return requests
+    }
+
+    // MARK: the last release check
+    //
+    // Cached so that the surfaces which are not the one doing the asking —
+    // `doctor`, a launcher row, the menu — never make a network call of their
+    // own. One check a day answers all of them, and a stale answer is labelled
+    // rather than refreshed behind someone's back.
+
+    public struct UpdateRecord: Sendable, Equatable {
+        public var checkedAt: Int
+        /// The newest release tag, or empty when the check could not answer.
+        public var latest: String
+        /// Why it could not answer. Empty on success.
+        public var error: String
+        /// A `SIMMER_FAKE_*` was in force when this was written, so it is an
+        /// answer about a seam and not about the repository. Recorded rather
+        /// than suppressed: the suite needs the cache path to be reachable,
+        /// and an unseamed reader needs to know not to believe this one.
+        public var seamed: Bool
+
+        public init(checkedAt: Int, latest: String, error: String,
+                    seamed: Bool = false) {
+            self.checkedAt = checkedAt
+            self.latest = latest
+            self.error = error
+            self.seamed = seamed
+        }
+
+        /// A day, matching the app's tick. Older than this is reported with
+        /// its age instead of being trusted as current.
+        public static let maxAge = 24 * 60 * 60
+
+        public func isFresh(now: Int) -> Bool {
+            checkedAt > 0 && now - checkedAt < Self.maxAge
+        }
+    }
+
+    public func writeUpdateRecord(_ record: UpdateRecord) {
+        // key=value like the cap and the heartbeat, not JSON: nothing outside
+        // simmer reads this file. `simmer update --json` is how a launcher or
+        // a script asks, so the cache format stays an implementation detail
+        // and not a fifth machine surface to keep append-only.
+        _ = atomicWrite("""
+        checked=\(record.checkedAt)
+        latest=\(Claim.singleLine(record.latest, limit: 64))
+        error=\(Claim.singleLine(record.error, limit: 200))
+        seamed=\(record.seamed ? 1 : 0)
+
+        """, to: updateCheckFile)
+    }
+
+    public func readUpdateRecord() -> UpdateRecord? {
+        guard let text = try? String(contentsOf: updateCheckFile, encoding: .utf8) else { return nil }
+        var checked = 0
+        var latest = "", error = ""
+        var seamed = false
+        for line in text.split(separator: "\n") {
+            let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            let value = String(parts[1])
+            switch parts[0] {
+            case "checked": checked = Int(value) ?? 0
+            case "latest": latest = value
+            case "error": error = value
+            case "seamed": seamed = value == "1"
+            default: break
+            }
+        }
+        guard checked > 0 else { return nil }
+        return UpdateRecord(checkedAt: checked, latest: latest,
+                            error: error, seamed: seamed)
+    }
+
+    /// The release tag the person has already been told about, or empty when
+    /// nothing has been announced yet.
+    public func readAnnouncedUpdate() -> String {
+        readTag(from: updateAnnouncedFile)
+    }
+
+    public func writeAnnouncedUpdate(_ tag: String, now: Int) {
+        _ = atomicWrite("""
+        latest=\(Claim.singleLine(tag, limit: 64))
+        announced_at=\(now)
+
+        """, to: updateAnnouncedFile)
+    }
+
+    /// The release an unattended install has already been started for, or
+    /// empty when none has.
+    public func readAttemptedUpdate() -> String {
+        readTag(from: updateAttemptedFile)
+    }
+
+    public func writeAttemptedUpdate(_ tag: String, now: Int) {
+        _ = atomicWrite("""
+        latest=\(Claim.singleLine(tag, limit: 64))
+        attempted_at=\(now)
+
+        """, to: updateAttemptedFile)
+    }
+
+    /// Forget it, so the next daily check tries again.
+    ///
+    /// Called from `setAutoUpdate(enabled: true)` rather than from each of its
+    /// callers: a person turning unattended installs on is asking for an
+    /// attempt, and a switch that silently stays stood down from a failure
+    /// three weeks ago is not a switch. One place decides, because the CLI and
+    /// the setup window are two callers and this is one rule.
+    public func clearAttemptedUpdate() {
+        try? FileManager.default.removeItem(at: updateAttemptedFile)
+    }
+
+    /// `latest=` out of one of the two tag files. Both hold one fact about one
+    /// tag in the same shape, so they are read by the same three lines.
+    private func readTag(from file: URL) -> String {
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return "" }
+        for line in text.split(separator: "\n") {
+            let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            if parts.count == 2, parts[0] == "latest" { return String(parts[1]) }
+        }
+        return ""
+    }
+
+    /// Whether the app may check on its own. A person's answer, not a seam —
+    /// `SIMMER_NO_UPDATE_CHECK=1` is the environment's way to say the same
+    /// thing for one process (SimmerEnvironment).
+    public var backgroundUpdateChecksEnabled: Bool {
+        !FileManager.default.fileExists(atPath: updateCheckOffFile.path)
+    }
+
+    public func setBackgroundUpdateChecks(enabled: Bool) {
+        if enabled {
+            try? FileManager.default.removeItem(at: updateCheckOffFile)
+        } else {
+            _ = atomicWrite("off\n", to: updateCheckOffFile)
+        }
+    }
+
+    /// Present = the person has asked for the once-a-day check to *install*
+    /// what it finds, without anybody clicking.
+    ///
+    /// The name spells the "on" where `update-check.off` spells the "off",
+    /// because each file's absence has to be the safe default: checking is on
+    /// unless turned off, installing is off unless turned on. One fact per
+    /// file, and `doctor` reads both without asking the app anything.
+    public var autoUpdateOnFile: URL { stateDir.appendingPathComponent("auto-update.on") }
+
+    /// Whether an unattended install is permitted at all. **Off by default** —
+    /// a tool whose whole promise is "nothing happens to your Mac that you did
+    /// not ask for" does not replace its own binary on a default install.
+    public var autoUpdateEnabled: Bool {
+        FileManager.default.fileExists(atPath: autoUpdateOnFile.path)
+    }
+
+    public func setAutoUpdate(enabled: Bool) {
+        if enabled {
+            _ = atomicWrite("on\n", to: autoUpdateOnFile)
+            // Asking for it is asking for an attempt: a release this Mac
+            // stood down from weeks ago must not still be stood down from
+            // when somebody turns the switch on again.
+            clearAttemptedUpdate()
+        } else {
+            try? FileManager.default.removeItem(at: autoUpdateOnFile)
+        }
     }
 
     // MARK: the app's heartbeat — what doctor reads instead of asking UN

@@ -19,6 +19,18 @@ public enum MenuAction: Equatable, Sendable {
     case capLift
     case copyCLI(String)
     case openSetup
+    /// Ask now, rather than waiting for the app's once-a-day look.
+    case checkForUpdates
+    /// Install it, for the person who has no terminal to paste into — which is
+    /// most of the people this menu exists for. Offered only where
+    /// `UpdateCommand.applyPlan` has a plan: a developer's own checkout is not
+    /// machinery for simmer to move onto a tag.
+    case applyUpdate
+    /// Open the release's own page in the browser — the notes, for someone
+    /// deciding whether to install it. Carries the URL rather than composing
+    /// one in the renderer, so the menu and `update --json` point at the same
+    /// page by construction.
+    case openReleaseNotes(String)
     case quit
 }
 
@@ -68,10 +80,35 @@ public struct MenuInstall: Sendable, Equatable {
     /// The passwordless rule is in place. Without it the guard still runs and
     /// still decides correctly, and then cannot move the switch.
     public var canHandBackUnattended: Bool
+    /// `UpdateCommand.statusLine` of the LAST check — nil when there is
+    /// nothing to say, which is what makes the row conditional here rather
+    /// than in the renderer.
+    public var updateLine: String?
+    /// What updating this copy would take, for the row to hand out.
+    public var updateCommand: String
+    /// `UpdateCommand.footerLine` — the version, and what is newest, in one
+    /// line. Falls back to the bare version when nothing has been checked at
+    /// all, so the footer is never empty.
+    public var versionLine: String?
+    /// There is a plan to run — so the menu may offer to run it rather than
+    /// only hand over a command that needs a terminal.
+    public var canApplyUpdate: Bool
+    /// `UpdateCommand.Report.releaseNotesURL` — nil when there is no release
+    /// to point at, which is what keeps the row conditional here rather than
+    /// in the renderer.
+    public var releaseNotesURL: String?
 
-    public init(version: String, canHandBackUnattended: Bool) {
+    public init(version: String, canHandBackUnattended: Bool,
+                updateLine: String? = nil, updateCommand: String = "",
+                versionLine: String? = nil, canApplyUpdate: Bool = false,
+                releaseNotesURL: String? = nil) {
         self.version = version
         self.canHandBackUnattended = canHandBackUnattended
+        self.updateLine = updateLine
+        self.updateCommand = updateCommand
+        self.versionLine = versionLine
+        self.canApplyUpdate = canApplyUpdate
+        self.releaseNotesURL = releaseNotesURL
     }
 }
 
@@ -81,6 +118,42 @@ public enum MenuModel {
     public static func build(aggregate: Aggregate, batteryLine: String,
                              install: MenuInstall) -> [MenuItemModel] {
         var items: [MenuItemModel] = []
+
+        // First, and only when there is something to say. A newer release is
+        // not what the menu is FOR — the state header below is — so this row
+        // is not drawn bold and does not compete with it; it carries a symbol
+        // and a submenu instead, the same shape "Copy as CLI command" uses,
+        // because the useful thing to do with it is to take the command away
+        // to a terminal.
+        if let line = install.updateLine {
+            var children: [MenuItemModel] = []
+            if install.canApplyUpdate {
+                // First, and named as the action it is. It runs the same
+                // command the row hands out — no root, no download piped into
+                // a shell — and it is the only path here that does not require
+                // a terminal.
+                children.append(MenuItemModel(title: "Install it now",
+                                              symbol: "arrow.down.circle",
+                                              action: .applyUpdate))
+            }
+            // Above the separator with "Install it now", because it is the
+            // other thing you do with a version you have not got: read what
+            // is in it first. A menu that only offers to install it asks for
+            // a decision it gives you nothing to make.
+            if let notes = install.releaseNotesURL {
+                children.append(MenuItemModel(title: "Release notes…",
+                                              symbol: "doc.text",
+                                              action: .openReleaseNotes(notes)))
+            }
+            if install.canApplyUpdate || install.releaseNotesURL != nil {
+                children.append(.separator)
+            }
+            children.append(MenuItemModel(title: install.updateCommand,
+                                          action: .copyCLI(install.updateCommand)))
+            items.append(MenuItemModel(
+                title: line, symbol: "arrow.down.circle.fill", children: children))
+            items.append(.separator)
+        }
 
         switch aggregate.state {
         case .idle:
@@ -138,6 +211,11 @@ public enum MenuModel {
         items.append(capItem(aggregate))
         items.append(.separator)
         items.append(copyAsCLI(aggregate))
+        // Always here, in the same place, whether or not there is an update:
+        // an item that appears only when it has news is an item nobody can
+        // find when they want to ask.
+        items.append(MenuItemModel(title: "Check for Updates…", symbol: "arrow.down.circle",
+                                   action: .checkForUpdates))
         items.append(MenuItemModel(title: "Setup…", symbol: "gearshape", action: .openSetup))
         items.append(MenuItemModel(title: "Quit Simmer", action: .quit))
 
@@ -154,7 +232,10 @@ public enum MenuModel {
                 symbol: "exclamationmark.triangle.fill",
                 action: .openSetup, isProminent: true))
         }
-        items.append(MenuItemModel(title: "simmer \(install.version)"))
+        // The one line that answers both halves of "am I current": what is
+        // installed, and what is out there. `simmer update` says it in a
+        // terminal; this is the same sentence for someone who has not got one.
+        items.append(MenuItemModel(title: install.versionLine ?? "simmer \(install.version)"))
         return items
     }
 
@@ -194,6 +275,27 @@ public enum MenuModel {
         }
         return MenuItemModel(title: "Nothing past…", symbol: "hand.raised.fill",
                              children: children)
+    }
+
+    /// What a row that hands over its command has to say afterwards.
+    ///
+    /// A pasteboard write is the one menu action with no visible consequence:
+    /// the menu closes, the clipboard has changed, and nothing on screen says
+    /// so — which is indistinguishable from a row that did nothing. Every
+    /// other action in this menu answers, so this one does too.
+    ///
+    /// An `Outcome` rather than a bare `NotificationRequest` so it is the same
+    /// shape, tested the same way, as every other banner this core decides;
+    /// the app only renders it. Raycast needs none of this — its own
+    /// `Action.CopyToClipboard` shows a HUD when it fires.
+    public static func copied(_ command: String) -> Outcome {
+        var outcome = Outcome()
+        outcome.notifications = [NotificationRequest(
+            // The command in the body, not the title: what got copied is the
+            // fact worth checking, and a title long enough to hold `curl -fsSL
+            // https://…/bootstrap.sh | bash` is a title macOS truncates.
+            title: "Copied to clipboard", subtitle: "", body: command, sound: false)]
+        return outcome
     }
 
     /// The agent-tool bridge in one feature: every menu action has a CLI

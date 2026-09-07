@@ -117,6 +117,21 @@ struct Sim {
                             atomically: true, encoding: .utf8)
     }
 
+    /// A fresh app heartbeat, so a command that asks "is Simmer.app running"
+    /// is answered yes.
+    ///
+    /// Only the app writes this file, and only when it is running — so a
+    /// decision that depends on it (`--apply` reopening the bundle afterwards)
+    /// is otherwise unreachable from a suite that must never launch the app.
+    /// Modelling the file rather than the app, the way `plantInClaims` models
+    /// the directory's contents.
+    func plantAppHeartbeat(at ts: Int = Sim.epoch) {
+        try? FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
+        try? "pid=1\nnotify=authorized\nlogin=enabled\nts=\(ts)\n"
+            .write(to: stateDir.appendingPathComponent("app.status"),
+                   atomically: true, encoding: .utf8)
+    }
+
     func claimFileNames() -> [String] {
         ((try? FileManager.default.contentsOfDirectory(atPath: claimsDir.path)) ?? []).sorted()
     }
@@ -152,13 +167,10 @@ struct Sim {
         var combined: String { out + err }
     }
 
-    /// Run the binary. `now` defaults to the fixed epoch; `env` overrides win.
-    /// `launcher` and `cwd` exist for `runThroughPATH`; everything else execs
-    /// the binary directly from the products directory.
-    @discardableResult
-    func run(_ args: [String], now: Int = Sim.epoch,
-             env overrides: [String: String] = [:],
-             launcher: String? = nil, cwd: URL? = nil) -> Result {
+    /// The seam, as one dictionary. Shared by `run` and `runInterleaved` so a
+    /// second way to start the binary cannot come with a second seam.
+    func seamEnvironment(now: Int = Sim.epoch,
+                         overrides: [String: String] = [:]) -> [String: String] {
         var environment: [String: String] = [
             // A controlled PATH so the binary's own probes stay deterministic.
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
@@ -173,6 +185,43 @@ struct Sim {
             "SIMMER_NOTIFY": "none",
         ]
         for (key, value) in overrides { environment[key] = value }
+        return environment
+    }
+
+    /// Both streams down ONE descriptor, the way `simmer … > log 2>&1` and
+    /// every terminal do it — so the order the two are written in is
+    /// observable.
+    ///
+    /// `run` gives each stream its own pipe, which is right for asserting
+    /// content and blind to sequence: it cannot see a failure sentence landing
+    /// before the plan it describes, which is what stdout being block-buffered
+    /// off a tty and stderr not being buffered at all produces.
+    func runInterleaved(_ args: [String], now: Int = Sim.epoch,
+                        env overrides: [String: String] = [:]) -> String {
+        let log = root.appendingPathComponent("interleaved-\(UUID().uuidString).log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        guard let handle = FileHandle(forWritingAtPath: log.path) else { return "" }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: Sim.binary)
+        process.arguments = args
+        process.environment = seamEnvironment(now: now, overrides: overrides)
+        process.standardOutput = handle
+        process.standardError = handle
+        process.standardInput = FileHandle.nullDevice
+        try! process.run()
+        process.waitUntilExit()
+        try? handle.close()
+        return (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+    }
+
+    /// Run the binary. `now` defaults to the fixed epoch; `env` overrides win.
+    /// `launcher` and `cwd` exist for `runThroughPATH`; everything else execs
+    /// the binary directly from the products directory.
+    @discardableResult
+    func run(_ args: [String], now: Int = Sim.epoch,
+             env overrides: [String: String] = [:],
+             launcher: String? = nil, cwd: URL? = nil) -> Result {
+        let environment = seamEnvironment(now: now, overrides: overrides)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: launcher ?? Sim.binary)

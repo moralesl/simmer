@@ -1,0 +1,687 @@
+import Foundation
+import Testing
+
+/// `simmer update` through the binary: the exit codes, the machine fields, and
+/// the two promises that are easy to break by accident — that `--cached` never
+/// reaches the network, and that being out of date never turns `doctor` red.
+///
+/// Every run in this suite is seamed (Harness sets `SIMMER_FAKE_PMSET`), and a
+/// seamed process with no `SIMMER_FAKE_LATEST` reads nothing over the network.
+/// That is what makes this suite hermetic without anyone having to remember an
+/// extra variable.
+@Suite struct UpdateTests {
+    private func object(_ text: String) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] ?? [:]
+    }
+
+    @Test func aNewerReleaseIsReportedAndExitsZero() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["update", "--json"], env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+
+        #expect(result.code == 0, "a newer release is an answer, not a failure: \(result.combined)")
+        let json = object(result.out)
+        #expect(json["action"] as? String == "checked")
+        #expect(json["verdict"] as? String == "available")
+        #expect(json["latest"] as? String == "v9.9.9")
+        #expect(json["update_available"] as? Bool == true)
+        #expect((json["update_command"] as? String)?.isEmpty == false)
+    }
+
+    @Test func beingCurrentExitsZeroToo() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let version = sim.run(["--version"]).out
+            .replacingOccurrences(of: "simmer ", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let result = sim.run(["update", "--json"], env: ["SIMMER_FAKE_LATEST": "v\(version)"])
+
+        #expect(result.code == 0)
+        #expect(object(result.out)["verdict"] as? String == "current")
+        #expect(object(result.out)["update_available"] as? Bool == false)
+    }
+
+    /// The one non-zero exit: the check could not be made. A caller can then
+    /// tell "you are current" from "nobody knows".
+    @Test func aCheckThatCouldNotBeMadeExitsOneAndStillAnswersJSON() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["update", "--json"], env: ["SIMMER_FAKE_LATEST": "error"])
+
+        #expect(result.code == 1)
+        let json = object(result.out)
+        #expect(json["verdict"] as? String == "unknown")
+        #expect(json["latest"] is NSNull)
+        #expect((json["error"] as? String)?.isEmpty == false)
+    }
+
+    /// `--cached` is what `doctor`, the menu and a launcher row use, so it must
+    /// answer from the record alone. Here the source is primed with an answer
+    /// it is not allowed to look at.
+    @Test func cachedNeverConsultsTheSource() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["update", "--cached", "--json"],
+                             env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+
+        #expect(result.code == 1)
+        let json = object(result.out)
+        #expect(json["verdict"] as? String == "unknown")
+        #expect(json["cached"] as? Bool == true)
+        #expect((json["error"] as? String)?.contains("not checked yet") == true)
+    }
+
+    @Test func aCheckIsRecordedForTheOtherSurfacesToRead() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["update"], env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+
+        // No SIMMER_FAKE_LATEST at all this time: the answer can only have
+        // come from the record.
+        let cached = sim.run(["update", "--cached", "--json"])
+        #expect(cached.code == 0)
+        #expect(object(cached.out)["latest"] as? String == "v9.9.9")
+        #expect(object(cached.out)["cached"] as? Bool == true)
+    }
+
+    /// Asserted against the raw text: `JSONSerialization` bridges `0`/`1` to
+    /// `Bool`, so a typed assertion would let exactly this drift through.
+    @Test func theYesNoFieldsAreRealBooleans() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let out = sim.run(["update", "--json"], env: ["SIMMER_FAKE_LATEST": "v9.9.9"]).out
+
+        #expect(out.contains("\"update_available\":true"))
+        #expect(out.contains("\"app_drift\":false"))
+        #expect(out.contains("\"seamed\":true"))
+    }
+
+    /// Provenance decides the instruction, and `SIMMER_BIN` is the seam that
+    /// lets this be asserted without a Homebrew install under the tester.
+    @Test func homebrewIsToldToUseHomebrew() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(
+            ["update", "--json"],
+            env: ["SIMMER_FAKE_LATEST": "v9.9.9",
+                  "SIMMER_BIN": "/opt/homebrew/Cellar/simmer/9.9.9/Simmer.app/Contents/MacOS/simmer"])
+
+        let json = object(result.out)
+        #expect(json["provenance"] as? String == "homebrew")
+        #expect(json["update_command"] as? String == "brew upgrade simmer")
+    }
+
+    /// Out of date is not a broken install. A row that could go red for it
+    /// would teach the reader to skim the rows that mean something.
+    @Test func anAvailableUpdateNeverChangesDoctorsVerdict() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let before = sim.run(["doctor", "--json"]).code
+        sim.run(["update"], env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+        let after = sim.run(["doctor", "--json"])
+
+        #expect(after.code == before, "an available update moved doctor's exit code")
+        let checks = (object(after.out)["checks"] as? [[String: Any]]) ?? []
+        guard let row = checks.first(where: { $0["id"] as? String == "update" }) else {
+            #expect(Bool(false), "no update row in doctor --json: \(after.out.prefix(400))")
+            return
+        }
+        #expect(row["ok"] is NSNull, "the update row is informational, never a check")
+        #expect((row["label"] as? String)?.contains("9.9.9") == true)
+    }
+
+    /// `doctor` answers "is this install wired up", and that must have the
+    /// same answer on a train as in the office.
+    @Test func doctorNeverMakesTheCheckItself() {
+        let sim = Sim(); defer { sim.tearDown() }
+        // The source is primed; `doctor` is not allowed to look at it.
+        let result = sim.run(["doctor", "--json"], env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+        let checks = (object(result.out)["checks"] as? [[String: Any]]) ?? []
+        let row = checks.first { $0["id"] as? String == "update" }
+        #expect((row?["label"] as? String)?.contains("not checked yet") == true,
+                "doctor answered from the network: \(row?["label"] ?? "no row")")
+    }
+
+    /// Off by default, and the field says so before anything is turned on:
+    /// a caller wondering why a Mac with a release waiting installed nothing
+    /// reads this first.
+    @Test func autoUpdateIsOffByDefaultAndOnTheReport() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let out = sim.run(["update", "--json"], env: ["SIMMER_FAKE_LATEST": "v9.9.9"]).out
+        #expect(out.contains("\"auto_update\":false"), "\(out)")
+    }
+
+    /// Every command reachable from a launcher tolerates a trailing reason and
+    /// owner, whether or not it has any use for them (CONTRACTS.md).
+    @Test func itToleratesTheLauncherTail() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["update", "-r", "why", "--owner", "raycast"],
+                             env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+        #expect(result.code == 0, "\(result.combined)")
+    }
+
+    /// The release's own page, so nobody has to install a version to find out
+    /// what is in it. Composed from the tag — no second outbound request.
+    @Test func theReleasePageIsAFieldAndAPrintedLine() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let json = object(sim.run(["update", "--json"],
+                                  env: ["SIMMER_FAKE_LATEST": "v9.9.9"]).out)
+        #expect(json["release_notes_url"] as? String
+            == "https://github.com/moralesl/simmer/releases/tag/v9.9.9")
+
+        let human = sim.run(["update"], env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+        #expect(human.out.contains("/releases/tag/v9.9.9"), "\(human.combined)")
+    }
+
+    /// Null rather than a URL ending in nothing, and typed the way every other
+    /// "there is no answer" field on this surface is typed.
+    @Test func aCheckThatNamedNoReleaseCarriesNoPage() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["update", "--json"], env: ["SIMMER_FAKE_LATEST": "error"])
+        #expect(object(result.out)["release_notes_url"] is NSNull, "\(result.out)")
+    }
+}
+
+/// `--apply` through the binary. Every step is recorded rather than run
+/// (`SIMMER_FAKE_APPLY`), which is what lets the suite assert the plan a real
+/// install would execute without building or installing anything.
+@Suite struct UpdateApplyTests {
+    private func object(_ text: String) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] ?? [:]
+    }
+
+    /// A bundle install with the installer's checkout on disk — the colleague
+    /// case, and the only one where nobody has a terminal open.
+    private func bundleInstall(_ sim: Sim) -> [String: String] {
+        let checkout = sim.root.appendingPathComponent(".local/share/simmer")
+        try? FileManager.default.createDirectory(
+            at: checkout.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        try? "all:\n".write(to: checkout.appendingPathComponent("Makefile"),
+                            atomically: true, encoding: .utf8)
+        return ["SIMMER_BIN": sim.root
+            .appendingPathComponent("Applications/Simmer.app/Contents/MacOS/simmer").path]
+    }
+
+    @Test func applyRunsThePlanAndSaysWhatItRan() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+
+        #expect(result.code == 0, "\(result.combined)")
+        let json = object(result.out)
+        #expect(json["action"] as? String == "updated")
+        #expect(json["applied"] as? Bool == true)
+        #expect((json["steps"] as? [String])?.count == 3)
+
+        let ran = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+        let lines = ran.split(separator: "\n").map(String.init)
+        #expect(lines.count == 3, "recorded: \(lines)")
+        #expect(lines[0].contains("fetch --tags"))
+        #expect(lines[1].contains("checkout --quiet v9.9.9"))
+        #expect(lines[2].contains("install NOTES=0"))
+    }
+
+    /// The property that makes this something simmer can honestly offer: the
+    /// printed command for a bundle install pipes a script from the internet
+    /// into bash, and what actually RUNS never does.
+    @Test func whatRunsIsNeverAScriptPipedFromTheNetwork() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+
+        // The command it would have PRINTED does pipe curl into bash…
+        #expect((object(result.out)["update_command"] as? String)?.contains("curl") == true)
+        // …and nothing it RAN does.
+        let ran = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+        #expect(!ran.contains("curl"))
+        #expect(!ran.contains("bash"))
+        #expect(!ran.isEmpty, "nothing was recorded at all")
+    }
+
+    /// Nothing to install is exit 0. Being current is the good outcome, and a
+    /// caller that treats it as a failure would retry forever.
+    @Test func applyingWhenCurrentDoesNothingAndSucceeds() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let version = sim.run(["--version"]).out
+            .replacingOccurrences(of: "simmer ", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v\(version)"
+
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+        #expect(result.code == 0)
+        #expect(object(result.out)["applied"] as? Bool == false)
+        #expect(object(result.out)["action"] as? String == "checked")
+    }
+
+    /// A working repository is not machinery: it may hold local commits, an
+    /// unfinished branch or a stash.
+    @Test func applyRefusesInSomebodysOwnCheckout() {
+        let sim = Sim(); defer { sim.tearDown() }
+        // The suite's own binary runs from a checkout, so no fixture is needed
+        // — just no SIMMER_BIN pointing at a bundle.
+        let result = sim.run(["update", "--apply", "--json"],
+                             env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+
+        #expect(result.code == 1)
+        let json = object(result.out)
+        #expect(json["action"] as? String == "refused")
+        #expect(json["applied"] as? Bool == false)
+        #expect((json["apply_error"] as? String)?.isEmpty == false)
+    }
+
+    /// Honoured or refused, never accepted and dropped. Applying what a cached
+    /// answer said could install a release that has since been pulled.
+    @Test func applyAndCachedTogetherAreRefused() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["update", "--apply", "--cached"],
+                             env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+        #expect(result.code == 1)
+        #expect(result.err.contains("--cached"), "\(result.err)")
+    }
+
+    /// The failure half of `--apply`, through the binary. `SIMMER_FAKE_APPLY`
+    /// alone can only record success, so every one of these was reachable only
+    /// by breaking a real install — which is exactly the class of code that
+    /// gets read once, at the worst possible moment.
+    @Test(arguments: [
+        ("fetching", "Could not fetch simmer 9.9.9"),
+        ("switching", "Could not switch to simmer 9.9.9"),
+        ("installing", "Could not install simmer 9.9.9"),
+    ])
+    func aStepThatFailedSaysWhatDidNotFinish(_ phase: String, _ sentence: String) throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = phase
+        let result = sim.run(["update", "--apply"], env: env)
+
+        #expect(result.code == 1, "\(result.combined)")
+        // The sentence first, and the failing command under it as evidence.
+        let lines = result.err.split(separator: "\n").map(String.init)
+        #expect(lines.first?.contains(sentence) == true, "\(result.err)")
+        #expect(lines.first?.contains("bootstrap.sh") == true,
+                "the sentence names the command that works: \(result.err)")
+        #expect(result.err.contains("SIMMER_FAKE_APPLY_FAIL=\(phase)"),
+                "the failing step's own detail is kept: \(result.err)")
+    }
+
+    /// `apply_error` is unchanged — the failing command and its detail, which
+    /// is what a caller has always parsed. The sentence is for the person.
+    @Test func theMachineSurfaceKeepsTheCommandAndTheDetail() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = "installing"
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+
+        #expect(result.code == 1)
+        let json = object(result.out)
+        #expect(json["action"] as? String == "refused")
+        #expect(json["applied"] as? Bool == false)
+        let error = try #require(json["apply_error"] as? String)
+        #expect(error.contains("make -C"), "\(error)")
+        #expect(error.contains("install NOTES=0"), "\(error)")
+    }
+
+    /// The plan stops at the step that failed. A `make install` run after a
+    /// checkout that did not happen would install the version already there
+    /// and report success.
+    @Test func nothingAfterAFailedStepIsAttempted() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = "switching"
+        _ = sim.run(["update", "--apply"], env: env)
+
+        let ran = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+        #expect(ran.contains("fetch --tags"))
+        #expect(ran.contains("checkout --quiet"), "the step that failed still ran")
+        #expect(!ran.contains("install NOTES=0"), "recorded after the failure: \(ran)")
+    }
+
+    /// `steps` against what actually ran, in both directions — with the app up,
+    /// which is the case where the two differ.
+    ///
+    /// Two tests here agreed on three, and only because neither had an app
+    /// heartbeat: this one asserts every step in the field was run, and that
+    /// the one extra command is the reopen and nothing else. That is what
+    /// `steps` promises after CONTRACTS.md stopped calling it "the commands it
+    /// ran" — the plan, with the relaunch reported by `applied` and the
+    /// sentence instead.
+    @Test func stepsIsThePlanAndTheOnlyExtraCommandIsTheReopen() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        sim.plantAppHeartbeat()
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+
+        #expect(result.code == 0, "\(result.combined)")
+        let steps = (object(result.out)["steps"] as? [String]) ?? []
+        let ran = ((try? String(contentsOf: log, encoding: .utf8)) ?? "")
+            .split(separator: "\n").map(String.init)
+
+        // Every step it reported was run, in the order it reported them.
+        #expect(steps == Array(ran.prefix(steps.count)), "steps \(steps) vs ran \(ran)")
+        // And the only thing run that it did not report is the reopen.
+        let extra = ran.dropFirst(steps.count)
+        #expect(extra.count == 1, "unreported commands: \(Array(extra))")
+        #expect(extra.first?.hasPrefix("open ") == true, "\(Array(extra))")
+        #expect(!steps.contains { $0.hasPrefix("open ") },
+                "the reopen is not one of the plan's steps: \(steps)")
+    }
+
+    /// The plan comes before the failure, in a redirect as well as on a tty.
+    ///
+    /// `simmer update --apply > log 2>&1` is how anybody reports this going
+    /// wrong, and it used to read back with "Could not install simmer 9.9.9"
+    /// on line 1 and "▸ updating simmer 0.2.0 → 9.9.9" on line 3: stdio
+    /// block-buffers stdout when it is not a tty, and the failure goes
+    /// straight to the descriptor. Asserted through one descriptor for both
+    /// streams, because two pipes cannot see a sequence at all.
+    @Test func theFailureLandsAfterThePlanItDescribes() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = "installing"
+        let text = sim.runInterleaved(["update", "--apply"], env: env)
+
+        guard let plan = text.range(of: "updating simmer"),
+              let failure = text.range(of: "Could not install") else {
+            #expect(Bool(false), "\(text)")
+            return
+        }
+        #expect(plan.lowerBound < failure.lowerBound,
+                "the failure sentence overtook the plan it describes:\n\(text)")
+    }
+
+    /// The fourth phase, and the only one that is not a failed install: the
+    /// update landed and the menu bar did not come back. Before this the sole
+    /// sign was the ABSENCE of "· Simmer.app relaunched" from a success line,
+    /// which nobody reads as "your menu bar is gone".
+    @Test func aRelaunchThatFailedIsSaidWithoutFailingTheUpdate() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        // A fresh heartbeat, so the plan decides to reopen the app at all —
+        // that decision is taken before the first step runs, because `make
+        // install` quits it and asking afterwards would always answer no.
+        sim.plantAppHeartbeat()
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = "relaunching"
+        let result = sim.run(["update", "--apply"], env: env)
+
+        #expect(result.code == 0, "the update installed: \(result.combined)")
+        #expect(result.out.contains("simmer 9.9.9 installed"), "\(result.out)")
+        #expect(result.out.contains("did not come back"), "\(result.out)")
+        #expect(result.out.contains("open"), "it names how to bring it back: \(result.out)")
+        // Every install step still ran, and the reopen was attempted.
+        let ran = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+        #expect(ran.contains("install NOTES=0"))
+        #expect(ran.contains("open "), "\(ran)")
+    }
+
+    /// …and the machine surface still reports the update as done, because it
+    /// was. `apply_error` is for an update that could not be made.
+    @Test func aFailedRelaunchIsNotAnApplyError() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        sim.plantAppHeartbeat()
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = "relaunching"
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+
+        #expect(result.code == 0)
+        let json = object(result.out)
+        #expect(json["action"] as? String == "updated")
+        #expect(json["applied"] as? Bool == true)
+        #expect(json["apply_error"] == nil, "\(result.out)")
+    }
+
+    /// A phase nobody spells right is not "fail nothing": the seam either
+    /// names a step or it names none, and a typo must not silently turn a
+    /// failure test green.
+    @Test func aMisspeltFailurePhaseFailsNothingAndIsVisible() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = "instaling"
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+
+        // It installs, which is how a test written against a typo shows up as
+        // a test that asserted the wrong thing rather than as a pass.
+        #expect(result.code == 0)
+        #expect(object(result.out)["applied"] as? Bool == true, "\(result.out)")
+    }
+
+    /// Not knowing whether there is an update is not a licence to install one.
+    @Test func applyRefusesWhenTheCheckCouldNotBeMade() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "error"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        let result = sim.run(["update", "--apply"], env: env)
+
+        #expect(result.code == 1)
+        #expect((try? String(contentsOf: log, encoding: .utf8)) == "",
+                "something was run despite not knowing whether to")
+    }
+}
+
+/// `--auto` through the binary: the switch, its machine answer, and the two
+/// promises around it — that it makes no request of its own, and that it
+/// refuses rather than silently dropping a flag it cannot honour.
+@Suite struct UpdateAutoTests {
+    private func object(_ text: String) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] ?? [:]
+    }
+
+    @Test func theSwitchGoesOnAndOffAndSaysWhichWay() {
+        let sim = Sim(); defer { sim.tearDown() }
+
+        let on = sim.run(["update", "--auto", "on", "--json"])
+        #expect(on.code == 0, "\(on.combined)")
+        #expect(object(on.out)["action"] as? String == "auto_update_on")
+        #expect(object(on.out)["auto_update"] as? Bool == true)
+
+        // Setting it again is not an error and is not a change.
+        let again = sim.run(["update", "--auto", "on", "--json"])
+        #expect(object(again.out)["action"] as? String == "checked")
+        #expect(object(again.out)["auto_update"] as? Bool == true)
+
+        let off = sim.run(["update", "--auto", "off", "--json"])
+        #expect(object(off.out)["action"] as? String == "auto_update_off")
+        #expect(object(off.out)["auto_update"] as? Bool == false)
+    }
+
+    /// The marker file is the state, and it is where the contract says: one
+    /// fact per file, beside `update-check.off`, absence meaning off.
+    @Test func theStateIsOneMarkerFileAndAbsenceMeansOff() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let marker = sim.stateDir.appendingPathComponent("auto-update.on").path
+
+        #expect(!FileManager.default.fileExists(atPath: marker))
+        #expect(object(sim.run(["update", "--auto", "status", "--json"]).out)["auto_update"]
+            as? Bool == false)
+
+        sim.run(["update", "--auto", "on"])
+        #expect(FileManager.default.fileExists(atPath: marker))
+
+        sim.run(["update", "--auto", "off"])
+        #expect(!FileManager.default.fileExists(atPath: marker))
+    }
+
+    /// Turning it on forgets the release the daily check already tried, so
+    /// asking for unattended installs is asking for an attempt.
+    ///
+    /// The state file is where the contract says and it holds one tag; the
+    /// decision that reads it is `AutoUpdate.decide`, tested in the core where
+    /// nothing can be installed. This pins the file and the clearing, which
+    /// are the parts a person's command can reach.
+    @Test func askingAgainForgetsTheReleaseItAlreadyTried() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let attempted = sim.stateDir.appendingPathComponent("update-attempted")
+        try? FileManager.default.createDirectory(at: sim.stateDir,
+                                                 withIntermediateDirectories: true)
+        try? "latest=v9.9.9\nattempted_at=1800000000\n"
+            .write(to: attempted, atomically: true, encoding: .utf8)
+
+        // Off does not forget it: nothing reads it while off, and clearing it
+        // there would make the answer depend on which way the switch moved last.
+        sim.run(["update", "--auto", "off"])
+        #expect(FileManager.default.fileExists(atPath: attempted.path))
+
+        sim.run(["update", "--auto", "on"])
+        #expect(!FileManager.default.fileExists(atPath: attempted.path),
+                "asking for unattended installs did not clear the attempt it stood down from")
+    }
+
+    /// `--auto status` answers from the marker file alone. The source is
+    /// primed with something it is not allowed to look at — a setting is not a
+    /// question about a release, and asking one on a train must work.
+    @Test func statusMakesNoRequest() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["update", "--auto", "on"])
+        let result = sim.run(["update", "--auto", "status", "--json"],
+                             env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+
+        #expect(result.code == 0)
+        #expect(object(result.out)["auto_update"] as? Bool == true)
+        // No release fields at all: this object is about the setting.
+        #expect(object(result.out)["verdict"] == nil)
+        // And nothing was recorded, which is what proves no check was made.
+        #expect(!FileManager.default.fileExists(
+            atPath: sim.stateDir.appendingPathComponent("update-check").path))
+    }
+
+    /// The dependency, as a field. Unattended installs ride on the app's
+    /// once-a-day check, so a caller that turns this on and wants to know
+    /// whether it can ever fire needs both booleans from one call.
+    @Test func itReportsWhetherTheDailyCheckCanEvenFire() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let normal = sim.run(["update", "--auto", "on", "--json"])
+        #expect(object(normal.out)["background_check"] as? Bool == true)
+
+        let suppressed = sim.run(["update", "--auto", "status", "--json"],
+                                 env: ["SIMMER_NO_UPDATE_CHECK": "1"])
+        #expect(object(suppressed.out)["background_check"] as? Bool == false)
+        #expect(object(suppressed.out)["auto_update"] as? Bool == true,
+                "the environment suppresses the check, not the person's answer")
+    }
+
+    /// The other half of the same trap, and the one a person actually reaches:
+    /// the check turned off by hand, in the setup window, rather than by an
+    /// environment variable. `update-check.off` is written only by the app —
+    /// there is no CLI surface for it — so this plants the state the app
+    /// produces, the way the legacy-claim fixture does.
+    @Test func theCheckboxTurnedOffStrandsItToo() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["update", "--auto", "on"])
+        try? FileManager.default.createDirectory(at: sim.stateDir,
+                                                 withIntermediateDirectories: true)
+        try? "off\n".write(to: sim.stateDir.appendingPathComponent("update-check.off"),
+                           atomically: true, encoding: .utf8)
+
+        let result = sim.run(["update", "--auto", "status", "--json"])
+        #expect(object(result.out)["background_check"] as? Bool == false)
+        #expect(object(result.out)["auto_update"] as? Bool == true,
+                "the person's answer survives the check being turned off")
+    }
+
+    /// The human sentence admits it when the switch cannot fire. A setting
+    /// that silently does nothing is the promise this tool does not make.
+    @Test func theHumanOutputAdmitsAStrandedSwitch() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let stranded = sim.run(["update", "--auto", "on"],
+                               env: ["SIMMER_NO_UPDATE_CHECK": "1"])
+        #expect(stranded.code == 0)
+        #expect(stranded.out.contains("once-a-day check is off"), "\(stranded.combined)")
+    }
+
+    /// Asserted against the raw text: `JSONSerialization` bridges `0`/`1` to
+    /// `Bool` and a typed assertion would let that drift through.
+    @Test func theYesNoFieldsAreRealBooleans() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let out = sim.run(["update", "--auto", "on", "--json"]).out
+        #expect(out.contains("\"auto_update\":true"))
+        #expect(out.contains("\"background_check\":true"))
+        #expect(out.contains("\"seamed\":true"))
+    }
+
+    /// A flag's own validation belongs to simmer, not to ArgumentParser: a
+    /// parser diagnostic writes nothing to stdout, so a `--json` caller would
+    /// get an empty stream instead of the contracted refusal object.
+    @Test func aValueThatIsNotOnOffOrStatusIsRefusedBySimmer() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["update", "--auto", "yes", "--json"])
+
+        #expect(result.code == 1)
+        #expect(object(result.out)["action"] as? String == "refused",
+                "the refusal did not reach stdout as JSON: \(result.combined)")
+        #expect((object(result.out)["error"] as? String)?.contains("on, off or status") == true)
+    }
+
+    /// Honoured or refused, never accepted and dropped. `--auto` makes no
+    /// request and installs nothing, so pairing it with either flag that does
+    /// would leave one of them silently ignored.
+    @Test func autoCannotBeCombinedWithApplyOrCached() {
+        let sim = Sim(); defer { sim.tearDown() }
+        for other in ["--apply", "--cached"] {
+            let result = sim.run(["update", "--auto", "on", other])
+            #expect(result.code == 1, "\(other): \(result.combined)")
+            #expect(result.err.contains("--auto"), "\(other): \(result.err)")
+            // And it changed nothing on the way to refusing.
+            #expect(!FileManager.default.fileExists(
+                atPath: sim.stateDir.appendingPathComponent("auto-update.on").path))
+        }
+    }
+
+    /// Turning it on does not install anything by itself. The decision lives
+    /// in the app's daily check; the CLI records an answer and stops.
+    @Test func turningItOnInstallsNothingNow() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        sim.run(["update", "--auto", "on"],
+                env: ["SIMMER_FAKE_LATEST": "v9.9.9", "SIMMER_FAKE_APPLY": log.path])
+        #expect((try? String(contentsOf: log, encoding: .utf8)) == "",
+                "--auto ran a plan")
+    }
+}

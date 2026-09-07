@@ -342,6 +342,107 @@ struct DoctorCLI: ParsableCommand {
                 ok: nil))
         }
 
+        // Is there a newer release — from the CACHE, never from the network.
+        //
+        // `doctor` answers "is this install wired up correctly", and that
+        // question must have the same answer on a train as in the office. The
+        // app refreshes the cache once a day and `simmer update` refreshes it
+        // whenever a person asks; this row reports what they found.
+        //
+        // Informational in every state, including "you are current": being out
+        // of date is not a broken install, and a row that can go red for it
+        // would teach the reader to skim the ones that mean something.
+        let install = Install.detect(executablePath: env.binPath)
+        let update = UpdateCommand.check(
+            now: ctx.now, installed: Runtime.version, install: install,
+            appVersion: install.bundleVersion(), ledger: ctx.ledger,
+            source: env.makeReleaseSource(), cached: true,
+            seamed: env.isSeamed)
+        switch update.verdict {
+        case .available:
+            rows.append(Row(
+                id: "update",
+                label: "simmer \(update.latestDisplay) is out; this is \(Runtime.version).",
+                ok: nil,
+                detail: ["  \(update.install.updateCommand)"]))
+        case .current:
+            rows.append(Row(id: "update",
+                            label: "running the newest release (\(Runtime.version))",
+                            ok: nil))
+        case .ahead:
+            rows.append(Row(id: "update",
+                            label: "simmer \(Runtime.version) is ahead of the newest release (\(update.latestDisplay))",
+                            ok: nil))
+        case .unknown:
+            rows.append(Row(id: "update",
+                            label: "release check: \(update.error)",
+                            ok: nil,
+                            detail: ["  simmer update"]))
+        }
+
+        // The Raycast extension, which is the OTHER installed thing whose
+        // going stale is silent — and unlike the agent protocol, `make
+        // install` cannot even fix it: the extension is TypeScript with its
+        // own npm tree, built and registered by Raycast rather than by the
+        // Makefile. So an update moves the CLI, the app, the guard and the
+        // protocol forward and leaves the launcher surface exactly where it
+        // was, with the new commands simply not in the root search.
+        //
+        // Informational in every state, like `agent_protocol`, and omitted
+        // entirely where Raycast or the extension is not installed: an
+        // uninstalled launcher is not a finding.
+        let raycastCheckout = RaycastExtension.checkout(for: install, home: env.homeDirectory)
+        switch RaycastExtension.inspect(
+            extensionsDir: env.raycastExtensionsDir.path,
+            checkout: raycastCheckout,
+            read: { FileManager.default.contents(atPath: $0) },
+            entries: { try? FileManager.default.contentsOfDirectory(atPath: $0) }) {
+        case .absent:
+            break
+        case .current(let commands):
+            rows.append(Row(id: "raycast_extension",
+                            label: "Raycast extension registered and current"
+                                + " (\(commands) \(commands == 1 ? "command" : "commands"))",
+                            ok: nil))
+        case .stale(let missing, let changed):
+            // The commands by name, and no count: the list is right there, and
+            // "1 command(s)" is the one line in this report that reads like a
+            // form letter. Every other sentence here picks a number.
+            var what: [String] = []
+            if !missing.isEmpty {
+                what.append("it does not have \(missing.joined(separator: ", "))")
+            }
+            if !changed.isEmpty {
+                what.append("\(changed.joined(separator: ", ")) changed")
+            }
+            rows.append(Row(
+                id: "raycast_extension",
+                label: "the Raycast extension is behind this checkout — \(what.joined(separator: ", ")).",
+                ok: nil,
+                detail: ["Raycast built it from an older copy; rebuild and re-register it:"]
+                    + RaycastExtension.fixLines(checkout: raycastCheckout ?? "?")))
+        case .unknown(let why):
+            rows.append(Row(id: "raycast_extension", label: why, ok: nil))
+        }
+
+        // The bundle and the CLI disagreeing IS broken, and this row is red
+        // for it — the one update-shaped thing that is.
+        //
+        // `make install` symlinks the CLI at the copy inside the bundle, so
+        // the two are normally one file and cannot differ. When they do, the
+        // menu bar, the event-driven half of the guard and the notification
+        // identity are all the previous version running against the current
+        // ledger — the failure the install recipe quits the app to avoid, and
+        // the one a package manager that upgrades only the CLI would
+        // reintroduce.
+        if update.appDrift {
+            rows.append(Row(
+                id: "app_version",
+                label: "Simmer.app is \(update.appVersion ?? "?") but this CLI is \(Runtime.version).",
+                ok: false,
+                detail: ["  \(update.install.updateCommand)"]))
+        }
+
         let failures = rows.filter { $0.ok == false }.count
 
         if common.json {

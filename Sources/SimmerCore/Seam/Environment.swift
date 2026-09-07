@@ -90,6 +90,29 @@ public struct SimmerEnvironment: Sendable {
         skillDir.deletingLastPathComponent().deletingLastPathComponent()
     }
 
+    // MARK: the Raycast extension — SIMMER_FAKE_RAYCAST
+
+    /// Where Raycast keeps locally built extensions, so `doctor` can notice
+    /// one that has fallen behind the checkout.
+    ///
+    /// Seamed for the reason `skillDir` is: this read reaches a directory
+    /// under a person's `$HOME`, and without a substitute a hermetic test
+    /// would inspect the tester's own registered extension and pass or fail on
+    /// machine state. `HOME` first, then the passwd entry, same as there.
+    ///
+    /// The variable names the *extensions directory* rather than the
+    /// extension, so a fixture can plant an extension beside nothing else and
+    /// so that "Raycast is not installed" — the directory missing entirely —
+    /// stays reachable in a test.
+    public var raycastExtensionsDir: URL {
+        if let override = env["SIMMER_FAKE_RAYCAST"], !override.isEmpty {
+            return URL(fileURLWithPath: override)
+        }
+        let home = env["HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent(RaycastExtension.extensionsSubpath)
+    }
+
     // MARK: who is asking, and whether they are a person
 
     /// SIMMER_OWNER, else a terminal is a terminal, else a script — which is
@@ -136,6 +159,65 @@ public struct SimmerEnvironment: Sendable {
     /// identity or not at all, so there is nothing left to choose between and
     /// no SIMMER_NOTIFIER_APP override to honour (CONTRACTS.md § test seam).
     public var notifyTransport: String { env["SIMMER_NOTIFY"] ?? "auto" }
+
+    // MARK: is there a newer release — SIMMER_FAKE_LATEST, SIMMER_NO_UPDATE_CHECK
+
+    /// The only outbound network read simmer has, and the seam over it.
+    ///
+    /// A seamed process with no `SIMMER_FAKE_LATEST` reads nothing: see the
+    /// note on `ReleaseLookup`. That is what makes the acceptance suite
+    /// hermetic by construction rather than by everyone remembering to set one
+    /// more variable.
+    public func makeReleaseSource() -> ReleaseSource {
+        if let fake = env["SIMMER_FAKE_LATEST"] { return FakeReleaseSource(value: fake) }
+        if isSeamed { return SeamedReleaseSource() }
+        return GitHubReleaseSource()
+    }
+
+    /// Where a plan's steps are recorded instead of run.
+    ///
+    /// `simmer update --apply` spawns `git` and `make`, and the contract is
+    /// explicit that anything spawned has a `SIMMER_FAKE_*` — the suite that
+    /// called itself hermetic leaked 222 `caffeinate` processes through exactly
+    /// this gap. With this set, each step is appended to the file and reported
+    /// as having succeeded, so the plan is assertable without a build.
+    public var applyRecordFile: String? {
+        env["SIMMER_FAKE_APPLY"].flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// Which step of a recorded plan reports failure instead of success.
+    ///
+    /// `SIMMER_FAKE_APPLY` alone can only record success, so the whole failure
+    /// half of `--apply` — the sentence a person reads when an update breaks,
+    /// the exit code, the banner — was reachable only by breaking a real
+    /// install. Named by phase rather than by index because the phase is what
+    /// decides the sentence, and because the relaunch is not one of the plan's
+    /// own steps and an index could not address it.
+    ///
+    /// Nil for anything that is not a phase: a typo must not silently mean
+    /// "fail nothing", which is the same reading `--json` is honoured or
+    /// refused for.
+    public var applyFailurePhase: UpdateCommand.ApplyPhase? {
+        env["SIMMER_FAKE_APPLY_FAIL"].flatMap { UpdateCommand.ApplyPhase(rawValue: $0) }
+    }
+
+    /// The home directory, `HOME` first.
+    ///
+    /// `homeDirectoryForCurrentUser` reads the passwd entry and ignores `HOME`,
+    /// which would send a hermetic test looking for the tester's own installer
+    /// checkout — the same reason `skillDir` consults `HOME` first.
+    public var homeDirectory: String {
+        if let home = env["HOME"], !home.isEmpty { return home }
+        return FileManager.default.homeDirectoryForCurrentUser.path
+    }
+
+    /// Ordinary configuration rather than a seam: it turns off the app's own
+    /// once-a-day check. `simmer update`, typed by a person who is asking, is
+    /// never suppressed by it — a command that answers "not checking" to the
+    /// question "check" would be the silent-drop failure in a new place.
+    public var backgroundUpdateCheckDisabled: Bool {
+        env["SIMMER_NO_UPDATE_CHECK"] == "1"
+    }
 
     // MARK: the power seam
 

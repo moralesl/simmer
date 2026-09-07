@@ -67,13 +67,25 @@ TEST_FLAGS = -Xswiftc -F -Xswiftc $(CLT_FRAMEWORKS) \
 endif
 endif
 
-.PHONY: build test test-raycast skill app install uninstall clean
+.PHONY: build test test-release test-raycast skill app install uninstall clean release-check release-notes
 
 build:
 	swift build -c release
 
 test:
 	swift test $(TEST_FLAGS)
+
+# The same acceptance suite, driving the RELEASE binary instead of the debug
+# one `swift test` builds for itself.
+#
+# `swift test` compiles and runs everything at -Onone, so every suite in this
+# repository was checking a build no user ever runs. `update --apply --json`
+# came back with empty stdout from the release binary and a full JSON object
+# from the debug one, and nothing here could see it: the acceptance suite
+# honours SIMMER_BIN, so pointing it at `.build/release/simmer` is the whole
+# gate. CI runs this on both OS legs.
+test-release: build
+	SIMMER_BIN="$(CURDIR)/.build/release/simmer" swift test $(TEST_FLAGS) --filter SimmerAcceptanceTests
 
 # `swift test` knows nothing about integrations/raycast, so a change to the
 # extension that runs only `make test` is untested and looks green — the
@@ -83,11 +95,68 @@ test:
 # Deliberately NOT folded into `test`: that target is hermetic and finishes in
 # seconds, and making it depend on an npm install would cost every Swift change
 # the extension's setup. Two lanes, both named.
+#
+# It drives the binary through SIMMER_BIN, because the extension otherwise
+# resolves its own — `~/.local/bin/simmer` first — and this lane then measured
+# the INSTALLED copy rather than the checkout. A change adding a `--json` field
+# was red here as "update --json lost release_notes_url": a message that names
+# the field and not the cause, green again only after `make install`, while the
+# Swift lane had been green all along. Both lanes now test the same binary.
+#
+# The debug product, deliberately: that is what `swift test` builds, and a lane
+# pointed at a release build would be asserting against something no other gate
+# ran.
 test-raycast:
+	swift build
 	# `npm ci` deletes node_modules and reinstalls from the lockfile, which is
 	# right on a fresh checkout and pure waste on the fifth run of the day.
-	cd integrations/raycast && { [ -d node_modules ] || npm ci; } \
+	SIMMER_BIN="$$(swift build --show-bin-path)/simmer"; export SIMMER_BIN; \
+	  cd integrations/raycast && { [ -d node_modules ] || npm ci; } \
 	  && npm run typecheck && npx eslint src tests && npm test
+
+# ── releasing ───────────────────────────────────────────────────────────────
+#
+# A tag is the highest-consequence thing this repository can produce.
+# `bootstrap.sh` resolves the newest `v*` tag and installs THAT, and
+# `simmer update` compares against the same tag — so pushing one decides what
+# every future install gets and what every existing install is told. Both of
+# these exist so that decision is checked before it is taken, and taken by a
+# person: `release-check` refuses to tag anything itself and prints the two
+# commands instead, the same shape `simmer uninstall` uses for the same reason.
+
+# The body of one CHANGELOG section, which is what the release notes ARE.
+# One implementation, used by a human reading it and by the release workflow
+# publishing it — two extractors would eventually publish different notes than
+# the ones the maintainer approved.
+release-notes:
+	@awk -v want="$(VERSION)" ' 	  /^## /  { if (found) exit; if ($$2 == want) { found = 1; next } } 	  found   { print } 	' CHANGELOG.md
+
+# Everything that must be true before a tag exists. Runs the suite, because a
+# tag on a red commit is an install everyone gets.
+release-check:
+	@printf 'releasing %s\n\n' '$(VERSION)'
+	@test -z "$$(git status --porcelain)" || { 	  echo "the working tree is dirty — a tag must name a commit that exists"; exit 1; }
+	@branch="$$(git rev-parse --abbrev-ref HEAD)"; [ "$$branch" = main ] || { 	  echo "on $$branch, not main — releases are cut from main"; exit 1; }
+	@git rev-parse -q --verify 'refs/tags/v$(VERSION)' >/dev/null && { 	  echo "v$(VERSION) is already a tag. Bump Sources/SimmerCore/Version.swift first."; 	  exit 1; } || true
+	@# The notes have to exist before the release does. A section is also what
+	@# `StructureTests` asserts for the compiled-in version, so this can only
+	@# fail here if the heading's date is missing.
+	@grep -q '^## $(VERSION) — ' CHANGELOG.md || { 	  echo "CHANGELOG.md has no '## $(VERSION) — <date>' section"; exit 1; }
+	@test -n "$$($(MAKE) --no-print-directory release-notes)" || { 	  echo "the $(VERSION) section in CHANGELOG.md is empty"; exit 1; }
+	@echo "▸ the suite, against the commit that would be tagged"
+	@$(MAKE) --no-print-directory test >/dev/null || { echo "tests are red"; exit 1; }
+	@$(MAKE) --no-print-directory test-raycast >/dev/null || { 	  echo "the extension's suite is red"; exit 1; }
+	@echo "  green"
+	@echo ""
+	@echo "▸ these are the release notes GitHub will carry"
+	@$(MAKE) --no-print-directory release-notes | sed 's/^/    /'
+	@echo ""
+	@echo "▸ nothing has been tagged. Yours to run:"
+	@echo "    git tag -a v$(VERSION) -m 'simmer $(VERSION)'"
+	@echo "    git push origin v$(VERSION)"
+	@echo ""
+	@echo "  The tag push runs .github/workflows/release.yml, which verifies this"
+	@echo "  again on a clean runner and publishes the release from the section above."
 
 # Assemble the bundle: both binaries inside Contents/MacOS — the bundle IS the
 # notification identity, and the CLI posting from inside it is what lets a

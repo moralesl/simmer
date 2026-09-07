@@ -90,8 +90,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // Read per menu open, not cached: the rule can be installed from the
         // setup window while this menu is the thing that sent you there, and a
         // stale "no permission" row would then be the lie.
+        let update = AppState.shared.cachedUpdateReport()
         let install = MenuInstall(version: ctx.version,
-                                  canHandBackUnattended: SudoRule.installedPath() != nil)
+                                  canHandBackUnattended: SudoRule.installedPath() != nil,
+                                  updateLine: UpdateCommand.statusLine(update),
+                                  updateCommand: update.install.updateCommand,
+                                  versionLine: UpdateCommand.footerLine(update),
+                                  canApplyUpdate: AppState.shared.canApplyUpdate(update),
+                                  releaseNotesURL: update.releaseNotesURL)
         let model = MenuModel.build(aggregate: ctx.aggregate(), batteryLine: batteryLine,
                                     install: install)
         for entry in model {
@@ -168,8 +174,26 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         case .copyCLI(let command):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(command, forType: .string)
+            // The menu is already closing, so the banner is the only place
+            // this can be said. What to say is `MenuModel.copied`'s decision.
+            Notifier.shared.post(MenuModel.copied(command).notifications)
         case .openSetup:
             SetupWindow.shared.show()
+        case .checkForUpdates:
+            // The answer arrives after the menu has closed, so it has to come
+            // back through the one channel the app already owns: a banner.
+            // Posting it is not a downgrade of the "no notification for the
+            // background check" decision — this one was asked for by hand.
+            AppState.shared.refreshUpdateCheck(force: true) { report in
+                Notifier.shared.post([UpdateCommand.notification(report)])
+            }
+        case .applyUpdate:
+            AppState.shared.applyUpdate()
+        case .openReleaseNotes(let url):
+            // The browser fetches the notes; simmer does not. Its one
+            // outbound request stays the `HEAD` that names the newest tag
+            // (CONTRACTS.md § One outbound request).
+            if let url = URL(string: url) { NSWorkspace.shared.open(url) }
         case .quit:
             NSApp.terminate(nil)
         }

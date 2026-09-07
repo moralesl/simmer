@@ -62,6 +62,62 @@ enum Runtime {
         return argv0
     }
 
+    /// Run one step of an update plan, or record it.
+    ///
+    /// The only place this binary spawns anything other than `pmset` and a
+    /// `run` command, and it is behind `SIMMER_FAKE_APPLY` for the reason
+    /// CONTRACTS.md gives: every side effect outside the process has a seam,
+    /// not merely the ones that are awkward to test.
+    ///
+    /// Output is captured rather than inherited. `make install` prints a
+    /// dozen lines nobody asked for here, and the part worth showing when it
+    /// fails is the tail of stderr, which is what the failure sentence carries.
+    static func execute(_ step: SimmerCore.UpdateCommand.ApplyStep,
+                        recordTo file: String?,
+                        failing phase: SimmerCore.UpdateCommand.ApplyPhase? = nil)
+        -> (ok: Bool, detail: String) {
+        if let file {
+            let line = step.described + "\n"
+            if let handle = FileHandle(forWritingAtPath: file) {
+                handle.seekToEndOfFile()
+                handle.write(Data(line.utf8))
+                try? handle.close()
+            } else {
+                try? line.write(toFile: file, atomically: true, encoding: .utf8)
+            }
+            // Recorded either way: what a plan attempted is the thing this
+            // seam exists to assert, and a step that "failed" still ran.
+            guard phase != step.phase else {
+                return (false, "SIMMER_FAKE_APPLY_FAIL=\(step.phase.rawValue)")
+            }
+            return (true, "recorded")
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: step.executable)
+        process.arguments = step.arguments
+        if let cwd = step.workingDirectory {
+            process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        }
+        let errPipe = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = errPipe
+        process.standardInput = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            return (false, error.localizedDescription)
+        }
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let text = String(decoding: errData, as: UTF8.self)
+                .split(separator: "\n").suffix(3).joined(separator: " · ")
+            return (false, text.isEmpty ? "exited \(process.terminationStatus)" : text)
+        }
+        return (true, "")
+    }
+
     /// One context per invocation. Migration from the format=1 lease happens
     /// here, at the entry point, exactly once per run (CONTRACTS.md § State).
     static func context(ownerFlag: String?, interactive: Bool = true) -> Context {
@@ -84,6 +140,25 @@ enum Runtime {
     /// `run`, whose stdout belongs to the command it wraps — see RunCLI.
     enum HumanStream { case stdout, stderr }
 
+    /// Lines said BEFORE the answer, while the work is still happening —
+    /// `update --apply`'s plan, which a person reads during the minute or two
+    /// `make install` takes.
+    ///
+    /// They cannot travel in the Outcome: the Outcome is delivered when the
+    /// work is finished, and a plan shown after the compile it describes is
+    /// not a plan. So they are printed here and flushed here, which is the
+    /// half that was missing — see `emit`.
+    static func say(_ lines: [String]) {
+        for line in lines { print(line) }
+        flushSaidSoFar()
+    }
+
+    /// Push stdio's buffer to the descriptor, so anything written straight to
+    /// a descriptor afterwards lands after it and not before.
+    private static func flushSaidSoFar() {
+        fflush(stdout)
+    }
+
     /// Print, post, exit. The single exit path for every subcommand.
     static func deliver(_ outcome: Outcome, human: HumanStream = .stdout) -> Never {
         emit(outcome, human: human)
@@ -97,6 +172,16 @@ enum Runtime {
             case .stderr: FileHandle.standardError.write(Data((line + "\n").utf8))
             }
         }
+        // Before a single byte of stderr, always.
+        //
+        // `print` goes through stdio, which is line-buffered on a tty and
+        // BLOCK-buffered on a pipe or a file; the stderr writes below go
+        // straight to the descriptor. So the moment one command writes to
+        // both — which `update --apply` is the first to do, with a plan on
+        // stdout and a failure sentence on stderr — `simmer … > log 2>&1`
+        // reads back in the wrong order: the failure first, the plan it
+        // describes three lines later.
+        flushSaidSoFar()
         for line in outcome.stderr {
             FileHandle.standardError.write(Data((line + "\n").utf8))
         }

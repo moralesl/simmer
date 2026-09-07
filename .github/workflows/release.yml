@@ -1,0 +1,98 @@
+# What happens when a tag is pushed — the only outbound act this repository has.
+#
+# `bootstrap.sh` resolves the newest `v*` tag and installs THAT, and `simmer
+# update` compares every install against the same tag. So a tag decides what
+# new machines get and what existing ones are told, which makes it worth more
+# checking than a merge: a bad merge is fixed by the next one, a bad tag is
+# already installed.
+#
+# The order is deliberate. Nothing is published until the full test matrix has
+# passed on the tagged commit AND the tag has been shown to agree with the
+# version compiled into the binary. `make release-check` asks the same
+# questions on the maintainer's machine before the tag exists; this asks them
+# again where the answer cannot be "it worked locally".
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Only the release needs writing, and only in the job that writes it.
+permissions:
+  contents: read
+
+jobs:
+  # The whole matrix, by reference rather than by copy: six legs, two macOS
+  # versions, the CLT-only toolchain, the extension's suites and shellcheck.
+  suites:
+    uses: ./.github/workflows/test.yml
+
+  # The one question a tag can answer and a commit cannot.
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The tag names the version the binary reports
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="$(sed -n 's/.*string = "\(.*\)".*/\1/p' Sources/SimmerCore/Version.swift)"
+          echo "tag=$tag  Version.swift=$version"
+          # A `v0.3.0` tag on a tree that says 0.2.0 is not a cosmetic
+          # mismatch: `bootstrap.sh` installs the tag, the binary then reports
+          # the other number, and `simmer update` tells every existing install
+          # it is current when it is not. The lie is silent and it is served to
+          # everybody.
+          [ "$tag" = "v$version" ] || {
+            echo "::error::tag $tag does not match Version.swift ($version). Delete the tag, fix one of them, tag again."
+            exit 1
+          }
+          # The notes are written by the person who made the changes, in the
+          # pull request that made them. By now they exist or the release has
+          # nothing honest to say.
+          grep -q "^## $version — " CHANGELOG.md || {
+            echo "::error::CHANGELOG.md has no '## $version — <date>' section"
+            exit 1
+          }
+
+  publish:
+    needs: [suites, tag]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Publish the release from the CHANGELOG section
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+
+          # Refuses rather than overwrites. A published release is a thing
+          # people have already read and linked to; replacing its notes from a
+          # re-run would rewrite it under them, and the recovery is cheap
+          # enough to be a human's choice.
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::error::a release for $tag already exists. Delete it (gh release delete $tag) if you meant to replace it, or push a new tag."
+            exit 1
+          fi
+
+          # `make release-notes` is the one extractor, shared with the human
+          # who read these notes back before tagging.
+          make release-notes VERSION="$version" > /tmp/notes.md
+          [ -s /tmp/notes.md ] || {
+            echo "::error::the $version section in CHANGELOG.md is empty"
+            exit 1
+          }
+          echo "notes:"; sed 's/^/  /' /tmp/notes.md
+
+          # --verify-tag: create nothing if the tag is not actually on the
+          # remote, so a mistyped input cannot invent one.
+          gh release create "$tag" \
+            --verify-tag \
+            --title "simmer $version" \
+            --notes-file /tmp/notes.md \
+            --latest
+          echo "published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$tag"

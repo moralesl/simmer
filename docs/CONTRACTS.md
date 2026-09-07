@@ -24,6 +24,8 @@ simmer status --machine | --json                machine status
 simmer budget [--need D] [--seconds] [--json]   room to start something?
 simmer log [n] · doctor · notify-test · --version · --help
 simmer render swiftbar|raycast                 surfaces, drawn by the core
+simmer update [--cached] [--apply]              is there a newer release? · install it
+simmer update --auto on|off|status              may the daily check install one?
 ```
 
 Durations: `90`, `90m`, `2h`, `1h30m`, `45min`, `30s`, `2H`, `1d`, `1d12h`.
@@ -44,9 +46,15 @@ Every command reachable from a launcher also tolerates a trailing `-r <reason> -
 | `run -- cmd` | *(command's own exit code, passed through untouched)* ||||
 | take/extend/down/cap | ok | refused (floor, cap, authority, parse) | — | — |
 | `doctor` | healthy | something red | — | — |
+| `update` | the check completed — newer or not | **could not check** | — | — |
+| `update --apply` | nothing left to do: installed, or already current | could not be done | — | — |
 
 `budget`'s 3-vs-1 split is load-bearing: 1 is a small budget, 3 is an absent guarantee.
 Callers that conflate them keep working while the machine sleeps.
+
+**`update`'s 0 does not mean "you are current"** — it means the question was answered, and the answer is in `update_available`.
+A newer release existing is not a failure of anything, which is the same reading that keeps "out of date" out of `doctor`'s red rows; the one non-zero exit is not knowing.
+So a caller can tell "you are current" from "nobody could tell", which is the distinction that matters to anything automated.
 
 **"The earliest clock" is not always the deadline** — see § Two clocks.
 An open-ended claim can now answer `1`, which it could not before 0.2.
@@ -74,6 +82,43 @@ Fields are append-only; removing or renaming one is a major version, **and so is
 The two exceptions are the flat surfaces, which have no types at all: `--machine` emits `0`/`1`, and `status --json` keeps `on_battery` and `sleep_disabled` as `0`/`1` because they mirror `--machine` field for field.
 A reader must never have to discover that one field answers the same question in a different type than its neighbour, and one field must never carry two types across two surfaces of the same binary.
 The acceptance suite asserts this against the raw JSON text, because `JSONSerialization` bridges `0`/`1` to `Bool` and would let exactly that drift through a typed assertion.
+
+`update --json`: `action` (`checked`, or `updated`/`refused` under `--apply`), `verdict` (`current`·`available`·`ahead`·`unknown`), `installed`, `latest` (the release tag as published, `v` and all, or `null`), `update_available` (boolean), `provenance` (`homebrew`·`bundle`·`checkout`·`unknown`), `update_command`, `app_version` (the installed bundle's, or `null`), `app_drift` (boolean), `checked_at`, `cached` (boolean), `error` (or `null`), `seamed` (boolean), `release_notes_url` (the page for `latest`, or `null`), `auto_update` (boolean — whether the daily check may install what it finds).
+
+**`release_notes_url` is composed, never fetched.** It is `<repository>/releases/tag/<latest>`, and it is `null` unless `latest` parses as a version — the tag arrives as the last path component of a redirect and round-trips through a `key=value` cache file, and this is the field a surface hands to a browser.
+Reading the notes costs simmer no request: the one outbound request stays the `HEAD` that names the newest tag, and the browser fetches the page.
+
+`update --auto <on|off|status> --json` answers about the setting rather than about a release, so it is its own object: `action` (`auto_update_on`·`auto_update_off` when it changed, `checked` when it did not), `auto_update` (boolean), `background_check` (boolean), `seamed` (boolean).
+It makes no request and installs nothing, so it may not be combined with `--apply` or `--cached` — one of the two would be silently dropped, which is the failure `--json`-or-refuse exists to prevent.
+`background_check` is in that object because unattended installs ride on the app's once-a-day check: with the check off, `auto_update: true` is a setting that cannot fire, and a caller has to be able to learn both facts from one call.
+A value other than `on`, `off` or `status` is refused by simmer, in simmer's voice, with the refusal object on stdout.
+
+**`latest` keeps the `v`; the human surfaces drop it.** The field is the string a caller hands to `git checkout` or matches against a release page, so it is the tag verbatim.
+A sentence that puts `v0.3.0` next to `0.2.0` reads like two different kinds of thing, so the prose says `0.3.0` — presentation, which guarantee 5 leaves free.
+
+**`provenance` decides `update_command`, and that is the whole reason it is a field.** "What is the newest release" has one answer; "how do you update" does not.
+Telling a Homebrew user to re-run the one-paste installer would put a second, unmanaged copy beside the managed one; telling someone with a checkout to `brew upgrade` names a formula they do not have.
+Both are derived from the path the running binary resolves to, never from a preference.
+
+**`update --apply` adds `applied` (boolean), `steps` (**the plan's steps**, in order) and `apply_error`** (only when it could not).
+`action` is `updated` when something was installed, `checked` when there was nothing to install, and `refused` when it could not be done.
+`steps` is the plan — what installing this copy consists of — and it is the same list whether every step ran, one failed, or there was nothing to do (then it is empty).
+Bringing `Simmer.app` back afterwards is **not** in it: the reopen is decided from the app's heartbeat rather than from the plan, it carries the `relaunching` phase precisely because it is not one of the plan's own steps, and what reports it is `applied` staying true with the sentence naming what did not finish.
+A caller that wants to know whether the menu bar came back reads that sentence, not the array.
+
+**`doctor`'s `raycast_extension` row is informational and often absent.** The Raycast extension is the one installed part of simmer that `make install` cannot touch — TypeScript with its own npm tree, built and registered by Raycast — so a release can move the CLI, the app, the guard and the agent protocol forward and leave the launcher surface where it was, with the new commands simply not in the root search.
+A Raycast manifest carries **no version** (Raycast's own documentation: during development a manifest declares no `version`), so the comparison is the set of commands the checkout declares against the commands the registered copy can actually run — in its manifest *and* with a built `<name>.js` beside it — plus, for commands present on both sides, whether the declaration differs.
+Raycast copies each command's declaration verbatim, which is what makes that sound; and unlike comparing build and source timestamps it stays true when the extension was registered from a different checkout than the one this binary knows about, which is the normal case for a bundle install.
+The row is **absent** where Raycast or the extension is not installed — an uninstalled launcher is not a finding — and **ℹ** where one side cannot be read (a Homebrew install has no checkout; a checkout predating the extension has no `integrations/raycast`).
+Never red, for the reason `agent_protocol` is never red: a stale renderer is not a broken install, and a row that can go red for it teaches the reader to skim the ones that mean something.
+
+**And "current" here means the manifests agree, not that the code does.** A change confined to the extension's TypeScript — a bug fix inside `claims.tsx`, a reworded empty state — declares nothing new, so a copy Raycast built before it still reads as current.
+That is a known limit rather than an oversight, and it is the price of the only comparison that stays true when the registered extension was built from a different checkout than provenance points at.
+The row is worth having anyway: what it *does* catch is the case nobody can otherwise see, a release that added a command which is simply not in the root search.
+Anything stronger needs a build stamp the extension does not currently write.
+
+**`app_drift` is the one update-shaped thing that is a fault.** `make install` symlinks the CLI at the copy inside the bundle, so the two are normally one file and cannot differ.
+When they do, the menu bar, the event-driven half of the guard and the notification identity are all the previous version running against the current ledger — which is why `doctor` reports it red while it reports being out of date as information.
 
 **The top-level fields describe the AGGREGATE** — what the machine will actually do — and the descriptive ones (`reason`, `owner`, `min_battery`, `since`) come from the claim that *defines* the aggregate deadline.
 With one claim that is the same answer the single-lease shape gave, which is why every existing reader keeps working.
@@ -104,6 +149,22 @@ Neither field changed meaning when the second clock arrived; `fits` and the exit
     The id is derived from the owner — see § The claim id.
 - `cap` — the human ceiling, same discipline.
 - `simmer.log`.
+- `update-check` — what the last release check found, `key=value`.
+  Not a machine surface: `simmer update --json` is how anything else asks, so this stays an implementation detail rather than a fifth format to keep append-only.
+  It records whether the check was `seamed`, and an unseamed reader discards a seamed record — a `SIMMER_FAKE_LATEST` left exported in a shell rc must not put "Update available: 9.9.9" in a person's menu bar.
+- `update-check.off` — present when a person has turned the app's once-a-day check off.
+- `auto-update.on` — present when a person has asked the once-a-day check to *install* what it finds.
+  It and `update-check.off` spell opposite directions on purpose: each file's **absence** has to be the safe default, so checking is on unless turned off and installing is off unless turned on.
+  One fact per file, neither a machine surface, and `doctor` and the setup window read a person's decision without asking whether the app is running.
+- `update-announced` — the newest release a person has already been TOLD about, `key=value`.
+  A different fact from what the last check found, and therefore a different file: `update-check` is overwritten by every check, including the ones nobody sees, while this records what was said rather than what was read.
+  It is what makes the app's daily check post one banner per new version instead of one a day — and a check somebody asked for by hand records it too, so tomorrow's background check does not repeat what they have just read.
+  An unattended install suppresses that banner rather than adding to it: the update path posts its own two about the same version, and the announcement is still recorded so nothing repeats it tomorrow.
+- `update-attempted` — the release the once-a-day check has already TRIED to install by itself, `key=value`.
+  A third fact about the same tag, and therefore a third file: what the last check found, what a person has been told, and what this Mac has tried.
+  Written **before** the attempt starts, because the attempt quits `Simmer.app` and there is nothing left to write it afterwards; still seeing that release on the next daily check is what proves the attempt did not land.
+  Its absence is the safe default in the same way `auto-update.on`'s presence is: with no record, the next check tries.
+  Cleared when a person turns unattended installs **on**, so asking for them is asking for an attempt — and not when they turn them off, because nothing reads it while off and forgetting it there would make the answer depend on which way the switch moved last.
 - additionally, an append-only `events.jsonl` (one JSON object per transition: `v`, `ts`, `event`, `reason`, `owner`, …).
 
 A `format=1` lease is read **once**, converted into a claim, and deleted.
@@ -143,9 +204,13 @@ Any implementation MUST honour these, or it cannot be tested without root and wi
 | `SIMMER_HUMAN=1` | the caller carries human authority regardless of owner |
 | `SIMMER_NOTIFY=<transport\|none>` | `none` silences. There is exactly one transport: the CLI enqueues into `$STATE/notify-spool.jsonl` and the app — the only executable holding a notification grant — posts. The spool is the assertable surface |
 | `SIMMER_NOTIFIER_APP=<path>` | **retired in the rewrite** (was: notifier bundle override). The spool lives under `XDG_STATE_HOME`, so notification routing is seam-isolated by construction; see PLATFORM-FACTS.md on per-executable grants |
+| `SIMMER_FAKE_LATEST=<tag\|error>` | the newest published release, e.g. `v0.3.0`; `error` is the offline path. **A process that is seamed at all and has not been given this reads nothing over the network** — while a `SIMMER_FAKE_*` is in force nothing this process reports is about this machine, and a live network read would be the one exception. That is what makes the suite hermetic without a rule anyone has to remember |
+| `SIMMER_FAKE_APPLY=<file>` | `--apply`'s steps are appended to this file and reported as having succeeded, instead of being run. `--apply` spawns `git` and `make`, and anything spawned has a seam — the suite that called itself hermetic leaked 222 `caffeinate` processes through exactly this gap |
+| `SIMMER_FAKE_APPLY_FAIL=<phase>` | which recorded step reports failure instead of success: `fetching`, `switching`, `installing` or `relaunching`. With `SIMMER_FAKE_APPLY` alone every step succeeds, so the failure half of `--apply` — the sentence a person reads on the worst day this feature has — was reachable only by breaking a real install. Named by phase because the phase decides the sentence, and because `relaunching` is not one of the plan's own steps. Anything that is not a phase fails nothing: a typo must not silently turn a failure test green |
 | `SIMMER_FAKE_BATTERY_TIME=<seconds>` | macOS's own time-to-empty estimate, which `budget` scales into the battery clock — see § Two clocks |
 | `SIMMER_BIN=<path>` | which binary integrations exec, **honoured only while `SIMMER_FAKE_PMSET` is also set**. It decides what a menu-bar or launcher row executes, which is not a decision one unguarded environment variable may make on a real install; there it is redundant anyway, because the binary knows its own path |
 | `SIMMER_SKILL_DIR=<dir>` | where the generated agent protocol lives, for `doctor`'s staleness row. Needed because `homeDirectoryForCurrentUser` reads the passwd entry and ignores `HOME`, so this one read would otherwise reach the tester's real `~/.claude` |
+| `SIMMER_FAKE_RAYCAST=<dir>` | where Raycast keeps locally built extensions (`~/.config/raycast/extensions`), for `doctor`'s `raycast_extension` row. It names the extensions *directory* rather than the extension, so "Raycast is not installed" stays reachable in a test; `HOME` is consulted before the passwd entry for the same reason `SIMMER_SKILL_DIR` exists |
 | `XDG_STATE_HOME=<dir>` | state isolation |
 | `SIMMER_RUN_CHUNK` / `SIMMER_RUN_INTERVAL` | run's renewal clocks |
 
@@ -155,6 +220,7 @@ Two more are read but are not seams — they are ordinary configuration, listed 
 |---|---|
 | `SIMMER_OWNER=<name>` | the default owner, when no `--owner` is given |
 | `SIMMER_NONINTERACTIVE=1` | never prompt for sudo, even on a tty |
+| `SIMMER_NO_UPDATE_CHECK=1` | the app never checks for a newer release on its own. `simmer update`, typed by someone who is asking, is never suppressed by it — a command that answered "not checking" to the question "check" would be the silent-drop failure in a new place |
 
 **Every side effect outside the process must be behind this seam, not merely the ones that are awkward to test.** A suite that called itself hermetic leaked 222 orphaned `caffeinate` processes exactly this way: ten seam variables, and none of them covering the one call that spawned a detached child holding a real power assertion (`PLATFORM-FACTS.md`).
 If an implementation shells out or spawns anything, that has a `SIMMER_FAKE_*` too.
@@ -234,7 +300,7 @@ All additive to the surface above:
   `simmer <duration>` remains the way to *set* a deadline from now, and the two spellings now mean visibly different things.
   A claim already past its deadline but not yet retired extends from **now**, never from the stale deadline — otherwise the addition lands in the past.
   The alias set is exactly the surface above.
-- **`--json` on every command that has a machine answer**: `claim`, `extend`, `release`, `cap`, `status`, `budget`, `log`, `doctor`.
+- **`--json` on every command that has a machine answer**: `claim`, `extend`, `release`, `cap`, `status`, `budget`, `log`, `doctor`, `update`.
   A mutating command returns one object: what changed plus the resulting aggregate — `{"action":"claimed|extended|released|cap_set|cap_lifted|refused", "claim": {…}, "clipped_by_cap":bool, "state", "until", "left", "claim_count", "cap", "capped", "cap_expires"}`, where `cap_expires` says when the ceiling lifts itself (0 = no cap).
   Bare `cap --json` spells the same field `expires`, because every field in that object is already about the cap.
   `notify-test` and `render` have none and **refuse** the flag rather than accepting and ignoring it: a flag that is silently dropped is indistinguishable, to the caller, from one that worked.
@@ -249,6 +315,40 @@ All additive to the surface above:
   Order is chronological — the switch flips before the claim file lands, and the stream says so.
   Fields are append-only.
   Nothing reads it yet; `watch`/`why` stay uncontracted.
+- **`simmer update` reports; installing is a second, explicit thing to ask for.** Bare, it prints the command for the copy it is running from and stops there — `--apply` runs it, and `--auto on` lets the daily check run it (both below).
+  An update replaces a running app and the binary the guard's LaunchAgent points at, and it can be asked for while a claim is live — so the default shape is `simmer uninstall`'s, for the same reason: an operation that happens rarely, in front of a person already at a keyboard, is better as a command they can read first than as a button that acts on their behalf.
+  What the two additions buy is the case that shape does not serve — a person with no terminal, and a copy nobody opens — and each pays for it separately: `--apply` by running only the command it would have printed, `--auto` by being off until asked and refusing while a claim is live.
+  `--cached` reports the last check and makes no network request, which is what every surface that is not the one being asked uses — `doctor`, the menu bar, a launcher row.
+  `doctor` therefore answers the same on a train as in the office.
+- **One outbound request, and it is the only one.** A `HEAD` to `github.com/moralesl/simmer/releases/latest`, whose redirect names the newest tag.
+  It carries a `simmer/<version>` User-Agent and nothing else: no identifier, no machine detail, no telemetry, ever.
+  The app makes it at most once a day; `simmer update` makes it when asked.
+  A check that finds a version nobody has been told about posts **one** banner and records the tag in `update-announced` (§ State), so the cost of the feature is one banner per release rather than one a day — and being months behind is no longer something a Mac can be silently.
+- **`--apply` runs the command it would have printed, and never anything else.** Three properties hold, and they are what make it something this tool can offer at all rather than a convenience bolted on:
+  1. **It never pipes the network into a shell.** The printed command for a bundle install is `curl … | bash`; the plan updates the installer's own checkout (`~/.local/share/simmer`) and runs `make install` there — local files, the same recipe `bootstrap.sh` would have run.
+     An acceptance test asserts that nothing executed contains `curl`, `bash` or a pipe.
+  2. **It needs no root.** `make install` never touches sudo.
+     The privileged rule is installed once, by a human, and an update does not renew it — so "simmer never gives itself root" is untouched.
+  3. **It refuses rather than guesses.** A developer's own checkout is never moved onto a tag: it may hold local commits, an unfinished branch or a stash, and a person running from a checkout has a terminal by definition.
+     An install this cannot place, or one with no checkout to build from, is refused with the command that does work.
+     Not knowing whether there is an update refuses too.
+- **A step that fails says what did not finish, and what to do.** Each step carries the part of the update it is doing — fetching the release, switching to it, installing it, relaunching the app — and the first line of the failure is a sentence naming that part, whether anything on the Mac changed, and the command that works from a terminal.
+  The failing command and its stderr tail stay underneath it, and in `--json`'s `apply_error` unchanged: the sentence is for the person, the command is what a caller has always parsed.
+  `relaunching` is the one phase that is not a failed install — the update landed and the menu bar did not come back — so it exits 0, keeps `applied: true`, sets no `apply_error`, and says to open the app rather than to run the installer again.
+- **The unattended install is off by default, and a live claim refuses it.** With `simmer update --auto on`, the app's once-a-day check may install what it finds — the same `simmer update --apply` a person's click runs, so there is one implementation and one set of tests.
+  Everything must hold, and the decision is one pure function in the core with each refusal named — `off`, `cannotTell`, `nothingNewer`, `alreadyTried`, `claimIsLive`, `planRefused` — so that "nothing happened" is always attributable.
+  They are answered permanent-reason-first: a person told to wait for a claim to end, when the release will not be attempted after it ends either, has been told to wait for nothing.
+  `cannotTell` is its own reason rather than a shade of `nothingNewer` because a Mac that cannot reach GitHub and a Mac with nothing to install need different things done about them — and it is logged, which the ordinary daily answers (`off`, `nothingNewer`) are not.
+  **`Aggregate.compute` is what answers "is a claim live"**, never the claims directory: a surface that reads the ledger itself becomes a second implementation of the aggregate.
+  An update quits `Simmer.app`, replaces the binary the guard's LaunchAgent points at, and compiles for a minute or two — while a claim is live that is exactly the walked-away window a claim exists to protect, so it waits.
+  A release skipped for that reason is retried at the **next daily check**, not when the claim ends: an update that starts compiling the moment an overnight job hands the lid back is an update nobody is expecting.
+  **One unattended attempt per release**, recorded in `update-attempted` (§ State) before it starts.
+  A release that cannot be installed — a tag that will not fetch, a build that fails — otherwise fails again at every daily check, with a banner each time, which is the repetition "one banner per new version" exists to prevent applied to the half of the feature that can go wrong.
+  So this path stands down from that one release and from nothing else: the next release is attempted, a person's `simmer update --apply` always attempts, the menu bar's **Install it now** always attempts, and turning `--auto on` again clears the record.
+  Only the background pass may install; `force` — a person who just clicked "Check for Updates…" — gets the report and the button, because installing under a click that asked a question is the surprise the whole feature is built to avoid.
+  The completion banner is `--apply`'s own, through the spool, which is what lets it survive the app being replaced and relaunched in between; nothing posts a second one.
+  And it does not add to the availability banner, it **replaces** it: when the check's answer is about to be installed, the "one banner per new version" announcement is recorded and not posted, because the update path is already going to post two about that same version.
+  Going back is `FAQ.md` § A release broke something, and it begins with `--auto off` — otherwise the next daily check reinstalls what was rolled back.
 - **`simmer guard`** is the tick's CLI spelling — what the LaunchAgent runs.
   It never prompts (sudo -n or nothing) and exits 1 only when the switch could not be moved.
 

@@ -226,3 +226,50 @@ import Testing
         #expect(warning < version)
     }
 }
+
+/// The one menu action with no visible consequence of its own: the menu
+/// closes, the clipboard has changed, and without this nothing says so.
+@Suite struct CopyFeedbackTests {
+    @Test func aCopyAnswersWithWhatItCopied() throws {
+        let outcome = MenuModel.copied("simmer budget --need 20m")
+        let banner = try #require(outcome.notifications.first)
+
+        #expect(banner.title == "Copied to clipboard")
+        // The command in the body: what got copied is the fact worth
+        // checking, and a title long enough for the one-paste installer is a
+        // title macOS truncates.
+        #expect(banner.body == "simmer budget --need 20m")
+        #expect(banner.sound == false, "a copy is not worth a sound")
+        #expect(banner.actionable == false, "there is no Extend/Release to offer")
+    }
+
+    /// Exactly one, and nothing else: this is a banner, not a mutation. A
+    /// stdout line here would be a line no surface prints and no test reads.
+    @Test func itSaysNothingElseAndChangesNothing() {
+        let outcome = MenuModel.copied("simmer down")
+        #expect(outcome.notifications.count == 1)
+        #expect(outcome.stdout.isEmpty)
+        #expect(outcome.stderr.isEmpty)
+        #expect(outcome.exit == 0)
+    }
+
+    /// Every row that carries a `.copyCLI` gets the same feedback, because the
+    /// renderer answers the action rather than the row — including the update
+    /// group's command and the long one-paste installer line.
+    @Test func everyCopyableRowInTheMenuHasSomethingToSay() {
+        let items = MenuModel.build(
+            aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000, sleepDisabled: false),
+            batteryLine: "battery 80%, on AC",
+            install: MenuInstall(version: "0.2.0", canHandBackUnattended: true,
+                                 updateLine: "Update available: 0.3.0",
+                                 updateCommand: "curl -fsSL https://example.test/bootstrap.sh | bash"))
+        let commands = (items + items.flatMap(\.children)).compactMap { item -> String? in
+            if case .copyCLI(let command) = item.action { return command }
+            return nil
+        }
+        #expect(commands.count >= 5, "found \(commands)")
+        for command in commands {
+            #expect(MenuModel.copied(command).notifications.first?.body == command)
+        }
+    }
+}

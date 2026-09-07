@@ -87,6 +87,27 @@ final class SetupWindow: NSObject {
 
     // MARK: layout
 
+    /// The one thing in this window that is a preference rather than a
+    /// permission — and the only place simmer's single outbound request can be
+    /// turned off by hand. Stored as a file under the ledger, not in
+    /// UserDefaults: every other thing the app remembers lives there, and
+    /// `doctor` can then read the decision without asking the app.
+    private lazy var updateCheckBox: NSButton = {
+        NSButton(checkboxWithTitle: "Check for a newer simmer once a day",
+                 target: self, action: #selector(toggleUpdateChecks))
+    }()
+
+    /// The unattended half, and it is deliberately the *second* checkbox and
+    /// indented under the first: it does nothing on its own. The once-a-day
+    /// check is the only thing in simmer that looks for a release without
+    /// being asked, so this rides on it — and a switch that can be on while
+    /// the thing it depends on is off is a switch that lies. It disables
+    /// itself instead.
+    private lazy var autoUpdateBox: NSButton = {
+        NSButton(checkboxWithTitle: "…and install it, when nothing is claimed",
+                 target: self, action: #selector(toggleAutoUpdate))
+    }()
+
     private func build() {
         sudoRow.button.target = self
         sudoRow.button.action = #selector(setUpSudo)
@@ -133,7 +154,37 @@ final class SetupWindow: NSObject {
         hint.textColor = .tertiaryLabelColor
         hint.preferredMaxLayoutWidth = 460
 
-        let content = NSStackView(views: [header, rows, hint])
+        let updateCaption = NSTextField(wrappingLabelWithString:
+            "One request to github.com, asking which release is newest. It sends "
+            + "nothing about you or this Mac. Finding a newer one puts a row in the "
+            + "menu bar and posts one banner per version — installing it is the "
+            + "checkbox below, or a command you run. Turn the check off here, or set "
+            + "SIMMER_NO_UPDATE_CHECK=1.")
+        updateCaption.font = .systemFont(ofSize: 11)
+        updateCaption.textColor = .tertiaryLabelColor
+        updateCaption.preferredMaxLayoutWidth = 460
+        let autoCaption = NSTextField(wrappingLabelWithString:
+            "Off by default. An update quits Simmer.app, replaces the binary the guard "
+            + "runs, and takes a minute or two to compile — so it never starts while a "
+            + "claim is live, which is exactly the walked-away window simmer exists to "
+            + "protect. A release skipped for that reason is retried at the next daily "
+            + "check. Going back is one command: docs/FAQ.md.")
+        autoCaption.font = .systemFont(ofSize: 11)
+        autoCaption.textColor = .tertiaryLabelColor
+        autoCaption.preferredMaxLayoutWidth = 440
+
+        let auto = NSStackView(views: [autoUpdateBox, autoCaption])
+        auto.orientation = .vertical
+        auto.alignment = .leading
+        auto.spacing = 4
+        auto.edgeInsets = NSEdgeInsets(top: 0, left: 18, bottom: 0, right: 0)
+
+        let updates = NSStackView(views: [updateCheckBox, updateCaption, auto])
+        updates.orientation = .vertical
+        updates.alignment = .leading
+        updates.spacing = 4
+
+        let content = NSStackView(views: [header, rows, updates, hint])
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = 16
@@ -157,7 +208,59 @@ final class SetupWindow: NSObject {
 
     // MARK: live status
 
+    @objc private func toggleUpdateChecks() {
+        let enabled = updateCheckBox.state == .on
+        AppState.shared.context().ledger.setBackgroundUpdateChecks(enabled: enabled)
+        // Asked for it just now: look immediately rather than at the next
+        // six-hour pass, so the switch visibly does something.
+        if enabled { AppState.shared.refreshUpdateCheck() }
+        // The dependent row changes with it, in both directions: turning the
+        // check off must visibly disable the thing that rides on it rather
+        // than leaving a ticked box that can never fire.
+        //
+        // These two rows only, not the whole window: `refresh()` shells out to
+        // `sudo -nl` and asks UserNotifications for the grant, and neither of
+        // those has any bearing on a checkbox somebody just clicked.
+        refreshUpdateRows()
+    }
+
+    @objc private func toggleAutoUpdate() {
+        AppState.shared.context().ledger.setAutoUpdate(enabled: autoUpdateBox.state == .on)
+        // Read back rather than trusting the click: an unwritable state
+        // directory means the answer did not land, and a ticked box over a
+        // file that was never written is the one thing this row must not show.
+        refreshUpdateRows()
+    }
+
+    /// The two update checkboxes, and nothing else. Cheap: two file reads and
+    /// one environment lookup, so it is safe to call on every click.
+    private func refreshUpdateRows() {
+        // The environment wins over the checkbox, and says so rather than
+        // showing a switch that does nothing: a variable exported in a shell
+        // rc is not something a click in this window can overrule.
+        let ledger = AppState.shared.context().ledger
+        let environmentSaysNo = AppState.shared.environment.backgroundUpdateCheckDisabled
+        updateCheckBox.isEnabled = !environmentSaysNo
+        updateCheckBox.state = environmentSaysNo
+            || !ledger.backgroundUpdateChecksEnabled ? .off : .on
+        updateCheckBox.title = environmentSaysNo
+            ? "Check for a newer simmer once a day — off via SIMMER_NO_UPDATE_CHECK"
+            : "Check for a newer simmer once a day"
+
+        // The stored answer is shown even while the box is disabled: it is the
+        // person's decision and it survives the check being turned off and
+        // back on. What the disabled state says is "this cannot fire", not
+        // "you never asked for it".
+        autoUpdateBox.state = ledger.autoUpdateEnabled ? .on : .off
+        autoUpdateBox.isEnabled = updateCheckBox.isEnabled && updateCheckBox.state == .on
+        autoUpdateBox.title = autoUpdateBox.isEnabled
+            ? "…and install it, when nothing is claimed"
+            : "…and install it, when nothing is claimed — needs the daily check above"
+    }
+
     private func refresh() {
+        refreshUpdateRows()
+
         sudoState { ok, foreign in
             DispatchQueue.main.async {
                 if ok {
