@@ -151,58 +151,84 @@ jobs:
       - name: Build simmer
         run: swift build -c release
 
-      # TEMPORARY (feat/update-check): `update --apply --json` comes back with
-      # empty stdout from the release binary on this runner, exit 0, all three
-      # steps recorded — the previous version of this step established that
-      # outside node. This version bisects it in one run and comes out again
-      # once the fix is in. Every probe prints exit and byte counts; none of
-      # them fails the leg.
-      - name: What does --apply actually emit here
+      # TEMPORARY (feat/update-check), round two. Round one cleared
+      # Runtime.execute, the record file, the fd numbers and the step plan:
+      # `--apply --json` prints nothing even on the nothing-to-do path, which
+      # runs no steps at all, while the human form of the same path and the
+      # plain `--json` check both print. Two candidates are left — an empty
+      # `outcome.stdout`, or a `print` whose bytes never reach fd 1 — and they
+      # want different fixes.
+      #
+      # SIMMER_TRACE_EMIT (Runtime.trace) reports the array count, each line's
+      # length, fflush's verdict, what fd 1 has actually received, and whether
+      # a raw write(1) lands. Q5 and Q6 ask the optimiser the same question
+      # from the outside. Nothing here fails the leg, and it all comes out
+      # with the fix.
+      - name: Where are the bytes lost
         run: |
           bin="$GITHUB_WORKSPACE/.build/release/simmer"
           home="$RUNNER_TEMP/apply-home"
           mkdir -p "$home/.local/share/simmer/.git" "$home/state"
           printf 'all:\n' > "$home/.local/share/simmer/Makefile"
           set +e
-          # One environment for every probe. SIMMER_FAKE_APPLY and stdout
-          # handling vary per probe below.
           base=(env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$home" TZ=Europe/Berlin
             XDG_STATE_HOME="$home/state" SIMMER_FAKE_PMSET="$home/pmset"
             SIMMER_FAKE_BATTERY=80:0 SIMMER_FAKE_THERMAL=0 SIMMER_FAKE_LOCKDELAY=0
             SIMMER_FAKE_NOW=1800000000 SIMMER_NOTIFY=none
-            SIMMER_FAKE_LATEST=v9.9.9
+            SIMMER_FAKE_LATEST=v9.9.9 SIMMER_TRACE_EMIT=1
             SIMMER_BIN="$home/Applications/Simmer.app/Contents/MacOS/simmer")
           probe() {  # name, then the command
             name="$1"; shift
             : > "$home/apply.log"
             "$@" > "$home/out.txt" 2> "$home/err.txt"
             code=$?
-            echo "=== $name: exit=$code stdout=$(wc -c < "$home/out.txt")B stderr=$(wc -c < "$home/err.txt")B recorded=$(wc -l < "$home/apply.log") lines"
-            head -c 400 "$home/out.txt"; echo; head -c 400 "$home/err.txt"
+            echo "=== $name: exit=$code stdout=$(wc -c < "$home/out.txt")B recorded=$(wc -l < "$home/apply.log") lines"
+            cat "$home/err.txt"
+            echo "--- stdout, first 120 and last 40 bytes ---"
+            head -c 120 "$home/out.txt"; echo; tail -c 40 "$home/out.txt"; echo
           }
-          echo "### P1 baseline: --apply --json, record file exists (FileHandle branch)"
-          probe P1 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply --json
-          echo "### P2 same, human mode — is the PREAMBLE (printed before any step) there?"
-          probe P2 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply
-          echo "### P3 human mode on a pty (line-buffered: each print flushes at once)"
-          probe P3 script -q /dev/null "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply
-          echo "### P4 record file ABSENT: the else branch (String.write atomically), no FileHandle"
-          rm -f "$home/apply.log"
-          "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply --json > "$home/out.txt" 2> "$home/err.txt"
-          echo "=== P4: exit=$? stdout=$(wc -c < "$home/out.txt")B stderr=$(wc -c < "$home/err.txt")B recorded=$(wc -l < "$home/apply.log" 2>/dev/null) lines"
-          head -c 400 "$home/out.txt"; echo
-          echo "### P5 fds 3..9 pre-occupied, so the record handle lands on fd 10+"
-          probe P5 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply --json 3</dev/null 4</dev/null 5</dev/null 6</dev/null 7</dev/null 8</dev/null 9</dev/null
-          echo "### P6 plain check, same env (known to print)"
-          probe P6 "${base[@]}" "$bin" update --json
-          echo "### P7 nothing-to-do apply: installed == latest, no steps, no FileHandle"
-          probe P7 "${base[@]}" SIMMER_FAKE_LATEST=v0.2.0 SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply --json
-          echo "### P8 the DEBUG binary, same probe as P1"
-          swift build 2>&1 | tail -1
-          probe P8 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$GITHUB_WORKSPACE/.build/debug/simmer" update --apply --json
-          echo "### P9 the Swift acceptance suite driving the RELEASE binary"
-          SIMMER_BIN="$bin" swift test --filter 'Update' 2>&1 | grep -E "✘|✔|Test run|Suite .* (passed|failed)|Expectation failed|error" | head -60
-          echo "P9 done"
+          echo "### Q1 --apply --json, traced: is the array empty, or are the bytes lost?"
+          probe Q1 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply --json
+          echo "### Q2 plain --json check, traced — the control that prints"
+          probe Q2 "${base[@]}" "$bin" update --json
+          echo "### Q3 --apply human mode, traced — the other control that prints"
+          probe Q3 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply
+          echo "### Q4 --apply --json on a pty: line-buffered, so print flushes per line"
+          probe Q4 script -q /dev/null "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply --json
+          echo "### Q5 --apply --json into a pipe rather than a file"
+          : > "$home/apply.log"
+          "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply --json 2>/dev/null | cat > "$home/out.txt"
+          echo "=== Q5: stdout=$(wc -c < "$home/out.txt")B"; head -c 120 "$home/out.txt"; echo
+          echo "### Q6 the release CONFIG built at -Onone: optimiser, or something else?"
+          swift build -c release --scratch-path "$RUNNER_TEMP/b-onone" -Xswiftc -Onone 2>&1 | tail -1
+          probe Q6 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$RUNNER_TEMP/b-onone/release/simmer" update --apply --json
+          echo "### Q7 release without whole-module optimisation"
+          swift build -c release --scratch-path "$RUNNER_TEMP/b-nowmo" -Xswiftc -no-whole-module-optimization 2>&1 | tail -1
+          probe Q7 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$RUNNER_TEMP/b-nowmo/release/simmer" update --apply --json
+          echo "### Q8 a SHORT home: the same path, a JSON object well under 512 bytes"
+          applyat() {  # name, home — the plan embeds the home path three times,
+            nm="$1"; h="$2"   # so the home decides how long the JSON line is
+            mkdir -p "$h/.local/share/simmer/.git" "$h/state"
+            printf 'all:\n' > "$h/.local/share/simmer/Makefile"
+            : > "$h/apply.log"
+            env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$h" TZ=Europe/Berlin \
+              XDG_STATE_HOME="$h/state" SIMMER_FAKE_PMSET="$h/pmset" \
+              SIMMER_FAKE_BATTERY=80:0 SIMMER_FAKE_THERMAL=0 SIMMER_FAKE_LOCKDELAY=0 \
+              SIMMER_FAKE_NOW=1800000000 SIMMER_NOTIFY=none SIMMER_FAKE_LATEST=v9.9.9 \
+              SIMMER_TRACE_EMIT=1 SIMMER_FAKE_APPLY="$h/apply.log" \
+              SIMMER_BIN="$h/Applications/Simmer.app/Contents/MacOS/simmer" \
+              "$bin" update --apply --json > "$home/out.txt" 2> "$home/err.txt"
+            echo "=== $nm: exit=$? home=${#h} chars stdout=$(wc -c < "$home/out.txt")B"
+            cat "$home/err.txt"
+            head -c 120 "$home/out.txt"; echo
+          }
+          applyat Q8 "/tmp/s"
+          echo "### Q9 a LONG home: the same path, a JSON object well over 1024 bytes"
+          applyat Q9 "/tmp/$(printf 'l%.0s' $(seq 1 120))/$(printf 'm%.0s' $(seq 1 120))"
+          echo "### Q10 the CHECK path, forced past 614 bytes by a very long tag:"
+          echo "###     if this one vanishes too, the length of the line is the trigger"
+          probe Q10 "${base[@]}" SIMMER_FAKE_LATEST="v9.9.9-$(printf 'a%.0s' $(seq 1 400))" "$bin" update --json
+          echo "Q done"
           set -e
 
       - name: Contract suite against the built binary

@@ -133,19 +133,44 @@ enum Runtime {
     /// `run`, whose stdout belongs to the command it wraps — see RunCLI.
     enum HumanStream { case stdout, stderr }
 
+    /// TEMPORARY (crew/apply-stdout): where do the bytes go?
+    ///
+    /// `update --apply --json` exits 0 with empty stdout from the release
+    /// binary on macOS 15 / Swift 6.2.4 and prints its object from the debug
+    /// binary of the same source. Nine probes cleared Runtime.execute, the
+    /// record file, the fd numbers and the step plan: the nothing-to-do path,
+    /// which runs no steps at all, is empty too. What is left is either an
+    /// empty `outcome.stdout` (the value side) or a `print` whose bytes never
+    /// reach fd 1 (the output side), and those two want different fixes.
+    ///
+    /// Every line here goes to fd 2 through `write(2)` — no `print`, no
+    /// FileHandle, no buffer — so the trace survives whatever is eating
+    /// stdout. Off unless SIMMER_TRACE_EMIT is set, and it comes out with the
+    /// fix.
+    private static func trace(_ message: String) {
+        guard ProcessInfo.processInfo.environment["SIMMER_TRACE_EMIT"] != nil else { return }
+        let bytes = Array(("[trace] " + message + "\n").utf8)
+        bytes.withUnsafeBufferPointer { _ = write(2, $0.baseAddress, $0.count) }
+    }
+
     /// Print, post, exit. The single exit path for every subcommand.
     static func deliver(_ outcome: Outcome, human: HumanStream = .stdout) -> Never {
         emit(outcome, human: human)
+        trace("about to exit(\(outcome.exit))")
         exit(outcome.exit)
     }
 
     static func emit(_ outcome: Outcome, human: HumanStream = .stdout) {
-        for line in outcome.stdout {
+        trace("emit stdout=\(outcome.stdout.count) stderr=\(outcome.stderr.count) "
+            + "exit=\(outcome.exit) human=\(human == .stdout ? "stdout" : "stderr")")
+        for (index, line) in outcome.stdout.enumerated() {
+            trace("line[\(index)] utf8=\(line.utf8.count) head=\(String(line.prefix(48)))")
             switch human {
             case .stdout: print(line)
             case .stderr: FileHandle.standardError.write(Data((line + "\n").utf8))
             }
         }
+        traceStdoutState()
         for line in outcome.stderr {
             FileHandle.standardError.write(Data((line + "\n").utf8))
         }
@@ -161,5 +186,26 @@ enum Runtime {
         for notification in outcome.notifications {
             ledger.enqueueNotification(notification, now: env.now())
         }
+    }
+
+    /// TEMPORARY (crew/apply-stdout): did the bytes reach fd 1, and is fd 1
+    /// even writable? `fflush` says whether the stdio buffer got out, `fstat`
+    /// says how much fd 1 has received, and the raw `write` says whether the
+    /// descriptor works at all — a `[raw]` line in stdout with no JSON beside
+    /// it means `print` is the one that lost them.
+    private static func traceStdoutState() {
+        guard ProcessInfo.processInfo.environment["SIMMER_TRACE_EMIT"] != nil else { return }
+        errno = 0
+        let flushed = fflush(stdout)
+        trace("fflush=\(flushed) errno=\(errno)")
+        var info = stat()
+        errno = 0
+        let statted = fstat(1, &info)
+        trace("fd1 fstat=\(statted) errno=\(errno) size=\(info.st_size) "
+            + "mode=\(String(info.st_mode, radix: 8)) isatty=\(isatty(1))")
+        let raw = Array("[raw]\n".utf8)
+        errno = 0
+        let written = raw.withUnsafeBufferPointer { write(1, $0.baseAddress, $0.count) }
+        trace("raw write(1)=\(written) errno=\(errno)")
     }
 }
