@@ -134,7 +134,13 @@ jobs:
   raycast-contract:
     runs-on: macos-15
     steps:
+      # TEMPORARY (feat/update-check): full history, because the round-four
+      # step below checks a5a825c's three files out rather than reconstructing
+      # them — an exact baseline beats an approximate one. Back to the default
+      # shallow clone when that step comes out.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:
@@ -151,174 +157,157 @@ jobs:
       - name: Build simmer
         run: swift build -c release
 
-      # TEMPORARY (feat/update-check), round three and the last one.
+      # TEMPORARY (feat/update-check), round four and the last one, capped.
       #
-      # Round two answered by vanishing. Every probe printed, `make
-      # test-release` passed on macos-15, and the contract suite went 31/31 for
-      # the first time since 2026-09-04 — on the same runner image and the same
-      # Swift 6.2.4 that had lost the line twenty minutes earlier. The only
-      # difference in the binary was the instrumentation added to `Runtime.emit`
-      # itself, none of which does anything with its variable unset. So the
-      # perturbation is the finding, and the question left is which change moves
-      # it — which is what decides whether the fix in this branch is the right
-      # one or merely another perturbation.
+      # Round three settled where the bytes go: a binary whose emit writes
+      # through a bare write(2) loop emitted NOTHING for a non-empty line,
+      # which is not possible — so the release build reaches `Runtime.emit`
+      # with an EMPTY stdout array. The output call was never the defect. And
+      # the release lane caught it on macos-14 / Swift 6.0.3 as well, so it is
+      # not one toolchain's regression; -Onone prints on both.
       #
-      # V0 is byte-identical to Runtime.swift at a5a825c, the tree the defect
-      # was observed on; that identity is checked locally against `git show`,
-      # not asserted. V0 MUST come back 0 B. If it prints, the defect is
-      # nondeterministic on this runner, every reading above is worth less than
-      # it looks, and the fix stops being justified by this evidence.
-      - name: Round three — which change moves it
+      # W0 is a5a825c's three files, checked out rather than reconstructed, so
+      # the baseline is exact by construction. It MUST come back 0 B.
+      # W_human is the probe nobody has run: the nothing-to-do path in HUMAN
+      # mode also assigns `outcome.stdout` in the CLI, and whether it survives
+      # decides whether this is "the CLI mutates this Outcome" or something
+      # narrower about the JSON object. W1 removes the one unusual construct
+      # inside applyJSON — `doctor --json` assigns `outcome.stdout` from a
+      # closure exactly like the failing sites and survives, so the difference
+      # may be in the object, not in the assignment. W2 asks the array itself,
+      # accepting that reading it is what made the defect vanish in round two.
+      - name: Round four — what is in the array, and what is enough to fix it
         run: |
           bin="$GITHUB_WORKSPACE/.build/release/simmer"
           home="$RUNNER_TEMP/apply-home"
-          gen="$RUNNER_TEMP/variant.py"
-          orig="$RUNNER_TEMP/runtime-as-committed.swift"
+          patch="$RUNNER_TEMP/patch4.py"
+          files="Sources/SimmerCLI/Runtime.swift Sources/SimmerCLI/UpdateCLI.swift Sources/SimmerCore/Commands/UpdateCommand.swift"
           mkdir -p "$home/.local/share/simmer/.git" "$home/state"
           printf 'all:\n' > "$home/.local/share/simmer/Makefile"
           set +e
-          cat > "$gen" <<'PYEOF'
-          """Rewrite Runtime.swift's rendering region as one of the round-three variants.
+          cat > "$patch" <<'PYEOF'
+          """Apply one round-four patch on top of the a5a825c files already checked out.
 
-          The region is everything from "/// Print, post, exit." to the end of the file:
-          deliver, emit, and whatever helper emit uses. V0 is byte-identical to the
-          Runtime.swift of a5a825c, the tree the defect was observed on.
+          Called after `git checkout a5a825c -- <the three files>`, so the tree is
+          exactly the one the defect was observed on and each patch is one difference.
           """
           import sys
 
-          MARKER = "    /// Print, post, exit. The single exit path for every subcommand.\n"
+          RUNTIME = "Sources/SimmerCLI/Runtime.swift"
+          CLI = "Sources/SimmerCLI/UpdateCLI.swift"
+          CORE = "Sources/SimmerCore/Commands/UpdateCommand.swift"
 
-          DELIVER = """    /// Print, post, exit. The single exit path for every subcommand.
-              static func deliver(_ outcome: Outcome, human: HumanStream = .stdout) -> Never {
-                  emit(outcome, human: human)
-                  exit(outcome.exit)
-              }
 
-          """
+          def edit(path, old, new):
+              text = open(path).read()
+              assert old in text, "patch anchor missing in " + path
+              open(path, "w").write(text.replace(old, new, 1))
 
-          NOTIFY = """        // The app is the only poster — macOS binds the notification grant to
-                  // the executable that asked, and this executable never asks
-                  // (PLATFORM-FACTS.md). Banners go through the spool; the app drains it
-                  // within seconds. App not running = no banners, honestly: the menu
-                  // bar is gone then too.
-                  guard !outcome.notifications.isEmpty else { return }
-                  let env = environment()
-                  guard env.notifyTransport != "none" else { return }
-                  let ledger = Ledger(stateDir: env.stateDir)
-                  for notification in outcome.notifications {
-                      ledger.enqueueNotification(notification, now: env.now())
+
+          # nomap — applyJSON without the tuple-destructuring map over an array of
+          # tuples, which is the one unusual construct in the object that vanishes.
+          # `doctor --json` builds its object inline and survives; this asks whether
+          # that is the difference.
+          def nomap():
+              edit(CORE, """        var fields: [(String, JSONValue)] = []
+                  for (key, value) in objectFields(json(report, seamed: seamed)) {
+                      fields.append((key, value))
                   }
-              }
-          }
-          """
-
-          # V0 — the observed defect, exactly as it stood.
-          V0 = DELIVER + """    static func emit(_ outcome: Outcome, human: HumanStream = .stdout) {
-                  for line in outcome.stdout {
-                      switch human {
-                      case .stdout: print(line)
-                      case .stderr: FileHandle.standardError.write(Data((line + "\\n").utf8))
+                  // Overwrite `action`: this call did something, or refused to.
+                  fields = fields.map { key, value in
+                      key == "action"
+                          ? (key, .string(applied ? "updated" : (error == nil ? "checked" : "refused")))
+                          : (key, value)
+                  }
+          """, """        var fields: [(String, JSONValue)] = []
+                  for (key, value) in objectFields(json(report, seamed: seamed)) {
+                      // Overwrite `action`: this call did something, or refused to.
+                      if key == "action" {
+                          fields.append((key, .string(
+                              applied ? "updated" : (error == nil ? "checked" : "refused"))))
+                      } else {
+                          fields.append((key, value))
                       }
                   }
-                  for line in outcome.stderr {
-                      FileHandle.standardError.write(Data((line + "\\n").utf8))
-                  }
-          """ + NOTIFY
+          """)
 
-          # V1 — V0 plus one explicit flush. Is the buffer simply never flushed?
-          V1 = DELIVER + """    static func emit(_ outcome: Outcome, human: HumanStream = .stdout) {
-                  for line in outcome.stdout {
-                      switch human {
-                      case .stdout: print(line)
-                      case .stderr: FileHandle.standardError.write(Data((line + "\\n").utf8))
+
+          # markers — say out loud, on fd 2, what the array holds when it is built in
+          # the CLI and what it holds when emit reads it. Reading the outcome inside
+          # emit is what made the defect vanish in round two, so this may perturb it
+          # again; if it prints, that is itself the finding.
+          def markers():
+              edit(RUNTIME, """    static func emit(_ outcome: Outcome, human: HumanStream = .stdout) {
+                  for line in outcome.stdout {""",
+                   """    static func emit(_ outcome: Outcome, human: HumanStream = .stdout) {
+                  if outcome.stdout.isEmpty {
+                      let marker = Array("emit EMPTY\\n".utf8)
+                      marker.withUnsafeBufferPointer { _ = write(2, $0.baseAddress, $0.count) }
+                  }
+                  for line in outcome.stdout {""")
+              edit(CLI, """            var outcome = UpdateCommand.applied(plan, reopened: reopened)
+                      if common.json {
+                          outcome.stdout = [UpdateCommand.applyJSON(
+                              report, seamed: env.isSeamed, applied: true, plan: plan,
+                              error: nil).serialized()]
                       }
-                  }
-                  fflush(stdout)
-                  for line in outcome.stderr {
-                      FileHandle.standardError.write(Data((line + "\\n").utf8))
-                  }
-          """ + NOTIFY
-
-          # V2 — V0 with the loop's shape changed and nothing else. Does any change to
-          # this function move it?
-          V2 = DELIVER + """    static func emit(_ outcome: Outcome, human: HumanStream = .stdout) {
-                  for (index, line) in outcome.stdout.enumerated() {
-                      _ = index
-                      switch human {
-                      case .stdout: print(line)
-                      case .stderr: FileHandle.standardError.write(Data((line + "\\n").utf8))
+          """, """            var outcome = UpdateCommand.applied(plan, reopened: reopened)
+                      if common.json {
+                          outcome.stdout = [UpdateCommand.applyJSON(
+                              report, seamed: env.isSeamed, applied: true, plan: plan,
+                              error: nil).serialized()]
+                          let marker = Array("cli count=\\(outcome.stdout.count)\\n".utf8)
+                          marker.withUnsafeBufferPointer { _ = write(2, $0.baseAddress, $0.count) }
                       }
-                  }
-                  for line in outcome.stderr {
-                      FileHandle.standardError.write(Data((line + "\\n").utf8))
-                  }
-          """ + NOTIFY
+          """)
 
-          # V4 — V0 plus the smallest perturbation there is: one call that reads an
-          # unset variable and returns. This is what round two accidentally added.
-          V4 = DELIVER + """    private static func inert() {
-                  guard ProcessInfo.processInfo.environment["SIMMER_TRACE_EMIT"] != nil else { return }
-                  let bytes = Array("[inert]\\n".utf8)
-                  bytes.withUnsafeBufferPointer { _ = write(2, $0.baseAddress, $0.count) }
-              }
 
-              static func emit(_ outcome: Outcome, human: HumanStream = .stdout) {
-                  inert()
-                  for line in outcome.stdout {
-                      switch human {
-                      case .stdout: print(line)
-                      case .stderr: FileHandle.standardError.write(Data((line + "\\n").utf8))
-                      }
-                  }
-                  for line in outcome.stderr {
-                      FileHandle.standardError.write(Data((line + "\\n").utf8))
-                  }
-          """ + NOTIFY
-
-          VARIANTS = {"v0": V0, "v1": V1, "v2": V2, "v4": V4}
-
-          path = "Sources/SimmerCLI/Runtime.swift"
-          source = open(path).read()
-          head = source[:source.index(MARKER)]
-          open(path, "w").write(head + VARIANTS[sys.argv[1]])
+          {"nomap": nomap, "markers": markers}[sys.argv[1]]()
           PYEOF
           base=(env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$home" TZ=Europe/Berlin
             XDG_STATE_HOME="$home/state" SIMMER_FAKE_PMSET="$home/pmset"
             SIMMER_FAKE_BATTERY=80:0 SIMMER_FAKE_THERMAL=0 SIMMER_FAKE_LOCKDELAY=0
             SIMMER_FAKE_NOW=1800000000 SIMMER_NOTIFY=none
-            SIMMER_FAKE_LATEST=v9.9.9
             SIMMER_BIN="$home/Applications/Simmer.app/Contents/MacOS/simmer")
-          probe() {  # label, then the binary
-            label="$1"; simmer="$2"
+          run() {  # label, binary, fake latest, then simmer's own arguments
+            label="$1"; simmer="$2"; latest="$3"; shift 3
             : > "$home/apply.log"
-            "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" \
-              "$simmer" update --apply --json > "$home/out.txt" 2> "$home/err.txt"
+            "${base[@]}" SIMMER_FAKE_LATEST="$latest" SIMMER_FAKE_APPLY="$home/apply.log" \
+              "$simmer" "$@" > "$home/out.txt" 2> "$home/err.txt"
             code=$?
             echo "=== $label: exit=$code stdout=$(wc -c < "$home/out.txt")B stderr=$(wc -c < "$home/err.txt")B recorded=$(wc -l < "$home/apply.log") lines"
-            head -c 100 "$home/out.txt"; echo
+            cat "$home/err.txt"
+            head -c 90 "$home/out.txt"; echo
           }
-          variant() {  # label, variant key, scratch suffix, then build flags
+          probe() {  # label, binary — the two questions, of one binary
+            installed="$("$2" --version | sed 's/simmer //' | tr -d '[:space:]')"
+            run "$1 apply --json" "$2" v9.9.9 update --apply --json
+            run "$1 nothing-to-do HUMAN (installed=${installed:-?})" "$2" "v${installed}" update --apply
+          }
+          variant() {  # label, patch key or "-", scratch suffix, then build flags
             label="$1"; key="$2"; suffix="$3"; shift 3
-            cp "$orig" Sources/SimmerCLI/Runtime.swift
-            python3 "$gen" "$key"
+            git checkout a5a825c -- $files
+            [ "$key" = "-" ] || python3 "$patch" "$key"
             swift build -c release --scratch-path "$RUNNER_TEMP/b-$suffix" "$@" 2>&1 | tail -1
             probe "$label" "$RUNNER_TEMP/b-$suffix/release/simmer"
+            git checkout HEAD -- $files
           }
-          echo "### V3 the fix as committed — writeLine, no print in the path"
-          probe V3 "$bin"
-          cp Sources/SimmerCLI/Runtime.swift "$orig"
-          echo "### V0 a5a825c's emit, byte for byte — MUST be 0 B or the reading collapses"
-          variant V0 v0 v0
-          echo "### V0 at -Onone — is the optimiser required?"
-          variant V0-Onone v0 v0-onone -Xswiftc -Onone
-          echo "### V1 V0 plus one fflush(stdout) — is it only the flush?"
-          variant V1-fflush v1 v1
-          echo "### V2 V0 with the loop's shape changed and nothing else"
-          variant V2-enumerated v2 v2
-          echo "### V4 V0 plus one call that reads an unset variable and returns"
-          variant V4-inert v4 v4
-          cp "$orig" Sources/SimmerCLI/Runtime.swift
-          echo "V done — V0 0 B and V3 printing is the whole case for this fix"
+          echo "### W3 the fix as committed — applyOutcome built in SimmerCore"
+          probe W3 "$bin"
+          echo "### W0 a5a825c's three files, checked out — MUST be 0 B on apply --json"
+          variant W0 - w0
+          echo "### W1 applyJSON without the tuple-destructuring map, nothing else"
+          variant W1-nomap nomap w1
+          echo "### W2 the array asks itself out loud, on fd 2 — may perturb, and that is a finding"
+          variant W2-markers markers w2
+          echo "### W4 W0 at -Osize"
+          variant W4-Osize - w4 -Xswiftc -Osize
+          echo "### W5 W0 with cross-module optimisation off (a no-op if it was never on)"
+          variant W5-nocmo - w5 -Xswiftc -Xfrontend -Xswiftc -disable-cmo
+          git checkout HEAD -- $files
+          echo "W done — W0 at 0 B is the baseline; W3 printing is the case for the fix;"
+          echo "         W0's HUMAN nothing-to-do says how wide the defect is;"
+          echo "         W1 printing would mean a smaller fix exists, inside applyJSON."
           set -e
 
       - name: Contract suite against the built binary
