@@ -77,9 +77,20 @@ export interface SimmerUpdate {
    * optional as well as nullable.
    */
   release_notes_url?: string | null;
+  /**
+   * Whether the app's daily check may install what it finds. Off by default,
+   * and the first field to read when a Mac with a release waiting installed
+   * nothing. Optional as well as nullable for the same reason as above: a
+   * simmer too old to carry it does not.
+   */
+  auto_update?: boolean;
   /** `--apply` only: something was installed. */
   applied?: boolean;
-  /** `--apply` only: the commands it ran, in order. */
+  /**
+   * `--apply` only: the plan's steps, in order — what installing this copy
+   * consists of, not a log of what the process spawned. Bringing Simmer.app
+   * back afterwards is not one of them (CONTRACTS.md § `update --apply`).
+   */
   steps?: string[];
   /** `--apply` only: why it could not be done. */
   apply_error?: string | null;

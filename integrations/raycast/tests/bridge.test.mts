@@ -246,6 +246,11 @@ test("render raycast gives one line per state, and they differ", { skip }, async
  * `simmer update` is the one command whose non-zero exit is an answer rather
  * than a refusal, so `checkUpdate` must return the body instead of throwing it
  * away. Both halves are asserted here: the answer, and the not-knowing.
+ *
+ * The list is hand-kept and therefore worth reading against `UpdateCommand.json`
+ * whenever a field is added: `auto_update` landed in that object and in neither
+ * this list nor the `SimmerUpdate` interface it claims to mirror, so the test
+ * named "every field the views read" could not have noticed it going away.
  */
 test("update --json carries every field the views read", { skip }, async () => {
   const update = await checkUpdate(bin!, false, seam({ SIMMER_FAKE_LATEST: "v9.9.9" }));
@@ -265,6 +270,7 @@ test("update --json carries every field the views read", { skip }, async () => {
     "error",
     "seamed",
     "release_notes_url",
+    "auto_update",
   ] as const) {
     assert.ok(key in update, `update --json lost ${key}`);
   }
