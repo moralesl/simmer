@@ -560,7 +560,7 @@ import Testing
         #expect(plan.reopenBundle == "/Users/luis/Applications/Simmer.app")
     }
 
-    /// The two conditions, each refused by name. Uncommitted work and an
+    /// The conditions, each refused by name. Uncommitted work and an
     /// unfinished branch are exactly what "simmer does not rearrange somebody's
     /// desk" was about, and every refusal carries the command that works.
     @Test func aCheckoutThatIsNotReadyIsRefusedWithTheReason() {
@@ -569,6 +569,10 @@ import Testing
             (.init(branch: "feat/x", defaultBranch: "main", clean: true), "is on feat/x, not main"),
             (.init(branch: "", defaultBranch: "main", clean: true), "is not on a branch"),
             (.init(branch: "main", defaultBranch: "", clean: true), "which branch is default"),
+            (.init(branch: "main", defaultBranch: "main", clean: true, aheadOfUpstream: 2),
+             "has 2 commits that main has not pushed"),
+            (.init(branch: "main", defaultBranch: "main", clean: true, aheadOfUpstream: nil),
+             "tracks nothing"),
             (nil, "cannot read the checkout"),
         ]
         for (state, expected) in cases {
@@ -581,6 +585,78 @@ import Testing
             #expect(why.contains(expected), "\(why)")
             #expect(why.contains("cd \(mine) && git pull && make install"), "\(why)")
         }
+    }
+
+    /// The condition that clean-and-on-default does not cover, and the one
+    /// this refusal exists for in the first place.
+    ///
+    /// A developer's checkout with local commits is clean and on `main`, so
+    /// the first two conditions pass it — and the plan's own steps do not
+    /// catch it either: `git merge --ff-only @{u}` SUCCEEDS against an
+    /// upstream that is already an ancestor, because that is a no-op. So the
+    /// plan ran to the end, `make install` shipped the unreleased tree, and
+    /// `--apply` reported success naming a release the installed binary does
+    /// not report. Verified against real `git`, not assumed.
+    @Test func aCheckoutWithUnpushedCommitsIsRefusedAndTheCountIsNamed() {
+        let decision = UpdateCommand.applyPlan(
+            for: checkoutBundle(), exists: all,
+            checkoutState: { _ in
+                .init(branch: "main", defaultBranch: "main", clean: true, aheadOfUpstream: 1)
+            })
+        guard case .refused(let why) = decision else { #expect(Bool(false), "\(decision)"); return }
+        #expect(why.contains("has 1 commit that main has not pushed"),
+                "one commit is singular, and the count is what tells somebody which state they are in: \(why)")
+        #expect(why.contains("would install those rather than the release"), "\(why)")
+        #expect(why.contains("git -C \(mine) push"), "the refusal names the command that clears it: \(why)")
+    }
+
+    /// In step with the upstream is the shape the plan is for, and it still
+    /// runs — the new condition must not refuse the case it was built around.
+    @Test func aCheckoutInStepWithItsUpstreamStillRuns() {
+        let decision = UpdateCommand.applyPlan(
+            for: checkoutBundle(), exists: all,
+            checkoutState: { _ in
+                .init(branch: "main", defaultBranch: "main", clean: true, aheadOfUpstream: 0)
+            })
+        guard case .run(let plan) = decision else { #expect(Bool(false), "\(decision)"); return }
+        #expect(plan.steps.count == 3)
+    }
+
+    /// The seam's fourth field, including what a typo in it must do.
+    ///
+    /// A malformed count answering "in step" would be the one wrong answer
+    /// that lets the plan run — so it answers "cannot read this checkout",
+    /// which refuses. Same reason `SIMMER_FAKE_APPLY_FAIL` fails nothing on a
+    /// typo rather than failing something.
+    @Test(arguments: [
+        // (the seam value, the branch it names, how far ahead, readable at all)
+        ("main:main:clean", "main", 0, true),
+        ("main:main:clean:0", "main", 0, true),
+        ("main:main:clean:3", "main", 3, true),
+        ("main:main:clean:none", "main", nil, true),
+        ("main:main:clean:soon", "", nil, false),
+        ("main:main:clean:-1", "", nil, false),
+        ("main:main", "", nil, false),
+    ])
+    func theCheckoutSeamReadsAnOptionalAheadCount(
+        value: String, branch: String, ahead: Int?, readable: Bool
+    ) {
+        let state = FakeCheckoutProbe(value: value).state(of: "/anywhere")
+        guard readable else {
+            #expect(state == nil, "\(value) should not have been readable: \(String(describing: state))")
+            return
+        }
+        #expect(state?.branch == branch)
+        #expect(state?.aheadOfUpstream == ahead)
+    }
+
+    /// Three fields still mean exactly what they meant. The seam is a
+    /// contracted surface (CONTRACTS.md § The test seam), so the fourth field
+    /// is added, never required.
+    @Test func theOldThreeFieldSeamValueIsUnchanged() {
+        let state = FakeCheckoutProbe(value: "main:main:clean").state(of: "/anywhere")
+        #expect(state == UpdateCommand.CheckoutState(branch: "main", defaultBranch: "main",
+                                                     clean: true, aheadOfUpstream: 0))
     }
 
     /// The directory that installed this copy is gone. Refused, and the

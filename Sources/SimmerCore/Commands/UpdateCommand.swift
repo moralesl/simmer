@@ -269,11 +269,24 @@ public enum UpdateCommand {
         public let defaultBranch: String
         /// Nothing uncommitted — `git status --porcelain` says nothing.
         public let clean: Bool
+        /// Commits on this branch that the upstream does not have, or nil
+        /// when there is no upstream to compare against.
+        ///
+        /// Read before the fetch, so it is measured against the local idea of
+        /// the remote — which is the safe direction: a commit that IS pushed
+        /// but whose push this checkout has not seen counts as ahead and
+        /// refuses, and a local commit counts as ahead however stale the
+        /// remote ref is. The error is always towards refusing.
+        public let aheadOfUpstream: Int?
 
-        public init(branch: String, defaultBranch: String, clean: Bool) {
+        /// `aheadOfUpstream` defaults to 0 — in step with the upstream — so
+        /// that every existing caller keeps meaning what it meant.
+        public init(branch: String, defaultBranch: String, clean: Bool,
+                    aheadOfUpstream: Int? = 0) {
             self.branch = branch
             self.defaultBranch = defaultBranch
             self.clean = clean
+            self.aheadOfUpstream = aheadOfUpstream
         }
     }
 
@@ -384,8 +397,8 @@ public enum UpdateCommand {
     /// refusing there left a Mac installed from a checkout with a menu item
     /// that could only ever report a refusal.
     ///
-    /// So the two conditions are checked rather than assumed, and every
-    /// refusal names the one that failed plus the command that always works.
+    /// So the conditions are checked rather than assumed, and every refusal
+    /// names the one that failed plus the command that always works.
     /// Nothing here is a fetch of the remote's opinion: `origin/HEAD` is read
     /// locally, so a checkout that cannot answer refuses instead of waiting.
     private static func checkoutPlan(for report: Report, checkout: String,
@@ -410,6 +423,26 @@ public enum UpdateCommand {
             return .refused(
                 "the checkout at \(checkout) is on \(state.branch), not \(state.defaultBranch) "
                     + "— \(yourself)")
+        }
+        // Clean and on the default branch is not the same as "has nothing of
+        // its own". A checkout with local commits is the case this whole
+        // refusal exists for, and it was the one shape that got through:
+        // `git merge --ff-only @{u}` SUCCEEDS against an upstream that is
+        // already an ancestor — it is a no-op — so the plan ran to the end,
+        // `make install` shipped the developer's unreleased tree as the
+        // update, and the success line named a release the installed binary
+        // does not report.
+        guard let ahead = state.aheadOfUpstream else {
+            return .refused(
+                "the branch \(state.branch) in the checkout at \(checkout) tracks nothing, so "
+                    + "there is no upstream to update from — \(yourself)")
+        }
+        guard ahead == 0 else {
+            return .refused(
+                "the checkout at \(checkout) has \(ahead) commit\(ahead == 1 ? "" : "s") that "
+                    + "\(state.branch) has not pushed, and installing it would install those "
+                    + "rather than the release — push them first (git -C \(checkout) push), or "
+                    + "\(yourself)")
         }
         return .run(ApplyPlan(
             steps: [

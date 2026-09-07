@@ -198,8 +198,13 @@ import Testing
     /// install` leaves behind on a Mac installed from somebody's own checkout,
     /// which is how the maintainer's Mac is installed and the shape every
     /// sentence about "the installer's checkout" used to be wrong about.
+    /// `ahead` is the fourth field of `SIMMER_FAKE_CHECKOUT`: the number of
+    /// commits the branch has that its upstream does not, or `none` for a
+    /// branch tracking nothing. It defaults to being in step, so every caller
+    /// written before the field existed still describes what it described.
     private func checkoutBundleInstall(_ sim: Sim, clean: Bool = true,
                                        branch: String = "main",
+                                       ahead: String = "0",
                                        appVersion: String? = nil) -> [String: String] {
         let checkout = sim.root.appendingPathComponent("workspace/simmer")
         try? FileManager.default.createDirectory(
@@ -226,7 +231,7 @@ import Testing
 
         return [
             "SIMMER_BIN": contents.appendingPathComponent("MacOS/simmer").path,
-            "SIMMER_FAKE_CHECKOUT": "\(branch):main:\(clean ? "clean" : "dirty")",
+            "SIMMER_FAKE_CHECKOUT": "\(branch):main:\(clean ? "clean" : "dirty"):\(ahead)",
         ]
     }
 
@@ -270,7 +275,12 @@ import Testing
         FileManager.default.createFile(atPath: log.path, contents: nil)
 
         for (env0, expected) in [(checkoutBundleInstall(sim, clean: false), "uncommitted changes"),
-                                 (checkoutBundleInstall(sim, branch: "feat/x"), "not main")] {
+                                 (checkoutBundleInstall(sim, branch: "feat/x"), "not main"),
+                                 // Clean, on main, and holding work nobody else
+                                 // has — the shape both conditions above pass.
+                                 (checkoutBundleInstall(sim, ahead: "2"),
+                                  "has 2 commits that main has not pushed"),
+                                 (checkoutBundleInstall(sim, ahead: "none"), "tracks nothing")] {
             var env = env0
             env["SIMMER_FAKE_LATEST"] = "v9.9.9"
             env["SIMMER_FAKE_APPLY"] = log.path
