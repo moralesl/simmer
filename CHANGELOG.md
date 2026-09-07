@@ -52,14 +52,13 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ### Fixed
 
-- **`update --apply --json` answered with nothing at all from the binary users get.** In the RELEASE build it ran the whole plan, exited with the right code, and emitted zero bytes on stdout: `Runtime.emit` was reached with an *empty* `stdout` array, which a probe binary writing through a bare `write(2)` loop confirmed by emitting nothing for it.
-  Not one toolchain's quirk — macOS 14 with Swift 6.0.3 and macOS 15 with Swift 6.2.4 both lost it, while the same source at `-Onone`, the debug build every suite drove, and `update --json` — whose answer is built in `SimmerCore` and delivered unmodified — all printed.
-  To a caller, exit 0 with an empty stream is indistinguishable from a command that worked and had nothing to say, which is the one shape "honoured or refused, never accepted and dropped" exists to prevent.
-  The whole answer for an `--apply`, human and machine, is now assembled in one place in the core (`UpdateCommand.applyOutcome`) and delivered unmodified, instead of the CLI taking an Outcome and overwriting its `stdout` on the way past at three call sites.
-  That is also where it belonged: SimmerCore stays pure and the surfaces render over it, and four surfaces render an update.
+- **`update --apply` answered with nothing at all from the binary users get.** In the RELEASE build it ran the whole plan, exited with the right code, and emitted zero bytes — `--json` and the human form alike, and on the nothing-to-do and refused paths too, which run no steps at all.
+  What was lost is the answer itself: markers on either side of one call show the array holding **one line where the CLI built it** and **empty where `Runtime.emit` read it**, one call later. Not a buffering problem — a probe build writing through a bare `write(2)` loop emitted nothing for that same non-empty line.
+  Both supported macOS versions, and the debug build every suite drove printed it correctly, as did the same source at `-Onone`, and as did `update --json`, whose answer has always been built in `SimmerCore` and delivered unmodified.
+  To a caller, exit 0 with an empty stream is indistinguishable from a command that worked and had nothing to say — the one shape "honoured or refused, never accepted and dropped" exists to prevent.
+  So the whole answer for every ending of an `--apply`, human and machine, exit code included, is now assembled in one place in the core (`UpdateCommand.applyOutcome`) and delivered unmodified, instead of the CLI building or amending an Outcome inside its own switch at four call sites. That is also where it belonged: SimmerCore stays pure and the surfaces render over it, and four surfaces render an update.
   No field, no exit code and no seam changed.
-  What is *not* pinned is the compiler-level mechanism. Nine probes cleared every side effect in the path, and instrumenting the CLI's copy of the Outcome made the defect vanish — so the reading stops at "the optimised build loses that array" and the fix removes the construction rather than naming the cause.
-  `make test-release` is the lane in which any of this was visible at all: both OS legs were green for as long as the only binary the suites drove was the debug one.
+  **What is not pinned is why an optimised build drops it**, and this entry does not guess: `doctor --json` assembles its Outcome in the CLI in exactly the same shape and has never lost a byte, so "do not build an Outcome in the CLI" is not a rule this defect earns. The guarantee that replaces it is a lane, not a pattern — `make test-release` runs the acceptance suite against `.build/release/simmer` on both OS legs, and it failed on both the first time it ran.
 - **A new subcommand can no longer be unreachable.** The sugar layer's verb list and the parser's subcommand list are two hand-kept lists in two files, and a name missing from the first made a working command report "did not understand the duration".
   A structural test now derives both from the source and fails if they disagree.
 

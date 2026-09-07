@@ -309,15 +309,20 @@ public enum UpdateCommand {
     /// included — the counterpart to `jsonOutcome` for the check.
     ///
     /// It exists because the CLI used to assemble this itself: take an Outcome
-    /// from here, then overwrite `stdout` with `applyJSON(…).serialized()` at
-    /// three call sites. On macOS 14 with Swift 6.0.3 and macOS 15 with Swift
-    /// 6.2.4, the RELEASE build of `update --apply --json` then reached
-    /// `Runtime.emit` with an EMPTY `stdout` array — every step of the plan
-    /// recorded, the exit code correct, the array gone. `-Onone` prints, the
-    /// debug build prints, the check path — whose Outcome is built here and
-    /// delivered unmodified — prints, and instrumenting the CLI's copy made
-    /// the defect vanish, which is why the mechanism is not pinned and this
-    /// function does not try to name it.
+    /// from here, or an empty one, and set `stdout` on it inside `UpdateCLI`'s
+    /// own switch. In the RELEASE build that answer did not survive the trip:
+    /// markers either side of one call show one line where the CLI built it
+    /// and an EMPTY array where `Runtime.emit` read it, with every step of the
+    /// plan run and the exit code correct. Both supported macOS versions,
+    /// `--json` and human alike, including the endings that run no steps.
+    ///
+    /// `-Onone` prints, the debug build prints, and the check path — whose
+    /// Outcome is built here and delivered unmodified — always printed. Why an
+    /// optimised build drops it is NOT pinned: `doctor --json` builds its
+    /// Outcome in the CLI in the same shape and has never lost a byte, so this
+    /// is not a rule about where Outcomes may be built. It is one place fewer
+    /// for the answer to go missing, and `make test-release` is what would see
+    /// it if it went missing again.
     ///
     /// It is also where this belonged: SimmerCore stays pure and the CLI is a
     /// renderer over it (AGENTS.md, iron rules). Four surfaces render an

@@ -64,10 +64,14 @@ struct UpdateCLI: ParsableCommand {
 
         let exists = { FileManager.default.fileExists(atPath: $0) }
         let answer = { (result: SimmerCore.UpdateCommand.ApplyResult) -> Never in
-            // One shape, built once, delivered unmodified. Assembling it here
-            // instead — an Outcome from the core with `stdout` overwritten on
-            // the way past — is what the release binary lost: see
-            // UpdateCommand.applyOutcome.
+            // Do not re-inline this. Assembling the Outcome here instead —
+            // which is what these four endings used to do — is what the
+            // RELEASE binary silently lost: one line where the CLI built it,
+            // an empty array where `Runtime.emit` read it one call later,
+            // exit code intact, on both supported macOS versions.
+            // CHANGELOG.md, Unreleased → Fixed has the observation; why an
+            // optimised build drops it is not pinned, so `make test-release`
+            // is the lane that would catch it coming back.
             Runtime.deliver(UpdateCommand.applyOutcome(
                 result, report: report, seamed: env.isSeamed, json: common.json))
         }
