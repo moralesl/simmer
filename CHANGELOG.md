@@ -37,7 +37,12 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   It exists for the copy nobody opens at all: a colleague's Mac where the menu bar is the only surface and "there is an update" has been sitting in it for three weeks.
   An update quits `Simmer.app`, replaces the binary the guard's LaunchAgent points at and compiles for a minute or two, so while somebody is holding the lid open it waits — that is precisely the walked-away window a claim exists to protect — and `Aggregate.compute` is what answers "is a claim live", never the claims directory.
   A release skipped that way is retried at the **next daily check**, not when the claim ends: an update that starts compiling the moment an overnight job hands the lid back is an update nobody is expecting.
-  The whole decision is one pure function in the core with each refusal named (off · nothing newer · a claim is live · the plan was refused), so "nothing happened" is always attributable.
+  The whole decision is one pure function in the core with each refusal named (off · the check could not be made · nothing newer · already tried · a claim is live · the plan was refused), so "nothing happened" is always attributable.
+  They are answered permanent-reason-first: telling somebody to wait for a claim to end, when the release will not be attempted after it ends either, is telling them to wait for nothing.
+  **One unattended attempt per release.** A release that cannot be installed — a tag that will not fetch, a build that fails — would otherwise fail again at every daily check with a banner each time, which is the repetition "one banner per new version" exists to prevent, applied to the half of this feature that can go wrong.
+  So the tag is recorded before the attempt starts (`update-attempted`, § Machine surface) and this path stands down from that one release and nothing else: the next release is attempted, `simmer update --apply` and **Install it now** always attempt, and turning `--auto on` again clears the record.
+  Written before rather than after because the attempt quits `Simmer.app`; still seeing that release tomorrow is what proves it did not land.
+  **A check that could not be made is its own reason**, not a shade of "nothing newer": that reading made a Mac which had been failing to reach GitHub for three weeks indistinguishable from one that was up to date, and it was the one reason this path deliberately does not log.
   Only the background pass installs; clicking "Check for Updates…" still gets the report and the button.
   `--auto off | status` for the other two, a second checkbox in the setup window that disables itself when the daily check above it is off, and `auto_update` on `update --json`.
   When it does install, it **replaces** the availability banner rather than adding to it: the announcement is recorded so nothing repeats it tomorrow, and the update path's own two banners are what you see.
@@ -82,6 +87,12 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 - **New:** `update --auto <on|off|status> --json` is its own object — `action` (`auto_update_on`·`auto_update_off`·`checked`), `auto_update`, `background_check`, `seamed` — because it answers about a setting rather than about a release.
   It refuses `--apply` and `--cached` rather than dropping one of them, and a value other than `on`/`off`/`status` is refused in simmer's voice with the refusal object on stdout.
 - **New seam:** `SIMMER_FAKE_RAYCAST=<dir>` — where Raycast keeps locally built extensions, for the `raycast_extension` row.
+- **New state:** `$XDG_STATE_HOME/simmer/update-attempted` — the release the once-a-day check has already tried to install by itself, so it is not tried again unattended.
+  A third fact about the same tag and therefore a third file, beside `update-check` (what was found) and `update-announced` (what was said).
+  Not a machine surface; cleared when a person turns unattended installs on.
+- **`steps` on `update --apply --json` is documented as the plan's steps**, which is what it has always carried.
+  The law said "the commands it ran", and on an install where `Simmer.app` was running, four commands run and three are in the array — the reopen is composed from the app's heartbeat after the plan is built, which is why it has a phase of its own.
+  No field changed; the sentence describing one did.
 - **New state:** `$XDG_STATE_HOME/simmer/auto-update.on`, present when unattended installs are on.
   It spells the opposite direction to `update-check.off` on purpose: each file's absence has to be the safe default.
 

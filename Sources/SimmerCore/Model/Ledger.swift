@@ -359,6 +359,19 @@ public struct Ledger: Sendable {
     /// writer of the check had to carry the announcement forward, and
     /// `UpdateCommand.check` has no business knowing what has been announced.
     public var updateAnnouncedFile: URL { stateDir.appendingPathComponent("update-announced") }
+    /// The release the once-a-day check has already tried to install by
+    /// itself, `key=value`.
+    ///
+    /// A third fact about the same tag, and therefore a third file: what the
+    /// last check FOUND, what a person has been TOLD, and what this Mac has
+    /// TRIED. Written before the attempt starts, because the attempt replaces
+    /// this app and there is nothing left here afterwards to write it.
+    ///
+    /// Still seeing that release on the next daily check means the attempt did
+    /// not land, and one retry a day is one failure banner a day — the exact
+    /// repetition `update-announced` exists to prevent for the other half of
+    /// this feature.
+    public var updateAttemptedFile: URL { stateDir.appendingPathComponent("update-attempted") }
 
     public func enqueueNotification(_ request: NotificationRequest, now: Int) {
         let json = JSONValue.object([
@@ -486,13 +499,7 @@ public struct Ledger: Sendable {
     /// The release tag the person has already been told about, or empty when
     /// nothing has been announced yet.
     public func readAnnouncedUpdate() -> String {
-        guard let text = try? String(contentsOf: updateAnnouncedFile, encoding: .utf8)
-        else { return "" }
-        for line in text.split(separator: "\n") {
-            let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-            if parts.count == 2, parts[0] == "latest" { return String(parts[1]) }
-        }
-        return ""
+        readTag(from: updateAnnouncedFile)
     }
 
     public func writeAnnouncedUpdate(_ tag: String, now: Int) {
@@ -501,6 +508,42 @@ public struct Ledger: Sendable {
         announced_at=\(now)
 
         """, to: updateAnnouncedFile)
+    }
+
+    /// The release an unattended install has already been started for, or
+    /// empty when none has.
+    public func readAttemptedUpdate() -> String {
+        readTag(from: updateAttemptedFile)
+    }
+
+    public func writeAttemptedUpdate(_ tag: String, now: Int) {
+        _ = atomicWrite("""
+        latest=\(Claim.singleLine(tag, limit: 64))
+        attempted_at=\(now)
+
+        """, to: updateAttemptedFile)
+    }
+
+    /// Forget it, so the next daily check tries again.
+    ///
+    /// Called from `setAutoUpdate(enabled: true)` rather than from each of its
+    /// callers: a person turning unattended installs on is asking for an
+    /// attempt, and a switch that silently stays stood down from a failure
+    /// three weeks ago is not a switch. One place decides, because the CLI and
+    /// the setup window are two callers and this is one rule.
+    public func clearAttemptedUpdate() {
+        try? FileManager.default.removeItem(at: updateAttemptedFile)
+    }
+
+    /// `latest=` out of one of the two tag files. Both hold one fact about one
+    /// tag in the same shape, so they are read by the same three lines.
+    private func readTag(from file: URL) -> String {
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return "" }
+        for line in text.split(separator: "\n") {
+            let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            if parts.count == 2, parts[0] == "latest" { return String(parts[1]) }
+        }
+        return ""
     }
 
     /// Whether the app may check on its own. A person's answer, not a seam —
@@ -537,6 +580,10 @@ public struct Ledger: Sendable {
     public func setAutoUpdate(enabled: Bool) {
         if enabled {
             _ = atomicWrite("on\n", to: autoUpdateOnFile)
+            // Asking for it is asking for an attempt: a release this Mac
+            // stood down from weeks ago must not still be stood down from
+            // when somebody turns the switch on again.
+            clearAttemptedUpdate()
         } else {
             try? FileManager.default.removeItem(at: autoUpdateOnFile)
         }

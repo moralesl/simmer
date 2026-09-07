@@ -484,6 +484,31 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: marker))
     }
 
+    /// Turning it on forgets the release the daily check already tried, so
+    /// asking for unattended installs is asking for an attempt.
+    ///
+    /// The state file is where the contract says and it holds one tag; the
+    /// decision that reads it is `AutoUpdate.decide`, tested in the core where
+    /// nothing can be installed. This pins the file and the clearing, which
+    /// are the parts a person's command can reach.
+    @Test func askingAgainForgetsTheReleaseItAlreadyTried() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let attempted = sim.stateDir.appendingPathComponent("update-attempted")
+        try? FileManager.default.createDirectory(at: sim.stateDir,
+                                                 withIntermediateDirectories: true)
+        try? "latest=v9.9.9\nattempted_at=1800000000\n"
+            .write(to: attempted, atomically: true, encoding: .utf8)
+
+        // Off does not forget it: nothing reads it while off, and clearing it
+        // there would make the answer depend on which way the switch moved last.
+        sim.run(["update", "--auto", "off"])
+        #expect(FileManager.default.fileExists(atPath: attempted.path))
+
+        sim.run(["update", "--auto", "on"])
+        #expect(!FileManager.default.fileExists(atPath: attempted.path),
+                "asking for unattended installs did not clear the attempt it stood down from")
+    }
+
     /// `--auto status` answers from the marker file alone. The source is
     /// primed with something it is not allowed to look at — a setting is not a
     /// question about a release, and asking one on a train must work.
