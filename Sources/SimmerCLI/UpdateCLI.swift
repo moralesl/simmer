@@ -66,7 +66,7 @@ struct UpdateCLI: ParsableCommand {
         // `binPath` rather than the raw executable path, so the suite can
         // point provenance at a fixture — and it is seam-gated, so on a real
         // install it IS the running binary (SimmerEnvironment.binPath).
-        let install = Install.detect(executablePath: env.binPath)
+        let install = Install.detect(executablePath: env.binPath, home: env.homeDirectory)
         let ledger = Ledger(stateDir: env.stateDir)
         let report = UpdateCommand.check(
             now: env.now(),
@@ -98,7 +98,9 @@ struct UpdateCLI: ParsableCommand {
                 result, report: report, seamed: env.isSeamed, json: common.json))
         }
 
-        switch UpdateCommand.applyPlan(for: report, home: env.homeDirectory, exists: exists) {
+        let probe = env.makeCheckoutProbe()
+        switch UpdateCommand.applyPlan(for: report, exists: exists,
+                                       checkoutState: { probe.state(of: $0) }) {
         case .nothingToDo(let sentence):
             answer(.nothingToDo(sentence))
 

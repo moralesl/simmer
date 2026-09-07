@@ -36,6 +36,14 @@ final class AppState {
         seamActive = env["SIMMER_FAKE_PMSET"] != nil
     }
 
+    /// Whether the checkout a bundle was installed from is in a state simmer
+    /// may pull. Behind the same seam the CLI uses, so the menu's "Install
+    /// update" item and `simmer update --apply` cannot disagree about which
+    /// installs they can do.
+    private func checkoutState(_ path: String) -> UpdateCommand.CheckoutState? {
+        environment.makeCheckoutProbe().state(of: path)
+    }
+
     /// The menu bar is a human surface — that is the whole point of the owner.
     func context() -> Context {
         let ledger = Ledger(stateDir: environment.stateDir)
@@ -81,7 +89,8 @@ final class AppState {
 
     /// What the last check found. A file read; safe to call per menu open.
     func cachedUpdateReport() -> UpdateCommand.Report {
-        let install = Install.detect(executablePath: environment.binPath)
+        let install = Install.detect(executablePath: environment.binPath,
+                                     home: environment.homeDirectory)
         return UpdateCommand.check(
             now: environment.now(), installed: AppState.version, install: install,
             appVersion: install.bundleVersion(), ledger: context().ledger,
@@ -103,11 +112,17 @@ final class AppState {
         if !force {
             guard !environment.backgroundUpdateCheckDisabled,
                   ledger.backgroundUpdateChecksEnabled else { return }
-            if let record = ledger.readUpdateRecord(), record.isFresh(now: environment.now()) {
+            // `writtenBy:` and not just freshness: a record the previous
+            // version left behind is a day's silence on a Mac that has just
+            // been updated, and the first thing the new binary should do is
+            // ask the question again under its own version.
+            if let record = ledger.readUpdateRecord(writtenBy: AppState.version),
+               record.isFresh(now: environment.now()) {
                 return
             }
         }
-        let install = Install.detect(executablePath: environment.binPath)
+        let install = Install.detect(executablePath: environment.binPath,
+                                     home: environment.homeDirectory)
         let source = environment.makeReleaseSource()
         let now = environment.now()
         let version = AppState.version
@@ -186,8 +201,8 @@ final class AppState {
             report: report,
             aggregate: ctx.aggregate(),
             plan: UpdateCommand.applyPlan(
-                for: report, home: environment.homeDirectory,
-                exists: { FileManager.default.fileExists(atPath: $0) }),
+                for: report, exists: { FileManager.default.fileExists(atPath: $0) },
+                checkoutState: checkoutState),
             alreadyTried: ctx.ledger.readAttemptedUpdate())
         switch decision {
         case .apply:
@@ -224,8 +239,8 @@ final class AppState {
     /// Is there a plan for this install, or only a command to copy.
     func canApplyUpdate(_ report: UpdateCommand.Report) -> Bool {
         if case .run = UpdateCommand.applyPlan(
-            for: report, home: environment.homeDirectory,
-            exists: { FileManager.default.fileExists(atPath: $0) }) { return true }
+            for: report, exists: { FileManager.default.fileExists(atPath: $0) },
+            checkoutState: checkoutState) { return true }
         return false
     }
 

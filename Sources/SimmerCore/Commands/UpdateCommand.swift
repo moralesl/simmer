@@ -108,9 +108,16 @@ public enum UpdateCommand {
             // put "Update available: 9.9.9" in a person's menu until the next
             // day. The reverse is fine, and useful: a seamed reader may read
             // its own seamed record.
-            guard let record = ledger.readUpdateRecord(), !(record.seamed && !seamed) else {
+            // `writtenBy:` is the other half of the same rule, for the same
+            // reason: a record is an answer somebody's binary computed, and
+            // only the binary that computed it can repeat it as its own. A
+            // record written by the version this one replaced is discarded
+            // here, so the first `doctor` after an install says "not checked
+            // yet" rather than a verdict about a version that no longer runs.
+            let record = ledger.readUpdateRecord(writtenBy: installed)
+            guard let record, !(record.seamed && !seamed) else {
                 return Report(verdict: .unknown, installed: installed, latest: "",
-                              error: ledger.readUpdateRecord() == nil
+                              error: record == nil
                                   ? "not checked yet — run simmer update"
                                   : "the last check was seamed — run simmer update",
                               install: install, appVersion: appVersion,
@@ -134,7 +141,8 @@ public enum UpdateCommand {
         // menu would show "not checked yet" forever on a machine that has been
         // checking every day and failing.
         ledger.writeUpdateRecord(.init(checkedAt: now, latest: latest,
-                                       error: error, seamed: seamed))
+                                       error: error, seamed: seamed,
+                                       installed: installed))
         return report(now: now, installed: installed, install: install,
                       appVersion: appVersion, latest: latest, error: error,
                       checkedAt: now, fromCache: false,
@@ -184,9 +192,11 @@ public enum UpdateCommand {
     //   2. **It needs no root.** `make install` never touches sudo; the
     //      privileged rule is installed once, by a human, and an update does
     //      not renew it. So "simmer never gives itself root" is untouched.
-    //   3. **It refuses rather than guesses.** A developer's own checkout is
-    //      not machinery to be moved onto a tag, and an install this cannot
-    //      place is not one to run commands in.
+    //   3. **It refuses rather than guesses.** No checkout is moved onto a tag
+    //      except the installer's own, which exists for nothing else; a
+    //      checkout somebody works in is pulled only when it is clean and on
+    //      its default branch, and an install this cannot place is not one to
+    //      run commands in at all.
 
     /// Which part of the update a step is doing.
     ///
@@ -249,14 +259,28 @@ public enum UpdateCommand {
         case refused(String)
     }
 
-    /// Where `bootstrap.sh` puts the checkout it installs from. Machinery, not
-    /// a project anyone works in — which is exactly why moving it onto a tag is
-    /// fair game, and why a developer's own checkout is not.
-    public static let installerCheckout = ".local/share/simmer"
+    /// A checkout as it stands, so that deciding whether to touch it is a
+    /// decision about data. `CheckoutProbe` is the seam that fills it in.
+    public struct CheckoutState: Sendable, Equatable {
+        /// The branch checked out, or empty when the head is detached.
+        public let branch: String
+        /// What the remote calls its default branch, or empty when that
+        /// cannot be read locally.
+        public let defaultBranch: String
+        /// Nothing uncommitted — `git status --porcelain` says nothing.
+        public let clean: Bool
+
+        public init(branch: String, defaultBranch: String, clean: Bool) {
+            self.branch = branch
+            self.defaultBranch = defaultBranch
+            self.clean = clean
+        }
+    }
 
     public static func applyPlan(for report: Report,
-                                 home: String,
-                                 exists: (String) -> Bool) -> ApplyDecision {
+                                 exists: (String) -> Bool,
+                                 checkoutState: (String) -> CheckoutState? = { _ in nil })
+        -> ApplyDecision {
         switch report.verdict {
         case .current:
             return .nothingToDo("simmer \(report.installed) is already the newest release")
@@ -292,33 +316,122 @@ public enum UpdateCommand {
                 "this is your own checkout — update it yourself: \(report.install.updateCommand)")
 
         case .bundle, .unknown:
-            let checkout = URL(fileURLWithPath: home)
-                .appendingPathComponent(installerCheckout).path
-            guard exists(checkout + "/.git"), exists(checkout + "/Makefile") else {
+            switch report.install.source {
+            case .none:
                 return .refused(
-                    "no installer checkout at ~/\(installerCheckout), so there is nothing here to build from — run: \(report.install.updateCommand)")
+                    "no checkout on this Mac to build from — run: \(report.install.updateCommand)")
+
+            case .gone(let path):
+                // Named, rather than folded into "no checkout": the person
+                // moved or deleted the directory this copy was installed
+                // from, and knowing which one it was is what makes the
+                // sentence actionable.
+                return .refused(
+                    "the checkout this was installed from (\(path)) is not there any more — run: \(report.install.updateCommand)")
+
+            case .installer(let checkout):
+                guard buildable(checkout, exists: exists) else {
+                    return .refused(
+                        "the installer checkout at \(checkout) has no .git and Makefile to build "
+                            + "from — run: \(report.install.updateCommand)")
+                }
+                // The tag, not a branch: this checkout tracks releases, which
+                // is what `bootstrap.sh` left it on. `--tags --force` because
+                // a tag can legitimately have moved on the remote and a stale
+                // local one would silently install the wrong thing.
+                return .run(ApplyPlan(
+                    steps: [
+                        ApplyStep(executable: "/usr/bin/git",
+                                  arguments: ["-C", checkout, "fetch", "--tags", "--force", "--quiet"],
+                                  phase: .fetching),
+                        ApplyStep(executable: "/usr/bin/git",
+                                  arguments: ["-C", checkout, "checkout", "--quiet", report.latest],
+                                  phase: .switching),
+                        // NOTES=0: the epilogue tells a reader to do things
+                        // this path has already done or is about to do.
+                        ApplyStep(executable: "/usr/bin/make",
+                                  arguments: ["-C", checkout, "install", "NOTES=0"],
+                                  phase: .installing),
+                    ],
+                    target: report.latestDisplay,
+                    reopenBundle: report.install.bundle))
+
+            case .checkout(let checkout):
+                guard buildable(checkout, exists: exists) else {
+                    return .refused(
+                        "the checkout at \(checkout) has no .git and Makefile to build from "
+                            + "— run: \(report.install.updateCommand)")
+                }
+                return checkoutPlan(for: report, checkout: checkout,
+                                    state: checkoutState(checkout))
             }
-            // The tag, not a branch: this checkout tracks releases, which is
-            // what `bootstrap.sh` left it on. `--tags --force` because a tag
-            // can legitimately have moved on the remote and a stale local one
-            // would silently install the wrong thing.
-            return .run(ApplyPlan(
-                steps: [
-                    ApplyStep(executable: "/usr/bin/git",
-                              arguments: ["-C", checkout, "fetch", "--tags", "--force", "--quiet"],
-                              phase: .fetching),
-                    ApplyStep(executable: "/usr/bin/git",
-                              arguments: ["-C", checkout, "checkout", "--quiet", report.latest],
-                              phase: .switching),
-                    // NOTES=0: the epilogue tells a reader to do things this
-                    // path has already done or is about to do.
-                    ApplyStep(executable: "/usr/bin/make",
-                              arguments: ["-C", checkout, "install", "NOTES=0"],
-                              phase: .installing),
-                ],
-                target: report.latestDisplay,
-                reopenBundle: report.install.bundle))
         }
+    }
+
+    /// `git -C` and `make -C` are what a plan runs there, so these are exactly
+    /// the two things that have to be present.
+    private static func buildable(_ path: String, exists: (String) -> Bool) -> Bool {
+        exists(path + "/.git") && exists(path + "/Makefile")
+    }
+
+    /// A bundle built in somebody's own checkout, updated the way that person
+    /// would update it: pull the default branch and re-run `make install`.
+    ///
+    /// "A developer's own checkout is never moved onto a tag" was about local
+    /// commits and unfinished branches, not about every checkout — a clean
+    /// tree sitting on the branch the remote calls default is the one shape
+    /// where `git pull` is the same command the person would type, and
+    /// refusing there left a Mac installed from a checkout with a menu item
+    /// that could only ever report a refusal.
+    ///
+    /// So the two conditions are checked rather than assumed, and every
+    /// refusal names the one that failed plus the command that always works.
+    /// Nothing here is a fetch of the remote's opinion: `origin/HEAD` is read
+    /// locally, so a checkout that cannot answer refuses instead of waiting.
+    private static func checkoutPlan(for report: Report, checkout: String,
+                                     state: CheckoutState?) -> ApplyDecision {
+        let yourself = "update it yourself: \(report.install.updateCommand)"
+        guard let state else {
+            return .refused("cannot read the checkout at \(checkout) — \(yourself)")
+        }
+        guard state.clean else {
+            return .refused(
+                "the checkout at \(checkout) has uncommitted changes, and simmer does not "
+                    + "rearrange somebody's desk — \(yourself)")
+        }
+        guard !state.branch.isEmpty else {
+            return .refused("the checkout at \(checkout) is not on a branch — \(yourself)")
+        }
+        guard !state.defaultBranch.isEmpty else {
+            return .refused(
+                "cannot tell which branch is default in the checkout at \(checkout) — \(yourself)")
+        }
+        guard state.branch == state.defaultBranch else {
+            return .refused(
+                "the checkout at \(checkout) is on \(state.branch), not \(state.defaultBranch) "
+                    + "— \(yourself)")
+        }
+        return .run(ApplyPlan(
+            steps: [
+                ApplyStep(executable: "/usr/bin/git",
+                          arguments: ["-C", checkout, "fetch", "--quiet"],
+                          phase: .fetching),
+                // `git pull --ff-only`, spelled as its two halves so that a
+                // failure lands on the phase it belongs to: a merge that
+                // cannot fast-forward has installed nothing, and that is the
+                // sentence `switching` already says.
+                ApplyStep(executable: "/usr/bin/git",
+                          arguments: ["-C", checkout, "merge", "--ff-only", "--quiet", "@{u}"],
+                          phase: .switching),
+                ApplyStep(executable: "/usr/bin/make",
+                          arguments: ["-C", checkout, "install", "NOTES=0"],
+                          phase: .installing),
+            ],
+            // "or newer", because this plan installs what the branch holds
+            // rather than the tag: the release is what made it worth doing,
+            // and claiming the exact version would be a claim nobody checked.
+            target: "\(report.latestDisplay) or newer",
+            reopenBundle: report.install.bundle))
     }
 
     /// What the plan says it will do, before it does it.
@@ -526,6 +639,22 @@ public enum UpdateCommand {
 
     // MARK: what each surface shows
 
+    /// " (checked 3d ago)", or "" while the cached answer is still young.
+    ///
+    /// The one place the age is worded, so the menu footer, `doctor`'s row and
+    /// a launcher accessory cannot each decide differently. Empty inside the
+    /// day the app's check refreshes on: a note on every line teaches the
+    /// reader to ignore it, and the case worth marking is the Mac whose app
+    /// has not run — where "newest" is a sentence about the week before last.
+    ///
+    /// A record written by another version does not reach here at all: it is
+    /// discarded in `check`, and the verdict is `unknown`.
+    public static func cacheNote(_ report: Report) -> String {
+        guard report.fromCache, report.checkedAt > 0,
+              report.cacheAge >= Ledger.UpdateRecord.maxAge else { return "" }
+        return " (checked \(Durations.human(report.cacheAge)) ago)"
+    }
+
     /// The terminal answer. Exit 0 whenever the check completed — a newer
     /// version existing is not a failure, which is the same reading that keeps
     /// it out of `doctor`'s red rows.
@@ -586,7 +715,7 @@ public enum UpdateCommand {
             return "Simmer.app is \(report.appVersion ?? "?") · CLI is \(report.installed)"
         }
         guard report.verdict == .available else { return nil }
-        return "Update available: \(report.latestDisplay)"
+        return "Update available: \(report.latestDisplay)\(cacheNote(report))"
     }
 
     /// The banner for a check somebody asked for by hand.
@@ -660,13 +789,14 @@ public enum UpdateCommand {
     /// the only question anyone asks it, and the missing half is the half you
     /// cannot get at without a terminal.
     public static func footerLine(_ report: Report) -> String {
+        let age = cacheNote(report)
         switch report.verdict {
         case .current:
-            return "simmer \(report.installed) · newest"
+            return "simmer \(report.installed) · newest\(age)"
         case .available:
-            return "simmer \(report.installed) · newest is \(report.latestDisplay)"
+            return "simmer \(report.installed) · newest is \(report.latestDisplay)\(age)"
         case .ahead:
-            return "simmer \(report.installed) · ahead of \(report.latestDisplay)"
+            return "simmer \(report.installed) · ahead of \(report.latestDisplay)\(age)"
         case .unknown:
             // Deliberately not the error text: this line is four words wide in
             // a menu, and "not checked" is the actionable half of every reason
@@ -701,6 +831,13 @@ public enum UpdateCommand {
             // A caller that wants to know why nothing happened on a Mac with
             // a release waiting reads this before anything else.
             ("auto_update", .bool(report.autoUpdate)),
+            // The checkout behind this copy, and how it was placed. Two new
+            // fields rather than a fifth `provenance` value, because that one
+            // is a closed set every reader switches on exhaustively — see
+            // CONTRACTS.md § Machine-readable output.
+            ("install_source",
+             report.install.source.namedPath.map { JSONValue.string($0) } ?? .null),
+            ("install_source_kind", .string(report.install.source.name)),
         ])
     }
 

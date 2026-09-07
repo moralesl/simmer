@@ -84,6 +84,20 @@ export interface SimmerUpdate {
    * simmer too old to carry it does not.
    */
   auto_update?: boolean;
+  /**
+   * The checkout this copy was built in — `make install` stamps it into the
+   * bundle — or null when there is none to point at. Two fields rather than a
+   * fifth `provenance` value, because `provenance` is switched on
+   * exhaustively here and a new value would have been a compile error.
+   * Optional as well as nullable: a simmer too old to carry them does not.
+   */
+  install_source?: string | null;
+  /**
+   * Where that checkout stands: `installer` is the one `bootstrap.sh`
+   * maintains, `checkout` is somebody's working repository, `gone` was
+   * recorded and is not on the disk any more, `none` is nothing to point at.
+   */
+  install_source_kind?: "installer" | "checkout" | "gone" | "none";
   /** `--apply` only: something was installed. */
   applied?: boolean;
   /**

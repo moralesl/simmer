@@ -174,10 +174,32 @@ function describe(update: SimmerUpdate): string {
     case "homebrew":
       return "installed by Homebrew";
     case "bundle":
-      return "installed as Simmer.app";
+      return describeBundle(update);
     case "checkout":
       return "running from a source checkout";
     case "unknown":
       return "installed outside the usual places";
+  }
+}
+
+/**
+ * A bundle is the same bundle whichever checkout assembled it, so `make
+ * install` records which one did and simmer reports it back. Saying
+ * "installed as Simmer.app" to somebody whose copy comes from their own
+ * checkout is the mirror not mirroring the object: the CLI names the
+ * checkout, the update command runs `git pull` in it, and this row was still
+ * describing the one-paste installer.
+ *
+ * A simmer too old to carry the fields says nothing extra, which is what it
+ * said before.
+ */
+function describeBundle(update: SimmerUpdate): string {
+  switch (update.install_source_kind) {
+    case "checkout":
+      return `installed as Simmer.app from the checkout at ${update.install_source}`;
+    case "gone":
+      return `installed as Simmer.app from ${update.install_source}, which is no longer there`;
+    default:
+      return "installed as Simmer.app";
   }
 }

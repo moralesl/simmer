@@ -174,6 +174,18 @@ public struct SimmerEnvironment: Sendable {
         return GitHubReleaseSource()
     }
 
+    /// Whether somebody's own checkout is clean and on its default branch —
+    /// the read that decides whether `--apply` may pull and rebuild it.
+    ///
+    /// Seamed for the reason `makeReleaseSource` is: it spawns `git` in a
+    /// directory a fixture named, and a seamed process that has not been told
+    /// what to answer reads nothing at all.
+    public func makeCheckoutProbe() -> CheckoutProbe {
+        if let fake = env["SIMMER_FAKE_CHECKOUT"] { return FakeCheckoutProbe(value: fake) }
+        if isSeamed { return SeamedCheckoutProbe() }
+        return GitCheckoutProbe()
+    }
+
     /// Where a plan's steps are recorded instead of run.
     ///
     /// `simmer update --apply` spawns `git` and `make`, and the contract is

@@ -16,6 +16,12 @@
 	<string>APPL</string>
 	<key>SimmerStateHome</key>
 	<string>@STATE_HOME@</string>
+	<!-- The checkout `make install` ran in. The bundle is the same bundle
+	     whichever one assembled it, so this is the only place that knows —
+	     and without it every bundle was assumed to have come from the
+	     installer's checkout at ~/.local/share/simmer. -->
+	<key>SimmerInstallSource</key>
+	<string>@INSTALL_SOURCE@</string>
 	<key>CFBundleShortVersionString</key>
 	<string>@VERSION@</string>
 	<key>CFBundleVersion</key>

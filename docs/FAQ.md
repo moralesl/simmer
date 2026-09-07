@@ -27,15 +27,18 @@ Your state (`~/.local/state/simmer/`) is left alone; delete it if you want the l
 One tested machine carried a rule called `awake` from before the tool was renamed, and every simmer install adopted it silently instead of writing its own.
 
 **A release broke something — how do I go back?** One command, and which one depends on how this copy got here.
-`simmer update --json` prints it as `provenance`; `simmer update` says it in prose ("installed as Simmer.app", "running from the checkout at …").
+`simmer update --json` prints it as `provenance` and `install_source_kind`; `simmer update` says it in prose ("installed as Simmer.app", "installed as Simmer.app from the checkout at …", "running from the checkout at …").
 
-| provenance | going back to `v0.2.0` |
+| provenance · `install_source_kind` | going back to `v0.2.0` |
 |---|---|
-| `bundle` — the one-paste installer | `git -C ~/.local/share/simmer checkout v0.2.0 && make -C ~/.local/share/simmer install` |
-| `checkout` — your own repository | `git checkout v0.2.0 && make install`, in it |
+| `bundle` · `installer` — the one-paste installer | `git -C ~/.local/share/simmer checkout v0.2.0 && make -C ~/.local/share/simmer install` |
+| `bundle` · `checkout` — installed from your own repository | `git -C <install_source> checkout v0.2.0 && make -C <install_source> install` |
+| `checkout` — running out of your own repository | `git checkout v0.2.0 && make install`, in it |
 | `homebrew` | Homebrew has no way back to a version it has already replaced — see below |
 
-The bundle row is the same checkout `simmer update --apply` builds from, moved onto an older tag instead of a newer one, so it is the same recipe `bootstrap.sh` ran and it needs no password.
+`install_source` is the checkout `make install` ran in, recorded in the bundle at install time — so the second row needs no guessing about where your copy came from.
+The first two rows are the same checkout `simmer update --apply` builds from, moved onto an older tag instead of a newer one, so they are the same recipe that installed it and they need no password.
+Going back in your own repository leaves it on a detached head at the tag; `git switch -` puts it back when you are done.
 `make install` quits `Simmer.app`; open it again afterwards (`open -a Simmer`), because nothing else will — bringing the app back is `simmer update --apply`'s last step, and a rollback is not an `--apply`.
 The guard's LaunchAgent is rewritten to point at the older binary.
 

@@ -97,22 +97,45 @@ public enum RaycastExtension {
         case unknown(String)
     }
 
-    /// Which checkout this extension is supposed to match.
+    /// What this extension is supposed to match, or why nothing on this Mac
+    /// can say.
     ///
+    /// One value rather than a path plus a sentence, because the two would
+    /// have to agree: "there is no checkout" used to be phrased as a fact
+    /// about Homebrew on every Mac that reached it, including a bundle
+    /// installed from a checkout that was sitting right there.
+    public enum Comparison: Sendable, Equatable {
+        case against(String)
+        /// The half of `doctor`'s sentence after "the Raycast extension is
+        /// registered, but …".
+        case impossible(String)
+
+        public var checkoutPath: String? {
+            if case .against(let path) = self { return path }
+            return nil
+        }
+    }
+
     /// Derived from provenance for the same reason `updateCommand` is: the
     /// answer depends on how this copy got here, never on a preference. A
     /// Homebrew install has no checkout on disk at all — the formula builds in
     /// a prefix `brew` cleans up — so there is nothing to compare against, and
     /// that is an absence rather than a fault.
-    public static func checkout(for install: Install, home: String) -> String? {
+    public static func comparison(for install: Install) -> Comparison {
         switch install.kind {
-        case .checkout:
-            return install.repoRoot
-        case .bundle, .unknown:
-            return URL(fileURLWithPath: home)
-                .appendingPathComponent(UpdateCommand.installerCheckout).path
         case .homebrew:
-            return nil
+            return .impossible("a Homebrew install has no checkout to compare it against")
+        case .checkout, .bundle, .unknown:
+            switch install.source {
+            case .installer(let path), .checkout(let path):
+                return .against(path)
+            case .gone(let path):
+                return .impossible("the checkout it was installed from (\(path)) "
+                    + "is not there any more")
+            case .none:
+                return .impossible("there is no simmer checkout on this Mac "
+                    + "to compare it against")
+            }
         }
     }
 
@@ -127,7 +150,7 @@ public enum RaycastExtension {
     /// which is how "Raycast is not installed" and "the extension is not
     /// registered" are told apart from each other.
     public static func inspect(extensionsDir: String,
-                               checkout: String?,
+                               comparison: Comparison,
                                read: (String) -> Data?,
                                entries: (String) -> [String]?) -> Verdict {
         guard entries(extensionsDir) != nil else { return .absent }
@@ -144,9 +167,9 @@ public enum RaycastExtension {
             return .absent
         }
 
-        guard let checkout else {
-            return .unknown("the Raycast extension is registered, "
-                + "but a Homebrew install has no checkout to compare it against")
+        guard case .against(let checkout) = comparison else {
+            guard case .impossible(let why) = comparison else { return .absent }
+            return .unknown("the Raycast extension is registered, but \(why)")
         }
         let declaredPath = URL(fileURLWithPath: checkout)
             .appendingPathComponent(checkoutSubpath)
