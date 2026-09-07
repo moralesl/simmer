@@ -151,6 +151,7 @@ docs/ROADMAP.md       decided but not built. docs/FAQ.md — short answers.
 
 ```bash
 make test          # both Swift suites, hermetic: no sudo, no real power state
+make test-release  # the acceptance suite again, against the RELEASE binary
 make test-raycast  # the extension's lane — `make test` cannot see it
 make app           # assemble + ad-hoc sign Simmer.app (CLT only — never xcodebuild)
 make skill         # render the protocol above into ~/.claude/skills/simmer

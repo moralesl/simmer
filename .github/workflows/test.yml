@@ -61,6 +61,23 @@ jobs:
       - name: Unit + acceptance suites
         run: make test
 
+      # The same acceptance suite again, against the RELEASE binary the step
+      # above this one already built.
+      #
+      # `swift test` compiles and runs everything at -Onone, so until this step
+      # existed every suite in this repository checked a build no user runs.
+      # That is how `update --apply` came to answer with zero bytes and the
+      # right exit code from the release binary — on BOTH legs, macos-14 and
+      # macos-15, for as long as this file has had two of them. Only the
+      # Raycast contract suite, which drives the release binary, could see it,
+      # and only for the one command it happens to call.
+      #
+      # The suite honours SIMMER_BIN, so pointing it at `.build/release/simmer`
+      # is the whole gate. A machine surface is only guaranteed for a build
+      # something actually runs; see CHANGELOG.md, Unreleased → Fixed.
+      - name: Acceptance suite against the release binary
+        run: make test-release
+
       - name: Bundle assembles and signs ad-hoc
         run: make app
 
@@ -136,60 +153,6 @@ jobs:
 
       - name: Build simmer
         run: swift build -c release
-
-      # TEMPORARY (feat/update-check): `update --apply --json` comes back with
-      # empty stdout from the release binary on this runner, exit 0, all three
-      # steps recorded — the previous version of this step established that
-      # outside node. This version bisects it in one run and comes out again
-      # once the fix is in. Every probe prints exit and byte counts; none of
-      # them fails the leg.
-      - name: What does --apply actually emit here
-        run: |
-          bin="$GITHUB_WORKSPACE/.build/release/simmer"
-          home="$RUNNER_TEMP/apply-home"
-          mkdir -p "$home/.local/share/simmer/.git" "$home/state"
-          printf 'all:\n' > "$home/.local/share/simmer/Makefile"
-          set +e
-          # One environment for every probe. SIMMER_FAKE_APPLY and stdout
-          # handling vary per probe below.
-          base=(env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$home" TZ=Europe/Berlin
-            XDG_STATE_HOME="$home/state" SIMMER_FAKE_PMSET="$home/pmset"
-            SIMMER_FAKE_BATTERY=80:0 SIMMER_FAKE_THERMAL=0 SIMMER_FAKE_LOCKDELAY=0
-            SIMMER_FAKE_NOW=1800000000 SIMMER_NOTIFY=none
-            SIMMER_FAKE_LATEST=v9.9.9
-            SIMMER_BIN="$home/Applications/Simmer.app/Contents/MacOS/simmer")
-          probe() {  # name, then the command
-            name="$1"; shift
-            : > "$home/apply.log"
-            "$@" > "$home/out.txt" 2> "$home/err.txt"
-            code=$?
-            echo "=== $name: exit=$code stdout=$(wc -c < "$home/out.txt")B stderr=$(wc -c < "$home/err.txt")B recorded=$(wc -l < "$home/apply.log") lines"
-            head -c 400 "$home/out.txt"; echo; head -c 400 "$home/err.txt"
-          }
-          echo "### P1 baseline: --apply --json, record file exists (FileHandle branch)"
-          probe P1 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply --json
-          echo "### P2 same, human mode — is the PREAMBLE (printed before any step) there?"
-          probe P2 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply
-          echo "### P3 human mode on a pty (line-buffered: each print flushes at once)"
-          probe P3 script -q /dev/null "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply
-          echo "### P4 record file ABSENT: the else branch (String.write atomically), no FileHandle"
-          rm -f "$home/apply.log"
-          "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply --json > "$home/out.txt" 2> "$home/err.txt"
-          echo "=== P4: exit=$? stdout=$(wc -c < "$home/out.txt")B stderr=$(wc -c < "$home/err.txt")B recorded=$(wc -l < "$home/apply.log" 2>/dev/null) lines"
-          head -c 400 "$home/out.txt"; echo
-          echo "### P5 fds 3..9 pre-occupied, so the record handle lands on fd 10+"
-          probe P5 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply --json 3</dev/null 4</dev/null 5</dev/null 6</dev/null 7</dev/null 8</dev/null 9</dev/null
-          echo "### P6 plain check, same env (known to print)"
-          probe P6 "${base[@]}" "$bin" update --json
-          echo "### P7 nothing-to-do apply: installed == latest, no steps, no FileHandle"
-          probe P7 "${base[@]}" SIMMER_FAKE_LATEST=v0.2.0 SIMMER_FAKE_APPLY="$home/apply.log" "$bin" update --apply --json
-          echo "### P8 the DEBUG binary, same probe as P1"
-          swift build 2>&1 | tail -1
-          probe P8 "${base[@]}" SIMMER_FAKE_APPLY="$home/apply.log" "$GITHUB_WORKSPACE/.build/debug/simmer" update --apply --json
-          echo "### P9 the Swift acceptance suite driving the RELEASE binary"
-          SIMMER_BIN="$bin" swift test --filter 'Update' 2>&1 | grep -E "✘|✔|Test run|Suite .* (passed|failed)|Expectation failed|error" | head -60
-          echo "P9 done"
-          set -e
 
       - name: Contract suite against the built binary
         working-directory: integrations/raycast

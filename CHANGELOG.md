@@ -35,6 +35,9 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   Previously CI only asked whether the installer parsed.
 - **`SIMMER_NO_LAUNCH=1`** installs everything except opening the app, for a machine with no login session — CI, or an install over SSH.
   The notification permission is a click by design, and the installer now says so instead of implying the install is finished.
+- **The acceptance suite also runs against the release binary.** `swift test` compiles and runs everything at -Onone, so every lane here was answering its question about a build nobody installs — which is how `update --apply --json` came to behave differently in the binary users get than in the one the suites drive (see Fixed, below).
+  `make test-release` points the suite at `.build/release/simmer` through the `SIMMER_BIN` seam it already honours, and CI runs it on both OS legs.
+  A machine surface is only guaranteed for a build something actually exercises.
 - **`docs/RELEASING.md`** — what happens when a pull request merges (nothing: the notes go under `Unreleased` and the version does not move), how a release is cut, and what a version number promises.
 
 ### Machine surface
@@ -49,6 +52,13 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ### Fixed
 
+- **`update --apply` answered with nothing at all from the binary users get.** In the RELEASE build it ran the whole plan, exited with the right code, and emitted zero bytes — `--json` and the human form alike, and on the nothing-to-do and refused paths too, which run no steps at all.
+  What was lost is the answer itself: markers on either side of one call show the array holding **one line where the CLI built it** and **empty where `Runtime.emit` read it**, one call later. Not a buffering problem — a probe build writing through a bare `write(2)` loop emitted nothing for that same non-empty line.
+  Both supported macOS versions, and the debug build every suite drove printed it correctly, as did the same source at `-Onone`, and as did `update --json`, whose answer has always been built in `SimmerCore` and delivered unmodified.
+  To a caller, exit 0 with an empty stream is indistinguishable from a command that worked and had nothing to say — the one shape "honoured or refused, never accepted and dropped" exists to prevent.
+  So the whole answer for every ending of an `--apply`, human and machine, exit code included, is now assembled in one place in the core (`UpdateCommand.applyOutcome`) and delivered unmodified, instead of the CLI building or amending an Outcome inside its own switch at four call sites. That is also where it belonged: SimmerCore stays pure and the surfaces render over it, and four surfaces render an update.
+  No field, no exit code and no seam changed.
+  **What is not pinned is why an optimised build drops it**, and this entry does not guess: `doctor --json` assembles its Outcome in the CLI in exactly the same shape and has never lost a byte, so "do not build an Outcome in the CLI" is not a rule this defect earns. The guarantee that replaces it is a lane, not a pattern — `make test-release` runs the acceptance suite against `.build/release/simmer` on both OS legs, and it failed on both the first time it ran.
 - **A new subcommand can no longer be unreachable.** The sugar layer's verb list and the parser's subcommand list are two hand-kept lists in two files, and a name missing from the first made a working command report "did not understand the duration".
   A structural test now derives both from the source and fails if they disagree.
 

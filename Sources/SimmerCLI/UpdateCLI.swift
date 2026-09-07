@@ -63,26 +63,25 @@ struct UpdateCLI: ParsableCommand {
         }
 
         let exists = { FileManager.default.fileExists(atPath: $0) }
+        let answer = { (result: SimmerCore.UpdateCommand.ApplyResult) -> Never in
+            // Do not re-inline this. Assembling the Outcome here instead —
+            // which is what these four endings used to do — is what the
+            // RELEASE binary silently lost: one line where the CLI built it,
+            // an empty array where `Runtime.emit` read it one call later,
+            // exit code intact, on both supported macOS versions.
+            // CHANGELOG.md, Unreleased → Fixed has the observation; why an
+            // optimised build drops it is not pinned, so `make test-release`
+            // is the lane that would catch it coming back.
+            Runtime.deliver(UpdateCommand.applyOutcome(
+                result, report: report, seamed: env.isSeamed, json: common.json))
+        }
+
         switch UpdateCommand.applyPlan(for: report, home: env.homeDirectory, exists: exists) {
         case .nothingToDo(let sentence):
-            var outcome = Outcome()
-            outcome.stdout = common.json
-                ? [UpdateCommand.applyJSON(report, seamed: env.isSeamed, applied: false,
-                                           plan: nil, error: nil).serialized()]
-                : ["✅ \(sentence)"]
-            Runtime.deliver(outcome)
+            answer(.nothingToDo(sentence))
 
         case .refused(let why):
-            Runtime.deliver(common.json
-                ? {
-                    var outcome = Outcome()
-                    outcome.exit = 1
-                    outcome.stdout = [UpdateCommand.applyJSON(
-                        report, seamed: env.isSeamed, applied: false,
-                        plan: nil, error: why).serialized()]
-                    return outcome
-                }()
-                : Outcome.failure(why))
+            answer(.refused(why))
 
         case .run(let plan):
             // Whether to bring the app back afterwards is decided BEFORE the
@@ -98,16 +97,7 @@ struct UpdateCLI: ParsableCommand {
             for step in plan.steps {
                 let result = Runtime.execute(step, recordTo: env.applyRecordFile)
                 guard result.ok else {
-                    let failure = UpdateCommand.applyFailed(step: step, detail: result.detail)
-                    if common.json {
-                        var outcome = failure
-                        outcome.stdout = [UpdateCommand.applyJSON(
-                            report, seamed: env.isSeamed, applied: false, plan: plan,
-                            error: "\(step.described): \(result.detail)").serialized()]
-                        outcome.stderr = []
-                        Runtime.deliver(outcome)
-                    }
-                    Runtime.deliver(failure)
+                    answer(.failed(step: step, detail: result.detail, plan: plan))
                 }
             }
 
@@ -117,14 +107,7 @@ struct UpdateCLI: ParsableCommand {
                     .init(executable: "/usr/bin/open", arguments: [bundle]),
                     recordTo: env.applyRecordFile).ok
             }
-
-            var outcome = UpdateCommand.applied(plan, reopened: reopened)
-            if common.json {
-                outcome.stdout = [UpdateCommand.applyJSON(
-                    report, seamed: env.isSeamed, applied: true, plan: plan,
-                    error: nil).serialized()]
-            }
-            Runtime.deliver(outcome)
+            answer(.installed(plan: plan, reopened: reopened))
         }
     }
 }
