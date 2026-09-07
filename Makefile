@@ -213,8 +213,14 @@ app: build
 	# launched from the Dock inherits none of the shell's environment, so a
 	# shell exporting XDG_STATE_HOME put the app on one ledger and the CLI
 	# on another — the guard's bug, in the other half of the bundle.
+	# @INSTALL_SOURCE@: where this bundle was built. `simmer doctor` and
+	# `simmer update` both name a checkout to run `make install` in, and
+	# before this they named ~/.local/share/simmer whatever the truth was —
+	# so a Mac installed from a maintainer's own checkout was told to repair
+	# itself in a directory that does not exist there.
 	sed -e 's/@BUNDLE_ID@/$(BUNDLE_ID)/g' -e 's/@VERSION@/$(VERSION)/g' \
 	    -e 's|@STATE_HOME@|$(STATE_HOME)|g' \
+	    -e 's|@INSTALL_SOURCE@|$(CURDIR)|g' \
 	    app/Info.plist.template > $(STAGED_APP)/Contents/Info.plist
 	# The app executable is NOT named "Simmer": APFS is case-insensitive,
 	# so "Simmer" and the CLI "simmer" would silently be the same file.

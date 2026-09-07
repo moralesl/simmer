@@ -1098,12 +1098,12 @@ import Testing
 
     /// The live shape on the maintainer's Mac: the installer's checkout sat at
     /// a tag from before the extension existed. ℹ, never red.
-    @Test func anExtensionWithNoCheckoutToCompareAgainstIsInformational() {
+    @Test func aCheckoutWithoutTheExtensionIsInformational() {
         let sim = Sim(); defer { sim.tearDown() }
         var env = plant(sim, built: ["status"], declares: ["status"])
-        // Remove the checkout side and leave the registered extension.
+        // The checkout is there; the extension's directory in it is not.
         try? FileManager.default.removeItem(
-            at: sim.root.appendingPathComponent(".local/share/simmer"))
+            at: sim.root.appendingPathComponent(".local/share/simmer/integrations"))
         env["SIMMER_FAKE_LATEST"] = "v9.9.9"
 
         guard let found = row(sim, env: env) else {
@@ -1112,6 +1112,28 @@ import Testing
         }
         #expect(found["ok"] is NSNull)
         #expect((found["label"] as? String)?.contains("integrations/raycast") == true, "\(found)")
+    }
+
+    /// No checkout at all — and the row says that, rather than naming a
+    /// directory nobody has. This is the sentence a Mac installed from its
+    /// own checkout used to get while that checkout was sitting right there:
+    /// "~/.local/share/simmer has no integrations/raycast to compare it
+    /// against" was a fact about a path simmer had assumed, not read.
+    @Test func noCheckoutAtAllSaysSoRatherThanNamingAPathNobodyHas() {
+        let sim = Sim(); defer { sim.tearDown() }
+        var env = plant(sim, built: ["status"], declares: ["status"])
+        try? FileManager.default.removeItem(
+            at: sim.root.appendingPathComponent(".local/share/simmer"))
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+
+        guard let found = row(sim, env: env) else {
+            #expect(Bool(false), "no raycast_extension row")
+            return
+        }
+        let label = (found["label"] as? String) ?? ""
+        #expect(found["ok"] is NSNull)
+        #expect(label.contains("no simmer checkout on this Mac"), "\(label)")
+        #expect(!label.contains(".local/share/simmer"), "\(label)")
     }
 
     /// The fix has to register the extension, not merely build it: `ray build`

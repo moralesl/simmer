@@ -438,13 +438,25 @@ public struct Ledger: Sendable {
         /// than suppressed: the suite needs the cache path to be reachable,
         /// and an unseamed reader needs to know not to believe this one.
         public var seamed: Bool
+        /// The version of the binary that wrote this. Empty for a record
+        /// written before the field existed.
+        ///
+        /// `latest` is a fact about the repository; the *verdict* is a
+        /// comparison against whoever asked, and the two are cached in one
+        /// file. Two minutes after 0.3.0 was installed, `doctor` said "simmer
+        /// 0.3.0 is ahead of the newest release (0.2.0)" and the menu footer
+        /// said "newest" — both computed from an answer 0.2.0 had recorded
+        /// before the 0.3.0 tag existed. So the writer is recorded, and a
+        /// reader that is not the writer treats the record as absent.
+        public var installed: String
 
         public init(checkedAt: Int, latest: String, error: String,
-                    seamed: Bool = false) {
+                    seamed: Bool = false, installed: String = "") {
             self.checkedAt = checkedAt
             self.latest = latest
             self.error = error
             self.seamed = seamed
+            self.installed = installed
         }
 
         /// A day, matching the app's tick. Older than this is reported with
@@ -466,14 +478,24 @@ public struct Ledger: Sendable {
         latest=\(Claim.singleLine(record.latest, limit: 64))
         error=\(Claim.singleLine(record.error, limit: 200))
         seamed=\(record.seamed ? 1 : 0)
+        installed=\(Claim.singleLine(record.installed, limit: 64))
 
         """, to: updateCheckFile)
     }
 
-    public func readUpdateRecord() -> UpdateRecord? {
+    /// The last check, **only if this binary is the one that made it.**
+    ///
+    /// The version is an argument rather than something read here because
+    /// `Ledger` knows about files, not about who is running: `SimmerVersion`
+    /// is the CLI's and the app's answer, and a seamed suite drives both. A
+    /// record written by another version is nil — the same shape as no record
+    /// at all, so every caller already handles it: `doctor` says "not checked
+    /// yet", the menu footer says the same, and the app's daily check fires
+    /// instead of skipping on a freshness stamp it did not write.
+    public func readUpdateRecord(writtenBy version: String) -> UpdateRecord? {
         guard let text = try? String(contentsOf: updateCheckFile, encoding: .utf8) else { return nil }
         var checked = 0
-        var latest = "", error = ""
+        var latest = "", error = "", installed = ""
         var seamed = false
         for line in text.split(separator: "\n") {
             let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
@@ -484,12 +506,13 @@ public struct Ledger: Sendable {
             case "latest": latest = value
             case "error": error = value
             case "seamed": seamed = value == "1"
+            case "installed": installed = value
             default: break
             }
         }
-        guard checked > 0 else { return nil }
+        guard checked > 0, installed == version else { return nil }
         return UpdateRecord(checkedAt: checked, latest: latest,
-                            error: error, seamed: seamed)
+                            error: error, seamed: seamed, installed: installed)
     }
 
     /// The release tag the person has already been told about, or empty when

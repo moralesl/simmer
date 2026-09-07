@@ -21,7 +21,8 @@ import Testing
     /// exist for.
     private let bundle = Install.detect(
         executablePath: "/Applications/Simmer.app/Contents/MacOS/simmer",
-        exists: { _ in false })
+        home: "/Users/nobody",
+        exists: { $0.contains(Install.installerCheckout) })
 
     private func report(installed: String = "0.2.0", latest: String = "v0.3.0",
                         ledger: Ledger? = nil) -> UpdateCommand.Report {
@@ -46,8 +47,8 @@ import Testing
     private func plan(_ report: UpdateCommand.Report) -> UpdateCommand.ApplyDecision {
         // Everything under the installer checkout exists; nothing else does,
         // so this is the bundle path with something to build from.
-        UpdateCommand.applyPlan(for: report, home: "/Users/nobody",
-                                exists: { $0.contains(UpdateCommand.installerCheckout) })
+        UpdateCommand.applyPlan(for: report,
+                                exists: { $0.contains(Install.installerCheckout) })
     }
 
     private func idle() -> Aggregate {
@@ -279,6 +280,7 @@ import Testing
     /// unattended path must carry that refusal rather than re-deciding it.
     @Test func aRefusedPlanIsARefusalHereToo() {
         let checkout = Install.detect(executablePath: "/Users/dev/simmer/.build/debug/simmer",
+                                      home: "/Users/dev",
                                       exists: { $0.contains("/Users/dev/simmer/") })
         #expect(checkout.kind == .checkout)
         let report = UpdateCommand.check(
@@ -288,7 +290,7 @@ import Testing
 
         let decision = decide(
             enabled: true, report: report, aggregate: idle(),
-            plan: UpdateCommand.applyPlan(for: report, home: "/Users/dev",
+            plan: UpdateCommand.applyPlan(for: report,
                                           exists: { $0.contains("/Users/dev/simmer/") }))
         guard case .notNow(.planRefused, let why) = decision else {
             #expect(Bool(false), "\(decision)")

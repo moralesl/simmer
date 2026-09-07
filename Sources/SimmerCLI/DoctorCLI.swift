@@ -66,10 +66,12 @@ struct DoctorCLI: ParsableCommand {
     func run() throws {
         let env = Runtime.environment()
         let ctx = Runtime.context(ownerFlag: common.owner)
-        // Where bootstrap.sh puts the checkout. doctor is the installed binary
-        // talking about the running system, so it cannot assume a repo — but
-        // it can name the one path the installer always uses.
-        let installerHint = "~/.local/share/simmer"
+        // Which checkout, if any, can rebuild this copy — read from the
+        // bundle's own record of where `make install` ran, not assumed to be
+        // the installer's. A Mac installed from somebody's own checkout used
+        // to be told to repair itself in ~/.local/share/simmer, a directory
+        // that is not there.
+        let install = Install.detect(executablePath: env.binPath, home: env.homeDirectory)
         let seamed = env.env["SIMMER_FAKE_PMSET"] != nil
         var rows: [Row] = []
 
@@ -290,7 +292,10 @@ struct DoctorCLI: ParsableCommand {
         // have would be a line about nothing.
         if FileManager.default.fileExists(atPath: env.claudeHome.path) {
             let skill = env.skillDir.appendingPathComponent("SKILL.md")
-            let installerSkill = "make -C \(installerHint) skill"
+            // Nil where there is no checkout on this Mac: then the fix is to
+            // install simmer again, which is what `updateCommand` says.
+            let installerSkill = install.source.path.map { "make -C \($0) skill" }
+                ?? install.updateCommand
             if let text = try? String(contentsOf: skill, encoding: .utf8) {
                 switch Self.stampedVersion(in: text) {
                 case Runtime.version:
@@ -352,7 +357,6 @@ struct DoctorCLI: ParsableCommand {
         // Informational in every state, including "you are current": being out
         // of date is not a broken install, and a row that can go red for it
         // would teach the reader to skim the ones that mean something.
-        let install = Install.detect(executablePath: env.binPath)
         let update = UpdateCommand.check(
             now: ctx.now, installed: Runtime.version, install: install,
             appVersion: install.bundleVersion(), ledger: ctx.ledger,
@@ -391,10 +395,10 @@ struct DoctorCLI: ParsableCommand {
         // Informational in every state, like `agent_protocol`, and omitted
         // entirely where Raycast or the extension is not installed: an
         // uninstalled launcher is not a finding.
-        let raycastCheckout = RaycastExtension.checkout(for: install, home: env.homeDirectory)
+        let raycastComparison = RaycastExtension.comparison(for: install)
         switch RaycastExtension.inspect(
             extensionsDir: env.raycastExtensionsDir.path,
-            checkout: raycastCheckout,
+            comparison: raycastComparison,
             read: { FileManager.default.contents(atPath: $0) },
             entries: { try? FileManager.default.contentsOfDirectory(atPath: $0) }) {
         case .absent:
@@ -420,7 +424,8 @@ struct DoctorCLI: ParsableCommand {
                 label: "the Raycast extension is behind this checkout — \(what.joined(separator: ", ")).",
                 ok: nil,
                 detail: ["Raycast built it from an older copy; rebuild and re-register it:"]
-                    + RaycastExtension.fixLines(checkout: raycastCheckout ?? "?")))
+                    + RaycastExtension.fixLines(
+                        checkout: raycastComparison.checkoutPath ?? "?")))
         case .unknown(let why):
             rows.append(Row(id: "raycast_extension", label: why, ok: nil))
         }
@@ -494,8 +499,13 @@ struct DoctorCLI: ParsableCommand {
         print("")
 
         if failures > 0 {
-            print("Anything red above is fixed by re-running the installer:")
-            print("  make -C \(installerHint) install")
+            if let repair = install.repairCommand {
+                print("Anything red above is fixed by re-running the installer:")
+                print("  \(repair)")
+            } else {
+                print("Anything red above is fixed by installing simmer again:")
+                print("  \(install.updateCommand)")
+            }
             print("")
             // The sudo rule is the one thing simmer will not do for you: it
             // needs root, and simmer never escalates its own privileges. So

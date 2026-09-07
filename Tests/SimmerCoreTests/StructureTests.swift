@@ -254,6 +254,28 @@ import Testing
         #expect(body.contains("pgrep -qx simmer-app"))
     }
 
+    /// The bundle is the same bundle whichever checkout assembled it, so the
+    /// only way to know which one did is for `make install` to write it down.
+    /// Without it, `doctor` and `update` both named `~/.local/share/simmer`
+    /// whatever the truth was — a directory that is not on a Mac installed
+    /// from somebody's own checkout, so its repair command could not be run
+    /// and `update --apply` refused.
+    ///
+    /// Three lines have to agree, and none of them is type-checked.
+    @Test func theBundleRecordsWhichCheckoutInstalledIt() throws {
+        let plist = try Self.read("app/Info.plist.template")
+        #expect(plist.contains("SimmerInstallSource"))
+        #expect(plist.contains("@INSTALL_SOURCE@"))
+
+        let makefile = try Self.read("Makefile")
+        #expect(makefile.contains("@INSTALL_SOURCE@|$(CURDIR)"),
+                "the placeholder is in the template but nothing substitutes it")
+
+        let install = try Self.read("Sources/SimmerCore/Model/Install.swift")
+        #expect(install.contains("SimmerInstallSource"),
+                "the plist carries it and nothing reads it")
+    }
+
     @Test func theAppIsToldWhichLedgerToRead() throws {
         let plist = try Self.read("app/Info.plist.template")
         #expect(plist.contains("SimmerStateHome"))
