@@ -174,6 +174,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         case .copyCLI(let command):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(command, forType: .string)
+            // The menu is already closing, so the banner is the only place
+            // this can be said. What to say is `MenuModel.copied`'s decision.
+            Notifier.shared.post(MenuModel.copied(command).notifications)
         case .openSetup:
             SetupWindow.shared.show()
         case .checkForUpdates:

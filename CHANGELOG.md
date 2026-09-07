@@ -17,6 +17,8 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   A bundle install has the one-paste installer's checkout at `~/.local/share/simmer`, so the plan fetches the new tag there and runs `make install`; Homebrew gets `brew upgrade simmer`.
   It refuses in a developer's own checkout — that may hold local commits, an unfinished branch or a stash — and refuses when it cannot tell whether there is anything to install.
   `applied`, `steps` and `apply_error` on `--json`; exit 0 means nothing is left to do.
+- **A menu row that copies says so.** Handing a command to the clipboard was the one menu action with no visible consequence: the menu closed, the clipboard had changed, and nothing on screen said which — indistinguishable from a row that did nothing.
+  It now posts a banner naming the command. Raycast needed nothing: its own copy action shows a HUD when it fires.
 - **The release notes, before you install anything.** `simmer update` prints the release's own page under the install command, the menu bar's update group carries **Release notes…**, and Raycast's check gets an *Open Release Notes* action.
   simmer composes the URL from the tag and fetches nothing for it — its one outbound request is still the `HEAD` that names the newest release, and the browser does the reading.
 - **The same answer in four more places.** A conditional row in the menu bar carrying **Install it now** and the command to copy, plus a permanent "Check for Updates…" item; a footer that always says which version you are on and which is newest; an informational row in `doctor`; a row in the Raycast claims list and a "Simmer Check for Updates" command.

@@ -277,6 +277,27 @@ public enum MenuModel {
                              children: children)
     }
 
+    /// What a row that hands over its command has to say afterwards.
+    ///
+    /// A pasteboard write is the one menu action with no visible consequence:
+    /// the menu closes, the clipboard has changed, and nothing on screen says
+    /// so — which is indistinguishable from a row that did nothing. Every
+    /// other action in this menu answers, so this one does too.
+    ///
+    /// An `Outcome` rather than a bare `NotificationRequest` so it is the same
+    /// shape, tested the same way, as every other banner this core decides;
+    /// the app only renders it. Raycast needs none of this — its own
+    /// `Action.CopyToClipboard` shows a HUD when it fires.
+    public static func copied(_ command: String) -> Outcome {
+        var outcome = Outcome()
+        outcome.notifications = [NotificationRequest(
+            // The command in the body, not the title: what got copied is the
+            // fact worth checking, and a title long enough to hold `curl -fsSL
+            // https://…/bootstrap.sh | bash` is a title macOS truncates.
+            title: "Copied to clipboard", subtitle: "", body: command, sound: false)]
+        return outcome
+    }
+
     /// The agent-tool bridge in one feature: every menu action has a CLI
     /// spelling, and the menu hands it out instead of hiding it.
     static func copyAsCLI(_ aggregate: Aggregate) -> MenuItemModel {
