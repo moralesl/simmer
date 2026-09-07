@@ -192,7 +192,11 @@ jobs:
           # `--enable=all` adds only preference checks — brace style, [[ ]] over
           # [ ] — which would mean rewriting every line of a working installer
           # for no change in what it does.
-          shellcheck bootstrap.sh
+          #
+          # scripts/ too, since it exists: `release.sh` decides a version number
+          # CI writes into a pull request nobody re-derives by hand, which puts
+          # it in the same class of file as the installer.
+          shellcheck bootstrap.sh scripts/*.sh
 
   # The one-paste install, actually run.
   #

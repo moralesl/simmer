@@ -66,12 +66,20 @@ Where a rule can be a test instead of a sentence in a document, make it a test: 
 - One concern per PR, and say which contract row it touches, if any.
 - Note anything you did that is not the obvious approach, and why, at the point where you did it.
 - CI runs the Swift suites on macOS 14 and 15, assembles the bundle, lints the templates and the installer, and runs the extension's lane twice — once as pure units on Linux, once against the built binary on macOS.
+  A seventh leg, `release-check`, asks whether there is still somewhere for the next change's notes to land — and, on the release branch, whether the version number still matches what the rule says.
   All of it must be green.
 
 ## Releases
 
-You do not need to touch the version.
-It moves once, in a release commit, and `docs/RELEASING.md` is that procedure — including what happens when a pull request merges, which is: the notes go under `## Unreleased` and nothing else changes.
+You do not need to touch the version, and you should not.
+It moves once, in a release commit CI writes, and `docs/RELEASING.md` is that procedure.
+
+What your pull request owes a release is its notes, under `## Unreleased` in `CHANGELOG.md`.
+Where you put them decides the next version number: an entry under `### Machine surface` or `### The test seam` makes it a **minor**, anything else a **patch** — so a contract change filed under `### Added` is a minor that ships as a patch.
+Nothing reads your prose for hints; the heading is the declaration.
+
+Every push to `main` then keeps one pull request open titled `release: X.Y.Z`, carrying the version bump and the notes GitHub would publish.
+Merging it is the release.
 
 ## What is deliberately not wanted
 
