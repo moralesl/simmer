@@ -13,6 +13,13 @@ final class SetupWindow: NSObject {
     static let shared = SetupWindow()
     static var sudoersPath: String { SudoRule.installedPath() ?? SudoRule.intendedPath() }
 
+    /// Where "Learn more…" goes. Named here rather than inline because the
+    /// anchor is a heading in `docs/FAQ.md` and a renamed heading is a silent
+    /// scroll to the top of the page — `StructureTests` reads this line and
+    /// checks the heading is still there.
+    static let updateFAQURL = URL(string:
+        "https://github.com/moralesl/simmer/blob/main/docs/FAQ.md#the-update-check")!
+
     /// The exact two-line rule, shown in full — one source, shared with
     /// `simmer doctor` and the installer.
     static var sudoersRule: String { SudoRule.text(user: NSUserName()) }
@@ -108,6 +115,24 @@ final class SetupWindow: NSObject {
                  target: self, action: #selector(toggleAutoUpdate))
     }()
 
+    /// The one line the two captions above cannot hold, and the only way back
+    /// to it from a Mac with no terminal open: what the daily request carries,
+    /// why an unattended install waits for the last claim to end, and the one
+    /// command that goes back a version. It opens `docs/FAQ.md` on `main`
+    /// rather than shipping the text — a bundle is replaced by an update and
+    /// the FAQ is not, so the answer a person reads is the current one.
+    private lazy var learnMore: NSButton = {
+        let button = NSButton(title: "Learn more…", target: self, action: #selector(openUpdateFAQ))
+        button.isBordered = false
+        button.font = .systemFont(ofSize: 11)
+        button.attributedTitle = NSAttributedString(
+            string: "Learn more…",
+            attributes: [.foregroundColor: NSColor.linkColor,
+                         .font: NSFont.systemFont(ofSize: 11),
+                         .underlineStyle: NSUnderlineStyle.single.rawValue])
+        return button
+    }()
+
     private func build() {
         sudoRow.button.target = self
         sudoRow.button.action = #selector(setUpSudo)
@@ -154,21 +179,18 @@ final class SetupWindow: NSObject {
         hint.textColor = .tertiaryLabelColor
         hint.preferredMaxLayoutWidth = 460
 
+        // One line each, like the three rows above, and each is the promise
+        // that decides its checkbox: how little the check does, and that an
+        // install cannot land on a live claim. What the request actually
+        // carries, the minute or two the app is gone, and how to undo one are
+        // behind "Learn more…", which opens the FAQ.
         let updateCaption = NSTextField(wrappingLabelWithString:
-            "One request to github.com, asking which release is newest. It sends "
-            + "nothing about you or this Mac. Finding a newer one puts a row in the "
-            + "menu bar and posts one banner per version — installing it is the "
-            + "checkbox below, or a command you run. Turn the check off here, or set "
-            + "SIMMER_NO_UPDATE_CHECK=1.")
+            "Once a day, one request to github.com, with nothing about you in it.")
         updateCaption.font = .systemFont(ofSize: 11)
         updateCaption.textColor = .tertiaryLabelColor
         updateCaption.preferredMaxLayoutWidth = 460
         let autoCaption = NSTextField(wrappingLabelWithString:
-            "Off by default. An update quits Simmer.app, replaces the binary the guard "
-            + "runs, and takes a minute or two to compile — so it never starts while a "
-            + "claim is live, which is exactly the walked-away window simmer exists to "
-            + "protect. A release skipped for that reason is retried at the next daily "
-            + "check. Going back is one command: docs/FAQ.md.")
+            "Never while a claim is live; a skipped release arrives at tomorrow's check.")
         autoCaption.font = .systemFont(ofSize: 11)
         autoCaption.textColor = .tertiaryLabelColor
         autoCaption.preferredMaxLayoutWidth = 440
@@ -179,7 +201,7 @@ final class SetupWindow: NSObject {
         auto.spacing = 4
         auto.edgeInsets = NSEdgeInsets(top: 0, left: 18, bottom: 0, right: 0)
 
-        let updates = NSStackView(views: [updateCheckBox, updateCaption, auto])
+        let updates = NSStackView(views: [updateCheckBox, updateCaption, auto, learnMore])
         updates.orientation = .vertical
         updates.alignment = .leading
         updates.spacing = 4
@@ -342,6 +364,11 @@ final class SetupWindow: NSObject {
                                        forType: .string)
         sudoRow.set(.warn, "Command copied — paste it in Terminal, then reopen this window",
                     button: "Copy again")
+    }
+
+    /// `docs/FAQ.md` § The update check, on `main`.
+    @objc private func openUpdateFAQ() {
+        NSWorkspace.shared.open(Self.updateFAQURL)
     }
 
     @objc private func notifyAction() {

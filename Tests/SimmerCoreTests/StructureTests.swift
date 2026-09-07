@@ -105,6 +105,67 @@ import Testing
                 "sugar knows \(sugarOnly) with nothing behind it; the parser has \(parserOnly) that sugar swallows")
     }
 
+    /// The setup window's two update captions are one line each.
+    ///
+    /// They were paragraphs — eight sentences and an environment variable under
+    /// a checkbox, in a window whose other three rows are a title and one line
+    /// — and prose asking for brevity is prose. What a person needs in order to
+    /// tick the box stays on screen; the rest is one click away in the FAQ, and
+    /// the length is the part a gate can hold.
+    ///
+    /// 78 characters is what fits on one rendered line at 11pt in the 460pt
+    /// label, measured on the window itself rather than assumed.
+    @Test func theUpdateCaptionsAreOneLineEach() throws {
+        let source = try Self.read("Sources/SimmerApp/SetupWindow.swift")
+        for caption in ["updateCaption", "autoCaption"] {
+            guard let declaration = source
+                .components(separatedBy: "let \(caption) = NSTextField(wrappingLabelWithString:")
+                .dropFirst().first?
+                .components(separatedBy: ")").first else {
+                #expect(Bool(false), "\(caption) is not a wrapping label any more")
+                continue
+            }
+            let literals = Self.quoted(in: declaration)
+            #expect(literals.count == 1,
+                    "\(caption) is \(literals.count) concatenated literals — one line is one literal")
+            let text = literals.joined()
+            #expect(text.count <= 78,
+                    "\(caption) is \(text.count) characters and wraps onto a second line: \(text)")
+        }
+    }
+
+    /// "Learn more…" points at a heading that exists.
+    ///
+    /// The captions above are short because the detail moved into
+    /// `docs/FAQ.md`, and the only way back to it from a Mac with no terminal
+    /// open is that link. A renamed heading does not break it loudly: GitHub
+    /// serves the page and silently ignores an anchor it cannot resolve, so the
+    /// person who clicked lands at the top of the FAQ and reads about
+    /// `caffeinate` instead. Only a gate notices.
+    @Test func theLearnMoreLinkLandsOnAHeadingTheFAQStillHas() throws {
+        let source = try Self.read("Sources/SimmerApp/SetupWindow.swift")
+        guard let url = Self.quoted(in: source.components(separatedBy: "static let updateFAQURL")
+            .dropFirst().first ?? "").first,
+              let anchor = url.components(separatedBy: "#").dropFirst().first, !anchor.isEmpty else {
+            #expect(Bool(false), "SetupWindow.updateFAQURL is not a literal URL with an anchor")
+            return
+        }
+        #expect(url.contains("docs/FAQ.md"), "the link left the FAQ: \(url)")
+
+        // GitHub's rule for the anchor it generates from a heading: lowercased,
+        // punctuation dropped, spaces to hyphens.
+        let headings = try Self.read("docs/FAQ.md")
+            .components(separatedBy: "\n")
+            .filter { $0.hasPrefix("#") }
+            .map { heading -> String in
+                let words = heading.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces).lowercased()
+                return String(words.map { $0 == " " ? "-" : $0 }
+                    .filter { $0.isLetter || $0.isNumber || $0 == "-" })
+            }
+        #expect(headings.contains(anchor),
+                "docs/FAQ.md has no heading whose anchor is #\(anchor) — the link scrolls nowhere. It has: \(headings)")
+    }
+
     /// Every double-quoted string in a fragment of Swift source.
     static func quoted(in fragment: String) -> [String] {
         var found: [String] = []
