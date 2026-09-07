@@ -27,6 +27,31 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   Its file checks *are* `scripts/release.sh check`, so a laptop and a runner cannot answer differently, and its epilogue points at pushing `main` rather than at tagging by hand.
   Tagging by hand still works and still publishes.
 
+### Fixed
+
+- **A verdict cached by the version you replaced is no longer repeated as this one's.**
+  Two minutes after installing 0.3.0, `doctor` reported "simmer 0.3.0 is ahead of the newest release (0.2.0)" and the menu footer said "newest": 0.2.0 had recorded that answer the day before the 0.3.0 tag existed, and the new binary read the file as a fact about now.
+  The record carries the version that wrote it, and a reader that is not that version treats it as absent — so the first `doctor`, menu tick or `--cached` read after an install says "not checked yet", and `Simmer.app`'s daily check fires instead of skipping on a freshness stamp it did not write.
+  A cached answer older than a day now says how old it is, on the footer, the `doctor` row and the launcher's accessory.
+- **`make install` records which checkout it ran in, and every sentence about "the installer's checkout" follows it.**
+  The bundle is the same bundle whichever checkout assembled it, so simmer assumed `~/.local/share/simmer` — the path `bootstrap.sh` uses — whatever the truth was.
+  On a Mac installed with `make install` from its own checkout that produced a `doctor` footer telling the reader to run `make -C ~/.local/share/simmer install` in a directory that is not there, a Raycast row claiming there was no checkout to compare the extension against while the checkout sat one directory away, and an `update --apply` that refused for the same reason.
+  `$(CURDIR)` is now stamped into the bundle's `Info.plist` (`SimmerInstallSource`), and the update command, the repair command, `doctor`'s rows and the Raycast comparison are all derived from it.
+  A bundle installed by an older simmer carries no stamp and is placed exactly as it was before: the installer's checkout, if that is on the Mac.
+- **`update --apply` works on a Mac installed from a checkout.**
+  It pulls that checkout and re-runs `make install` — the two commands the same copy already prints — and only when the tree is clean and on the branch the remote calls default.
+  Anything else refuses by name: uncommitted changes, another branch, a detached head, a remote whose default branch cannot be read locally, or a recorded checkout that has been moved or deleted.
+  "A developer's own checkout is never moved onto a tag" still holds; it was about local commits and unfinished branches, and no checkout but the installer's is moved onto a tag.
+
+### Machine surface
+
+- `update --json` gains **`install_source`** (the checkout this copy was built in, or `null`) and **`install_source_kind`** (`installer`·`checkout`·`gone`·`none`).
+  Appended, like every field after the first release.
+  **`provenance` keeps its four values** — `homebrew`·`bundle`·`checkout`·`unknown` — because it is a closed set that every reader switches on exhaustively, this repository's own Raycast extension included; a fifth value would have broken each of them.
+- **`SIMMER_FAKE_CHECKOUT`** joins the test seam: `<branch>:<default branch>:clean|dirty`, the read that decides whether `--apply` may pull a working checkout.
+  A seamed process without it reads nothing, exactly as one without `SIMMER_FAKE_LATEST` does.
+- The `update-check` state file gains an `installed=` line. It is not a machine surface — `simmer update --json` is how anything else asks — and a file written by an older simmer is read as absent rather than misread.
+
 ## 0.3.0 — 2026-09-07
 
 ### Added
