@@ -517,6 +517,25 @@ import Testing
                 "the environment suppresses the check, not the person's answer")
     }
 
+    /// The other half of the same trap, and the one a person actually reaches:
+    /// the check turned off by hand, in the setup window, rather than by an
+    /// environment variable. `update-check.off` is written only by the app —
+    /// there is no CLI surface for it — so this plants the state the app
+    /// produces, the way the legacy-claim fixture does.
+    @Test func theCheckboxTurnedOffStrandsItToo() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["update", "--auto", "on"])
+        try? FileManager.default.createDirectory(at: sim.stateDir,
+                                                 withIntermediateDirectories: true)
+        try? "off\n".write(to: sim.stateDir.appendingPathComponent("update-check.off"),
+                           atomically: true, encoding: .utf8)
+
+        let result = sim.run(["update", "--auto", "status", "--json"])
+        #expect(object(result.out)["background_check"] as? Bool == false)
+        #expect(object(result.out)["auto_update"] as? Bool == true,
+                "the person's answer survives the check being turned off")
+    }
+
     /// The human sentence admits it when the switch cannot fire. A setting
     /// that silently does nothing is the promise this tool does not make.
     @Test func theHumanOutputAdmitsAStrandedSwitch() {
