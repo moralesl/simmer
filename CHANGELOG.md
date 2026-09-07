@@ -5,6 +5,27 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ## Unreleased
 
+### Releasing
+
+- **The release is a pull request that is always open, and merging it is the release.**
+  0.3.0 was cut by hand: six steps from a laptop shell, each one remembered.
+  Now every push to `main` leaves exactly one pull request current — title `release: X.Y.Z`, branch `release/next`, one commit holding the `CHANGELOG.md` rename and the `SimmerVersion.string` bump, and the notes GitHub would publish as its body.
+  Reading it is the review; merging it lands the release commit, and a job on `main` sees a version no tag names, tags it, and hands over to the publish path.
+  So a release can be taken from a phone, and the decision stays exactly where it was: a person, in front of something they can read first.
+  Nothing about what a release IS moves — `release.yml` is called rather than copied, so every check that stood before a tag still stands before it, on the same commit, in the same order.
+- **The version number is read out of the CHANGELOG rather than remembered.**
+  `scripts/release.sh` is `docs/RELEASING.md` § What a version number means, as code: an entry under `### Machine surface` or `### The test seam` in `## Unreleased` makes the next release a **minor**, an empty section means there is nothing to release, and anything else is a **patch**.
+  A minor is *declared* by writing under one of those headings, never guessed from prose — "adds a `--json` field" and "adds a menu row" are the same sentence to a machine.
+  A **major** is not inferred at all: removing a field, renaming one and changing one's type read exactly like adding one, so it takes the `release: major` label on the release pull request.
+  A table test drives the rule from `swift test`, so it rides every CI leg.
+- **`release-check` is a check on the pull request**, and it is what makes the label safe.
+  CI computes the number when it writes the branch; a label added afterwards changes the answer and nothing recomputes until the next push to `main`.
+  The check re-derives it from `main` — label included — and goes red on the mismatch, so a major cannot be published as a patch.
+  On every other pull request it asks one question: is there still somewhere for the next change's notes to land.
+- **`make release-check` stays, for a laptop, and now runs the same assertions CI does.**
+  Its file checks *are* `scripts/release.sh check`, so a laptop and a runner cannot answer differently, and its epilogue points at pushing `main` rather than at tagging by hand.
+  Tagging by hand still works and still publishes.
+
 ## 0.3.0 — 2026-09-07
 
 ### Added
