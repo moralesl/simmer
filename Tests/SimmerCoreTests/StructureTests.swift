@@ -512,4 +512,35 @@ import Testing
         #expect(cli.contains("pmset -a disablesleep 0"))
         #expect(cli.contains("simmer down --all"))
     }
+    /// The one renderer writes to a descriptor; it never prints.
+    ///
+    /// `--json` and the exit codes are API (AGENTS.md, iron rules), and on
+    /// macOS 15 with Swift 6.2.4 the RELEASE build of `update --apply --json`
+    /// recorded all three plan steps, exited 0, and produced zero bytes on
+    /// stdout — the whole object lost somewhere between `print` and `exit`,
+    /// while the debug build of the same source printed it. Nine probes
+    /// cleared every side effect in that path, and adding instrumentation to
+    /// `emit` made the defect vanish, so what the optimiser did there is not
+    /// pinned and does not need to be: `Runtime.writeLine` is the shortest
+    /// path between a String and its descriptor, and a surface that is
+    /// contract may not depend on a stdio buffer surviving `exit`.
+    ///
+    /// One `print` put back into `emit` restores the defect silently, in
+    /// release only, on an OS the maintainer's Mac is not — which is exactly
+    /// the shape of rule that has to be an assertion rather than a sentence.
+    /// Human prose printed elsewhere is free to use `print`; this is about the
+    /// funnel every contracted line goes through.
+    @Test func theOneRendererWritesRatherThanPrints() throws {
+        let runtime = try Self.read("Sources/SimmerCLI/Runtime.swift")
+        guard let body = runtime.components(separatedBy: "static func emit(")
+            .dropFirst().first?.components(separatedBy: "\n    }\n").first else {
+            #expect(Bool(false), "Runtime.emit is not there under that name any more")
+            return
+        }
+        #expect(!body.contains("print("),
+                "Runtime.emit prints again — every contracted line goes through writeLine")
+        #expect(body.contains("writeLine("), "Runtime.emit no longer writes its lines")
+        #expect(runtime.contains("write(descriptor,"),
+                "Runtime.writeLine no longer writes to a descriptor")
+    }
 }
