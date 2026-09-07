@@ -9,6 +9,7 @@
 #
 #   next-version   what the next version is, and why — from CHANGELOG.md alone
 #   bump-label     what a pull request's labels declare the bump to be
+#   declared-bump  what the `## Unreleased` section itself declares
 #   write          the two files a release commit changes, changed
 #   check          everything that must be true of a release before it is one
 #
@@ -24,6 +25,7 @@ usage() {
 usage:
   release.sh next-version [--bump major|minor|patch] [--changelog F] [--version-file F]
   release.sh bump-label            # pull request label names on stdin
+  release.sh declared-bump [--changelog F]
   release.sh write VERSION [--date YYYY-MM-DD] [--changelog F] [--version-file F]
   release.sh check [--expect-version X.Y.Z] [--released "0.1.0 0.2.0"]
                    [--changelog F] [--version-file F]
@@ -84,6 +86,27 @@ blank() { [ -z "$(printf '%s' "$1" | tr -d '[:space:]')" ]; }
 # as a patch anyway, and I know what that costs". A rule with no override is a
 # rule that gets worked around outside the mechanism, where nothing records who
 # decided or what the rule had said.
+#
+# There are two places to say it, and they are for two different moments:
+#
+#   `<!-- release: patch -->` under `## Unreleased`   — with the notes, in the
+#       pull request that makes the change, reviewed by whoever reviews it.
+#       This is the ordinary one. The release pull request then OPENS at the
+#       right number, instead of opening wrong and being corrected, which is a
+#       poor first thing for a mechanism to do in front of somebody.
+#
+#   `release: patch` as a label on the release pull request  — afterwards, when
+#       the number is already written and somebody disagrees with it.
+#
+# The label wins, because it is the later decision and the one made looking at
+# the release itself. Both are the same three words, deliberately: one
+# vocabulary, and a person who has seen either has seen both.
+#
+# The declaration is CONSUMED when the section is renamed. It is an instruction
+# about one release, so surviving into the published notes would be noise, and
+# surviving into the next `## Unreleased` would be a decision nobody took
+# silently repeating itself.
+DECLARATION_PATTERN='^[[:space:]]*<!--[[:space:]]*release:[[:space:]]*([A-Za-z]+)[[:space:]]*-->[[:space:]]*$'
 MACHINE_SURFACE_HEADINGS="Machine surface|The test seam"
 
 bump_for_unreleased() {
@@ -113,6 +136,47 @@ apply_bump() {
   esac
 }
 
+# What the `## Unreleased` section declares about its own release, if
+# anything. Empty when it says nothing.
+#
+# `<!-- release: patch -->` rather than a visible line, for three reasons: it
+# is an instruction to CI and not a note to whoever reads the release; a
+# visible "released as a patch" under a heading called Unreleased is a claim
+# about something that has not happened; and a pull request's diff of a `.md`
+# file is raw markdown, so it is perfectly visible exactly where it is
+# reviewed. The three words match the label's spelling because they are the
+# same declaration in two places.
+declared_bump() {
+  local body kinds count
+  body="$(section_body Unreleased)"
+  kinds="$(printf '%s\n' "$body" | sed -n -E "s/$DECLARATION_PATTERN/\1/p")"
+  [ -n "$kinds" ] || return 0
+
+  count="$(printf '%s\n' "$kinds" | grep -c .)"
+  # Two declarations is not a bump to choose between, for the same reason two
+  # labels is not.
+  [ "$count" -eq 1 ] ||
+    die "## Unreleased declares more than one bump ($(printf '%s' "$kinds" | tr '\n' ' ')). Leave exactly one."
+
+  case "$kinds" in
+    major|minor|patch) printf '%s\n' "$kinds" ;;
+    # A misspelling must not be ignored. Ignoring it means the release goes out
+    # at whatever the rule said while somebody believes they declared
+    # otherwise, which is the failure this whole mechanism exists to prevent.
+    *) die "## Unreleased declares '<!-- release: $kinds -->', and a bump is major, minor or patch" ;;
+  esac
+}
+
+cmd_declared_bump() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --changelog) CHANGELOG="$2"; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  declared_bump
+}
+
 cmd_next_version() {
   local declared=""
   while [ $# -gt 0 ]; do
@@ -128,23 +192,34 @@ cmd_next_version() {
     *) die "--bump takes major, minor or patch, not '$declared'" ;;
   esac
 
-  local current body rule kind
+  local current body rule kind in_file source
   current="$(current_version)"
   body="$(section_body Unreleased)"
   rule="$(bump_for_unreleased "$body")"
-  kind="$rule"
+  in_file="$(declared_bump)"
 
-  # A declaration decides against a rule that cannot see removals, and against
-  # one that can — but only over something. Declaring a bump for an empty
-  # section is an instruction about a release, not a reason to invent one.
-  [ -n "$declared" ] && [ "$rule" != none ] && kind="$declared"
+  # Precedence, and the reason for it: the label is the LATER decision, taken
+  # looking at the release pull request itself; the CHANGELOG declaration was
+  # taken with the notes, before there was a release to look at. Both beat the
+  # category rule, which is the only one of the three that guessed.
+  kind="$rule"
+  source=""
+  if [ -n "$in_file" ]; then kind="$in_file"; source=changelog; fi
+  if [ -n "$declared" ]; then kind="$declared"; source=label; fi
+
+  # But only over something. Declaring a bump for an empty section is an
+  # instruction about a release, not a reason to invent one.
+  if [ "$rule" = none ]; then kind=none; source=""; fi
 
   printf 'current=%s\n' "$current"
   printf 'bump=%s\n' "$kind"
-  # What the rule said underneath, so the caller can print both. A number that
-  # overrules the CHANGELOG has to say so where somebody reads it, or an
-  # override is indistinguishable from the rule having agreed all along.
-  [ "$kind" = "$rule" ] || printf 'rule_bump=%s\n' "$rule"
+  # What the rule said underneath and who overruled it, so the caller can print
+  # both. A number that overrules the CHANGELOG has to say so where somebody
+  # reads it, or an override is indistinguishable from the rule agreeing.
+  if [ "$kind" != "$rule" ]; then
+    printf 'rule_bump=%s\n' "$rule"
+    printf 'declared_by=%s\n' "$source"
+  fi
   [ "$kind" = none ] || printf 'version=%s\n' "$(apply_bump "$current" "$kind")"
 }
 
@@ -203,14 +278,24 @@ cmd_write() {
   # release with half its notes. Same care `make skill` and the ledger take.
   local tmp
   tmp="$(mktemp)"
-  awk -v version="$version" -v date="$date" '
+  # The declaration goes with the rename. It is an instruction about THIS
+  # release: leaving it in the published section would put a directive to CI
+  # in notes people read, and leaving it in the fresh `## Unreleased` would be
+  # a decision nobody took quietly repeating itself at the next release.
+  awk -v version="$version" -v date="$date" -v declaration="$DECLARATION_PATTERN" '
     !done && /^## Unreleased[[:space:]]*$/ {
       print "## Unreleased"
       print ""
       print "## " version " — " date
       done = 1
+      inside = 1
       next
     }
+    inside && /^## / { inside = 0 }
+    # The declaration, and the blank line that followed it — otherwise
+    # consuming it leaves a doubled blank under every release heading.
+    inside && $0 ~ declaration { dropped = 1; next }
+    dropped { dropped = 0; if ($0 ~ /^[[:space:]]*$/) next }
     { print }
   ' "$CHANGELOG" > "$tmp"
   mv "$tmp" "$CHANGELOG"
@@ -283,6 +368,15 @@ cmd_check() {
     problem "'## Unreleased' is below the $version section — new notes would land inside a published release"
   fi
 
+  # A declaration that survived the rename is a `write` that did not consume
+  # it — which would put a directive to CI into the published release notes,
+  # and repeat somebody's one-release decision at the next one.
+  # `${body:-}` because a missing section leaves it unset, and `set -u` would
+  # turn "no notes" into a crash instead of the refusal above.
+  if printf '%s\n' "${body:-}" | grep -qE "$DECLARATION_PATTERN"; then
+    problem "the $version section still carries a release declaration — it should have been consumed when the section was renamed"
+  fi
+
   if [ -n "$expect" ] && [ "$expect" != "$version" ]; then
     problem "the version rule says this release is $expect, not $version (docs/RELEASING.md § What a version number means)"
   fi
@@ -296,6 +390,7 @@ subcommand="$1"; shift
 case "$subcommand" in
   next-version) cmd_next_version "$@" ;;
   bump-label)   cmd_bump_label "$@" ;;
+  declared-bump) cmd_declared_bump "$@" ;;
   write)        cmd_write "$@" ;;
   check)        cmd_check "$@" ;;
   *)            usage ;;

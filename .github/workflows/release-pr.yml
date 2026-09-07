@@ -46,6 +46,7 @@ jobs:
       next_version: ${{ steps.plan.outputs.next_version }}
       bump: ${{ steps.plan.outputs.bump }}
       declared: ${{ steps.plan.outputs.declared }}
+      declared_by: ${{ steps.plan.outputs.declared_by }}
       rule_bump: ${{ steps.plan.outputs.rule_bump }}
     steps:
       # Tags, because "is this version already released" is the whole question.
@@ -101,17 +102,25 @@ jobs:
               echo "next_version="
               echo "bump=none"
               echo "declared="
+              echo "declared_by="
               echo "rule_bump="
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "release_version=" >> "$GITHUB_OUTPUT"
 
-          # What a person has declared, if anyone has. A `release: major`,
-          # `release: minor` or `release: patch` label on the open release pull
-          # request overrules the rule — a major because prose cannot show a
-          # removed field, the other two because "we are shipping this as a
-          # patch anyway" is a decision the rule has no way to know about.
+          # What a person has declared, if anyone has.
+          #
+          # There are two places to say it. `<!-- release: patch -->` under
+          # `## Unreleased` travels with the notes, in the pull request that
+          # makes the change — so the release pull request OPENS at the right
+          # number instead of opening wrong and being corrected, which is a
+          # poor first thing for a mechanism to do in front of somebody.
+          # `scripts/release.sh` reads that one out of the CHANGELOG itself.
+          #
+          # A `release: major` / `minor` / `patch` LABEL on the open release
+          # pull request is the other, and it wins: it is the later decision,
+          # taken looking at the release itself.
           #
           # `bump-label` is the one reader of those labels, shared with the
           # `release-check` leg that re-derives this number on the pull request.
@@ -139,18 +148,24 @@ jobs:
           bump="$(printf '%s\n' "$plan" | sed -n 's/^bump=//p')"
           version="$(printf '%s\n' "$plan" | sed -n 's/^version=//p')"
           rule_bump="$(printf '%s\n' "$plan" | sed -n 's/^rule_bump=//p')"
+          declared_by="$(printf '%s\n' "$plan" | sed -n 's/^declared_by=//p')"
 
           {
             echo "bump=$bump"
             echo "next_version=$version"
             echo "declared=$declared"
+            echo "declared_by=$declared_by"
             echo "rule_bump=$rule_bump"
           } >> "$GITHUB_OUTPUT"
 
           if [ -z "$version" ]; then
             echo "::notice::## Unreleased is empty — there is nothing to release, so no pull request."
           elif [ -n "$rule_bump" ]; then
-            echo "::notice::next release would be $version — $bump by declaration, where the rule read a $rule_bump"
+            case "$declared_by" in
+              changelog) where="declared in the CHANGELOG" ;;
+              *)         where="declared by label" ;;
+            esac
+            echo "::notice::next release would be $version — a $bump, $where, where the rule read a $rule_bump"
           else
             echo "::notice::next release would be $version ($bump)"
           fi
@@ -205,6 +220,7 @@ jobs:
           VERSION: ${{ needs.decide.outputs.next_version }}
           BUMP: ${{ needs.decide.outputs.bump }}
           RULE_BUMP: ${{ needs.decide.outputs.rule_bump }}
+          DECLARED_BY: ${{ needs.decide.outputs.declared_by }}
         run: |
           set -euo pipefail
 
@@ -224,8 +240,16 @@ jobs:
               # that quietly disagreed with the CHANGELOG would be
               # indistinguishable from the rule having agreed all along, and
               # the label that caused it is three clicks away in the sidebar.
-              printf 'The number is `%s`: a **%s**, declared by label, where `docs/RELEASING.md` § What a version number means read this as a **%s**.\n' "$VERSION" "$BUMP" "$RULE_BUMP"
-              printf 'Remove the `release: %s` label to go back to what the rule says.\n' "$BUMP"
+              case "$DECLARED_BY" in
+                changelog)
+                  where='declared in the CHANGELOG'
+                  undo="Remove the \`<!-- release: $BUMP -->\` line from \`## Unreleased\` on \`main\` to go back to what the rule says, or add a \`release: <kind>\` label here to overrule it from this side." ;;
+                *)
+                  where='declared by label'
+                  undo="Remove the \`release: $BUMP\` label to go back to what the rule says." ;;
+              esac
+              printf 'The number is `%s`: a **%s**, %s, where `docs/RELEASING.md` § What a version number means read this as a **%s**.\n' "$VERSION" "$BUMP" "$where" "$RULE_BUMP"
+              printf '%s\n' "$undo"
             else
               printf 'The number is `%s` because the rule in `docs/RELEASING.md` § What a version number means read this as a **%s**.\n' "$VERSION" "$BUMP"
               case "$BUMP" in

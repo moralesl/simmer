@@ -60,27 +60,49 @@ To see its answer without opening GitHub:
 ./scripts/release.sh next-version
 ```
 
-A **minor** is declared, not guessed: writing an entry under `### Machine surface` or `### The test seam` in `## Unreleased` is the declaration.
+A **minor** is inferred from where the notes were filed: an entry under `### Machine surface` or `### The test seam` in `## Unreleased` is what says so.
 Prose is never read for hints — "adds a `--json` field" and "adds a menu row" are the same sentence to a machine, and guessing wrong in the permissive direction ships a contract change announced as a bug fix.
 Anything else is a patch.
 
 ### Declaring the number instead
 
-Three labels on the release pull request overrule the rule: **`release: major`**, **`release: minor`**, **`release: patch`**.
-Exactly one; two is refused rather than chosen between.
+Two places to say it, for two different moments.
 
-A **major** can only ever come from here.
-Removing a field, renaming one and changing one's type read exactly like adding one, so nothing can infer it — only a person knows which, and this is where they say so.
+**In the CHANGELOG, with the notes.** One line anywhere under `## Unreleased`:
 
-The other two exist because "the rule was too cautious" is not the only reason to overrule it.
-Sometimes it is *we are shipping this as a patch anyway, and we know what that costs* — which is how 0.3.1 went out over a `### Machine surface` entry the rule read as a minor.
-A rule with no override is a rule that gets worked around outside the mechanism, where nothing records who decided or what the rule had said.
-So the pull request says both:
+```markdown
+## Unreleased
 
-> The number is `0.3.1`: a **patch**, declared by label, where `docs/RELEASING.md` § What a version number means read this as a **minor**.
+<!-- release: patch -->
 
-The label changes the answer, and the branch is not rebuilt until the next push to `main` — so the `release-check` leg re-derives the number *including the label* and goes red on any mismatch.
-That is what makes a label a mechanism rather than a note, and it is why one reader (`scripts/release.sh bump-label`) serves both halves: two readers is how they would come to disagree on the one pull request where it matters.
+### Machine surface
+…
+```
+
+This is the ordinary one. It travels with the change, in the pull request that makes it, reviewed by whoever reviews the notes — so the release pull request **opens** at the right number instead of opening wrong and being corrected.
+It is an HTML comment rather than a visible line for three reasons: it is an instruction to CI and not a note to whoever reads the release; a visible *"released as a patch"* under a heading called **Unreleased** is a claim about something that has not happened; and a `.md` diff on GitHub is raw markdown, so it is perfectly visible exactly where it is reviewed.
+
+The declaration is **consumed** when the section is renamed.
+It is an instruction about one release: surviving into the published notes would be a directive to CI in something people read, and surviving into the next `## Unreleased` would be a decision nobody took repeating itself.
+`release-check` refuses a release section that still carries one.
+
+**As a label on the release pull request** — `release: major`, `release: minor`, `release: patch`. Exactly one; two is refused rather than chosen between.
+This is for afterwards, when the number is already written and somebody disagrees with it, and **it wins**: it is the later decision, taken looking at the release itself.
+
+So the precedence is: **label → declaration in the CHANGELOG → the category rule.** The three words are identical in both places on purpose — one vocabulary, and a person who has seen either has seen both.
+
+A **major** can only ever come from a declaration.
+Removing a field, renaming one and changing one's type read exactly like adding one, so nothing can infer it — only a person knows which.
+The other two exist because "the rule was too cautious" is not the only reason to overrule it: sometimes it is *we are shipping this as a patch anyway, and we know what that costs*, which is how 0.3.1 went out over a `### Machine surface` entry.
+
+Whichever won says so, on the pull request:
+
+> The number is `0.3.1`: a **patch**, declared in the CHANGELOG, where `docs/RELEASING.md` § What a version number means read this as a **minor**.
+
+A rule with no override gets worked around outside the mechanism, where nothing records who decided or what the rule had said. This records both.
+
+A label added after the branch was written changes the answer, and the branch is not rebuilt until the next push to `main` — so the `release-check` leg re-derives the number *including* label and declaration, and goes red on any mismatch.
+That is what makes either of them a mechanism rather than a note, and it is why one reader (`scripts/release.sh`) serves both halves: two readers is how they would come to disagree on the one pull request where it matters.
 
 To recompute immediately rather than waiting for the next push: **Actions → release-pr → Run workflow**, or
 

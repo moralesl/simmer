@@ -80,7 +80,10 @@ jobs:
                   --changelog "$RUNNER_TEMP/main-changelog.md"
                   --version-file "$RUNNER_TEMP/main-version.swift")
 
-            # The same reader `release-pr.yml` used when it wrote the number.
+            # The same reader `release-pr.yml` used when it wrote the number,
+            # against the same file — so a `<!-- release: patch -->` under
+            # `## Unreleased` on `main` is picked up here without this leg
+            # knowing anything about it. One reader, two callers.
             # This leg exists precisely because a label added AFTERWARDS
             # changes the answer with nothing to recompute it — so it has to
             # read the labels the same way, or it would be red on every
