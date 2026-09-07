@@ -38,6 +38,10 @@ public enum UpdateCommand {
         public var checkedAt: Int
         /// The answer came from the cache rather than from a fresh look.
         public var fromCache: Bool
+        /// Whether an unattended install is permitted — the person's own
+        /// switch, read here so that every surface rendering this report says
+        /// the same thing about it. Off by default (`Ledger.autoUpdateEnabled`).
+        public var autoUpdate: Bool = false
         public var now: Int
 
         public var updateAvailable: Bool { verdict == .available }
@@ -110,11 +114,13 @@ public enum UpdateCommand {
                                   ? "not checked yet — run simmer update"
                                   : "the last check was seamed — run simmer update",
                               install: install, appVersion: appVersion,
-                              checkedAt: 0, fromCache: true, now: now)
+                              checkedAt: 0, fromCache: true,
+                              autoUpdate: ledger.autoUpdateEnabled, now: now)
             }
             return report(now: now, installed: installed, install: install,
                           appVersion: appVersion, latest: record.latest,
-                          error: record.error, checkedAt: record.checkedAt, fromCache: true)
+                          error: record.error, checkedAt: record.checkedAt, fromCache: true,
+                          autoUpdate: ledger.autoUpdateEnabled)
         }
 
         let lookup = source.newestRelease()
@@ -131,15 +137,17 @@ public enum UpdateCommand {
                                        latest: latest, error: error, seamed: seamed))
         return report(now: now, installed: installed, install: install,
                       appVersion: appVersion, latest: latest, error: error,
-                      checkedAt: now, fromCache: false)
+                      checkedAt: now, fromCache: false,
+                      autoUpdate: ledger.autoUpdateEnabled)
     }
 
     private static func report(now: Int, installed: String, install: Install,
                                appVersion: String?, latest: String, error: String,
-                               checkedAt: Int, fromCache: Bool) -> Report {
+                               checkedAt: Int, fromCache: Bool, autoUpdate: Bool) -> Report {
         var report = Report(verdict: .unknown, installed: installed, latest: latest,
                             error: error, install: install, appVersion: appVersion,
-                            checkedAt: checkedAt, fromCache: fromCache, now: now)
+                            checkedAt: checkedAt, fromCache: fromCache,
+                            autoUpdate: autoUpdate, now: now)
         guard error.isEmpty, !latest.isEmpty else {
             report.verdict = .unknown
             if report.error.isEmpty { report.error = "no release information" }
@@ -689,6 +697,10 @@ public enum UpdateCommand {
             // Appended, like every field after the first release: the page
             // for `latest`, or null when there is no release to point at.
             ("release_notes_url", report.releaseNotesURL.map { JSONValue.string($0) } ?? .null),
+            // Whether the daily check is allowed to install what it finds.
+            // A caller that wants to know why nothing happened on a Mac with
+            // a release waiting reads this before anything else.
+            ("auto_update", .bool(report.autoUpdate)),
         ])
     }
 

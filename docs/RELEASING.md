@@ -78,3 +78,7 @@ A broken release is fixed forward with a new patch version, not by deleting hist
   Removing one, renaming one, **or changing one's type** is a major.
 - Human-facing sentences may be reworded in any release; nothing may parse them.
 - A new seam variable is a minor, and it must appear in `CONTRACTS.md` § The test seam in the same change — any implementation of the contract has to honour it.
+
+**And what it promises in the other direction: that you can go back.** State is append-only in practice as well as on paper — `format=2` claim files with the same key set since `0.1.0`, and parsers that ignore keys they do not know — so an older binary reads what a newer one wrote.
+The exact command per provenance, the two wrinkles below `0.2.0`, and the reason a rollback has to be preceded by `simmer update --auto off` are in `FAQ.md` § A release broke something.
+That is what makes "fixed forward with a new patch version" (§ Undoing one) a reasonable thing to ask of someone: they have a way to wait it out.

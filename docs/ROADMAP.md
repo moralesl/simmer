@@ -22,6 +22,10 @@ The rule is already a human step by design (SECURITY.md) and stays one.
 The guard is not: it is generated and bootstrapped inside `make install`, which means `make` is currently the only thing that can produce a working watchdog.
 That belongs in the binary — `simmer install-guard`, callable by the Makefile, `bootstrap.sh`, a formula's caveat or a person who copied the app by hand — and it is worth doing whether or not the tap ever lands.
 
+**The tap's rollback story is documented, and it is the weakest of the three.** `FAQ.md` § A release broke something gives the exact command per provenance; the Homebrew row is the only one with no command, because `brew switch` was removed and `brew cleanup` deletes the old keg.
+Homebrew's own documented route back is `brew version-install` into a personal tap the user then maintains.
+Nothing blocks the tap on this — a formula that builds from source can be reinstalled at any tag by hand — but it is worth knowing before the tap is what a colleague has.
+
 **Landed 2026-08-25 — the Raycast integration**, as a native extension in `integrations/raycast/` rather than the thin shim this page assumed.
 The reason it changed shape: a script command prints one line and fires one verb, and the thing worth having in a launcher is the claims list — three actors can hold the lid at once, and the question is usually *whose* claim the 40 minutes is.
 That needs a view.

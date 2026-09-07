@@ -92,6 +92,10 @@ Exit 1 means finish the current unit and write the handoff rather than starting 
 - Suppressing notifications — they are the human's window into what you hold.
 - Installing simmer, or setting `pmset -a disablesleep` yourself.
   That switch has no expiry, nothing on screen indicates it, and it survives reboots — leaving it on is the exact failure simmer exists to prevent.
+- `simmer update --apply` and `simmer update --auto on` — updating this Mac is not your errand.
+  `--apply` replaces the running app and the binary the guard watches; `--auto on` decides that it may happen again with nobody watching.
+  Report that a newer release exists (`simmer update --json`, `update_available`) and leave both to the person.
+  Reading is always fine: `--auto status` and `--cached` change nothing.
 
 ## Two shapes that mislead
 

@@ -380,6 +380,47 @@ struct DoctorCLI: ParsableCommand {
                             detail: ["  simmer update"]))
         }
 
+        // The Raycast extension, which is the OTHER installed thing whose
+        // going stale is silent — and unlike the agent protocol, `make
+        // install` cannot even fix it: the extension is TypeScript with its
+        // own npm tree, built and registered by Raycast rather than by the
+        // Makefile. So an update moves the CLI, the app, the guard and the
+        // protocol forward and leaves the launcher surface exactly where it
+        // was, with the new commands simply not in the root search.
+        //
+        // Informational in every state, like `agent_protocol`, and omitted
+        // entirely where Raycast or the extension is not installed: an
+        // uninstalled launcher is not a finding.
+        let raycastCheckout = RaycastExtension.checkout(for: install, home: env.homeDirectory)
+        switch RaycastExtension.inspect(
+            extensionsDir: env.raycastExtensionsDir.path,
+            checkout: raycastCheckout,
+            read: { FileManager.default.contents(atPath: $0) },
+            entries: { try? FileManager.default.contentsOfDirectory(atPath: $0) }) {
+        case .absent:
+            break
+        case .current(let commands):
+            rows.append(Row(id: "raycast_extension",
+                            label: "Raycast extension registered and current (\(commands) commands)",
+                            ok: nil))
+        case .stale(let missing, let changed):
+            var what: [String] = []
+            if !missing.isEmpty {
+                what.append("\(missing.count) command(s) it does not have (\(missing.joined(separator: ", ")))")
+            }
+            if !changed.isEmpty {
+                what.append("\(changed.count) that changed (\(changed.joined(separator: ", ")))")
+            }
+            rows.append(Row(
+                id: "raycast_extension",
+                label: "the Raycast extension is behind this checkout — \(what.joined(separator: ", ")).",
+                ok: nil,
+                detail: ["Raycast built it from an older copy; rebuild and re-register it:"]
+                    + RaycastExtension.fixLines(checkout: raycastCheckout ?? "?")))
+        case .unknown(let why):
+            rows.append(Row(id: "raycast_extension", label: why, ok: nil))
+        }
+
         // The bundle and the CLI disagreeing IS broken, and this row is red
         // for it — the one update-shaped thing that is.
         //

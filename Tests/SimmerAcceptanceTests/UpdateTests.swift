@@ -134,6 +134,15 @@ import Testing
                 "doctor answered from the network: \(row?["label"] ?? "no row")")
     }
 
+    /// Off by default, and the field says so before anything is turned on:
+    /// a caller wondering why a Mac with a release waiting installed nothing
+    /// reads this first.
+    @Test func autoUpdateIsOffByDefaultAndOnTheReport() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let out = sim.run(["update", "--json"], env: ["SIMMER_FAKE_LATEST": "v9.9.9"]).out
+        #expect(out.contains("\"auto_update\":false"), "\(out)")
+    }
+
     /// Every command reachable from a launcher tolerates a trailing reason and
     /// owner, whether or not it has any use for them (CONTRACTS.md).
     @Test func itToleratesTheLauncherTail() {
@@ -429,5 +438,162 @@ import Testing
         #expect(result.code == 1)
         #expect((try? String(contentsOf: log, encoding: .utf8)) == "",
                 "something was run despite not knowing whether to")
+    }
+}
+
+/// `--auto` through the binary: the switch, its machine answer, and the two
+/// promises around it — that it makes no request of its own, and that it
+/// refuses rather than silently dropping a flag it cannot honour.
+@Suite struct UpdateAutoTests {
+    private func object(_ text: String) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] ?? [:]
+    }
+
+    @Test func theSwitchGoesOnAndOffAndSaysWhichWay() {
+        let sim = Sim(); defer { sim.tearDown() }
+
+        let on = sim.run(["update", "--auto", "on", "--json"])
+        #expect(on.code == 0, "\(on.combined)")
+        #expect(object(on.out)["action"] as? String == "auto_update_on")
+        #expect(object(on.out)["auto_update"] as? Bool == true)
+
+        // Setting it again is not an error and is not a change.
+        let again = sim.run(["update", "--auto", "on", "--json"])
+        #expect(object(again.out)["action"] as? String == "checked")
+        #expect(object(again.out)["auto_update"] as? Bool == true)
+
+        let off = sim.run(["update", "--auto", "off", "--json"])
+        #expect(object(off.out)["action"] as? String == "auto_update_off")
+        #expect(object(off.out)["auto_update"] as? Bool == false)
+    }
+
+    /// The marker file is the state, and it is where the contract says: one
+    /// fact per file, beside `update-check.off`, absence meaning off.
+    @Test func theStateIsOneMarkerFileAndAbsenceMeansOff() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let marker = sim.stateDir.appendingPathComponent("auto-update.on").path
+
+        #expect(!FileManager.default.fileExists(atPath: marker))
+        #expect(object(sim.run(["update", "--auto", "status", "--json"]).out)["auto_update"]
+            as? Bool == false)
+
+        sim.run(["update", "--auto", "on"])
+        #expect(FileManager.default.fileExists(atPath: marker))
+
+        sim.run(["update", "--auto", "off"])
+        #expect(!FileManager.default.fileExists(atPath: marker))
+    }
+
+    /// `--auto status` answers from the marker file alone. The source is
+    /// primed with something it is not allowed to look at — a setting is not a
+    /// question about a release, and asking one on a train must work.
+    @Test func statusMakesNoRequest() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["update", "--auto", "on"])
+        let result = sim.run(["update", "--auto", "status", "--json"],
+                             env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+
+        #expect(result.code == 0)
+        #expect(object(result.out)["auto_update"] as? Bool == true)
+        // No release fields at all: this object is about the setting.
+        #expect(object(result.out)["verdict"] == nil)
+        // And nothing was recorded, which is what proves no check was made.
+        #expect(!FileManager.default.fileExists(
+            atPath: sim.stateDir.appendingPathComponent("update-check").path))
+    }
+
+    /// The dependency, as a field. Unattended installs ride on the app's
+    /// once-a-day check, so a caller that turns this on and wants to know
+    /// whether it can ever fire needs both booleans from one call.
+    @Test func itReportsWhetherTheDailyCheckCanEvenFire() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let normal = sim.run(["update", "--auto", "on", "--json"])
+        #expect(object(normal.out)["background_check"] as? Bool == true)
+
+        let suppressed = sim.run(["update", "--auto", "status", "--json"],
+                                 env: ["SIMMER_NO_UPDATE_CHECK": "1"])
+        #expect(object(suppressed.out)["background_check"] as? Bool == false)
+        #expect(object(suppressed.out)["auto_update"] as? Bool == true,
+                "the environment suppresses the check, not the person's answer")
+    }
+
+    /// The other half of the same trap, and the one a person actually reaches:
+    /// the check turned off by hand, in the setup window, rather than by an
+    /// environment variable. `update-check.off` is written only by the app —
+    /// there is no CLI surface for it — so this plants the state the app
+    /// produces, the way the legacy-claim fixture does.
+    @Test func theCheckboxTurnedOffStrandsItToo() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["update", "--auto", "on"])
+        try? FileManager.default.createDirectory(at: sim.stateDir,
+                                                 withIntermediateDirectories: true)
+        try? "off\n".write(to: sim.stateDir.appendingPathComponent("update-check.off"),
+                           atomically: true, encoding: .utf8)
+
+        let result = sim.run(["update", "--auto", "status", "--json"])
+        #expect(object(result.out)["background_check"] as? Bool == false)
+        #expect(object(result.out)["auto_update"] as? Bool == true,
+                "the person's answer survives the check being turned off")
+    }
+
+    /// The human sentence admits it when the switch cannot fire. A setting
+    /// that silently does nothing is the promise this tool does not make.
+    @Test func theHumanOutputAdmitsAStrandedSwitch() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let stranded = sim.run(["update", "--auto", "on"],
+                               env: ["SIMMER_NO_UPDATE_CHECK": "1"])
+        #expect(stranded.code == 0)
+        #expect(stranded.out.contains("once-a-day check is off"), "\(stranded.combined)")
+    }
+
+    /// Asserted against the raw text: `JSONSerialization` bridges `0`/`1` to
+    /// `Bool` and a typed assertion would let that drift through.
+    @Test func theYesNoFieldsAreRealBooleans() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let out = sim.run(["update", "--auto", "on", "--json"]).out
+        #expect(out.contains("\"auto_update\":true"))
+        #expect(out.contains("\"background_check\":true"))
+        #expect(out.contains("\"seamed\":true"))
+    }
+
+    /// A flag's own validation belongs to simmer, not to ArgumentParser: a
+    /// parser diagnostic writes nothing to stdout, so a `--json` caller would
+    /// get an empty stream instead of the contracted refusal object.
+    @Test func aValueThatIsNotOnOffOrStatusIsRefusedBySimmer() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["update", "--auto", "yes", "--json"])
+
+        #expect(result.code == 1)
+        #expect(object(result.out)["action"] as? String == "refused",
+                "the refusal did not reach stdout as JSON: \(result.combined)")
+        #expect((object(result.out)["error"] as? String)?.contains("on, off or status") == true)
+    }
+
+    /// Honoured or refused, never accepted and dropped. `--auto` makes no
+    /// request and installs nothing, so pairing it with either flag that does
+    /// would leave one of them silently ignored.
+    @Test func autoCannotBeCombinedWithApplyOrCached() {
+        let sim = Sim(); defer { sim.tearDown() }
+        for other in ["--apply", "--cached"] {
+            let result = sim.run(["update", "--auto", "on", other])
+            #expect(result.code == 1, "\(other): \(result.combined)")
+            #expect(result.err.contains("--auto"), "\(other): \(result.err)")
+            // And it changed nothing on the way to refusing.
+            #expect(!FileManager.default.fileExists(
+                atPath: sim.stateDir.appendingPathComponent("auto-update.on").path))
+        }
+    }
+
+    /// Turning it on does not install anything by itself. The decision lives
+    /// in the app's daily check; the CLI records an answer and stops.
+    @Test func turningItOnInstallsNothingNow() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        sim.run(["update", "--auto", "on"],
+                env: ["SIMMER_FAKE_LATEST": "v9.9.9", "SIMMER_FAKE_APPLY": log.path])
+        #expect((try? String(contentsOf: log, encoding: .utf8)) == "",
+                "--auto ran a plan")
     }
 }
