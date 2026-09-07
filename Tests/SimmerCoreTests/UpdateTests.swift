@@ -192,15 +192,20 @@ import Testing
                 == "Update available: 0.3.0")
     }
 
-    /// The human lines drop the tag's `v` so a sentence does not put `v0.3.0`
-    /// next to `0.2.0`; the machine field keeps it.
+    /// The human SENTENCES drop the tag's `v` so a line does not put `v0.3.0`
+    /// next to `0.2.0`; the machine field keeps it, and so does the release
+    /// page's URL — a prettified tag there is a 404.
     @Test func theTagIsSpelledForItsAudience() {
         let report = check(installed: "0.2.0", latest: "v0.3.0")
         #expect(report.latest == "v0.3.0")
         #expect(report.latestDisplay == "0.3.0")
-        let human = UpdateCommand.humanOutcome(report).stdout.joined(separator: "\n")
-        #expect(human.contains("0.3.0"))
-        #expect(!human.contains("v0.3.0"))
+        let sentences = UpdateCommand.humanOutcome(report).stdout
+            .filter { !$0.contains("://") }
+            .joined(separator: "\n")
+        #expect(sentences.contains("0.3.0"))
+        #expect(!sentences.contains("v0.3.0"))
+        #expect(report.releaseNotesURL?.hasSuffix("v0.3.0") == true,
+                "the URL is the one place the tag stays verbatim")
     }
 
     /// Exit 0 whenever the check completed. A newer release is an answer.
@@ -542,5 +547,131 @@ import Testing
         let ledger = self.ledger()
         ledger.writeAnnouncedUpdate("v0.3.0\nannounced_at=0", now: 1_800_000_000)
         #expect(!ledger.readAnnouncedUpdate().contains("\n"))
+    }
+}
+
+/// The release's own page, so a person can read what is in a version before
+/// installing it. Composed from the tag; simmer fetches nothing for it.
+@Suite struct ReleaseNotesURLTests {
+    private func report(installed: String, latest: String) -> UpdateCommand.Report {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-notes-\(UUID().uuidString)")
+        return UpdateCommand.check(
+            now: 1_800_000_000, installed: installed,
+            install: Install.detect(executablePath: "/Applications/Simmer.app/Contents/MacOS/simmer",
+                                    exists: { _ in false }),
+            appVersion: nil, ledger: Ledger(stateDir: dir),
+            source: FakeReleaseSource(value: latest), cached: false, seamed: false)
+    }
+
+    @Test func itIsTheTagsOwnPage() {
+        #expect(report(installed: "0.2.0", latest: "v0.3.0").releaseNotesURL
+            == "\(Install.repositoryURL)/releases/tag/v0.3.0")
+    }
+
+    /// The tag as published, `v` and all — the human surfaces drop the prefix
+    /// and this one must not, or the URL is a 404.
+    @Test func theTagIsNotPrettifiedIntoAWrongURL() {
+        let url = report(installed: "0.2.0", latest: "v0.3.0").releaseNotesURL ?? ""
+        #expect(url.hasSuffix("/v0.3.0"), "\(url)")
+    }
+
+    /// It is there for every verdict that named a release, not only for an
+    /// update: "what is in the version I am running" is the same question.
+    @Test func beingCurrentStillHasAPageToPointAt() {
+        #expect(report(installed: "0.3.0", latest: "v0.3.0").releaseNotesURL != nil)
+        #expect(report(installed: "0.4.0", latest: "v0.3.0").releaseNotesURL != nil)
+    }
+
+    /// Nothing to point at, rather than a URL ending in nothing.
+    @Test func aCheckThatNamedNoReleaseHasNoPage() {
+        #expect(report(installed: "0.2.0", latest: "error").releaseNotesURL == nil)
+    }
+
+    /// `latest` is the last path component of a redirect, round-tripped
+    /// through a `key=value` cache file, and this value is handed to something
+    /// that opens it. So it is a version or it is nothing.
+    @Test(arguments: ["main", "latest", "../../../etc", "v0.3.0 x", "0.2.x"])
+    func aTagThatIsNotAVersionIsNotTurnedIntoAURL(_ tag: String) {
+        let url = report(installed: "0.2.0", latest: tag).releaseNotesURL
+        #expect(url == nil, "composed \(url ?? "nil") from \(tag)")
+    }
+
+    /// It goes under the install command: the command is what most people came
+    /// for, the notes are what the careful ones want first.
+    @Test func theHumanAnswerPrintsItBelowTheCommand() throws {
+        let lines = UpdateCommand.humanOutcome(report(installed: "0.2.0", latest: "v0.3.0")).stdout
+        let command = try #require(lines.firstIndex { $0.contains("update with:") })
+        let notes = try #require(lines.firstIndex { $0.contains("release notes:") })
+        #expect(command < notes)
+        #expect(lines[notes].contains("/releases/tag/v0.3.0"))
+    }
+
+    /// And not at all when there is nothing to install — the line exists to be
+    /// read before an install, and being current is most people most days.
+    @Test func thereIsNoNotesLineWhenThereIsNothingToInstall() {
+        let lines = UpdateCommand.humanOutcome(report(installed: "0.3.0", latest: "v0.3.0")).stdout
+        #expect(!lines.contains { $0.contains("release notes:") })
+    }
+}
+
+/// The menu's update group: the two things you do with a version you have not
+/// got — read what is in it, or install it — and the command, still, for a
+/// terminal.
+@Suite struct ReleaseNotesInTheMenuTests {
+    private func menu(_ install: MenuInstall) -> [MenuItemModel] {
+        MenuModel.build(aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000,
+                                                     sleepDisabled: false),
+                        batteryLine: "battery 80%, on AC", install: install)
+    }
+
+    private let notesURL = "https://github.com/moralesl/simmer/releases/tag/v0.3.0"
+
+    private func updateGroup(canApply: Bool, notes: String?) -> MenuItemModel? {
+        menu(MenuInstall(version: "0.2.0", canHandBackUnattended: true,
+                         updateLine: "Update available: 0.3.0",
+                         updateCommand: "brew upgrade simmer",
+                         canApplyUpdate: canApply, releaseNotesURL: notes)).first
+    }
+
+    @Test func theRowOpensThePageTheReportNamed() throws {
+        let children = try #require(updateGroup(canApply: true, notes: notesURL)?.children)
+        let row = try #require(children.first { $0.title == "Release notes…" })
+        #expect(row.action == .openReleaseNotes(notesURL))
+    }
+
+    /// A menu that only offers to install it asks for a decision it gives you
+    /// nothing to make, so the notes come before the install.
+    @Test func readingComesBeforeInstalling() throws {
+        let children = try #require(updateGroup(canApply: true, notes: notesURL)?.children)
+        let install = try #require(children.firstIndex { $0.action == .applyUpdate })
+        let notes = try #require(children.firstIndex { $0.title == "Release notes…" })
+        #expect(install < notes, "install first, then what is in it")
+        // And the command to copy stays last, below the separator.
+        #expect(children.last?.action == .copyCLI("brew upgrade simmer"))
+    }
+
+    /// Conditional on there being a page, like every other row in this group.
+    @Test func noPageMeansNoRow() throws {
+        let children = try #require(updateGroup(canApply: true, notes: nil)?.children)
+        #expect(!children.contains { $0.title == "Release notes…" })
+    }
+
+    /// A checkout cannot be installed into, and the notes are still worth
+    /// reading — so the group must not lose its separator when the only thing
+    /// above it is the notes row.
+    @Test func aCheckoutStillGetsTheNotesAndTheCommand() throws {
+        let children = try #require(updateGroup(canApply: false, notes: notesURL)?.children)
+        #expect(children.first?.title == "Release notes…")
+        #expect(children.contains { $0.isSeparator })
+        #expect(children.last?.action == .copyCLI("brew upgrade simmer"))
+    }
+
+    /// Nothing above it at all: no plan, no page. The group is then exactly
+    /// what it was before this row existed — one command to copy.
+    @Test func withNeitherThereIsNoStraySeparator() throws {
+        let children = try #require(updateGroup(canApply: false, notes: nil)?.children)
+        #expect(children.count == 1)
+        #expect(children.first?.action == .copyCLI("brew upgrade simmer"))
     }
 }

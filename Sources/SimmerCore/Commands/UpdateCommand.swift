@@ -65,6 +65,22 @@ public enum UpdateCommand {
         }
 
         public var cacheAge: Int { max(0, now - checkedAt) }
+
+        /// The release's own page — where the notes are, for someone deciding
+        /// whether to install it.
+        ///
+        /// Composed, never fetched. simmer makes exactly one outbound request
+        /// (CONTRACTS.md § One outbound request) and this adds none: a URL is
+        /// handed to the browser, which is the program whose job that is.
+        ///
+        /// Nil unless `latest` parses as a version. It arrives as the last
+        /// path component of a redirect and survives a round-trip through a
+        /// `key=value` cache file, so it is not a string to interpolate into
+        /// something that gets opened without asking what it is first.
+        public var releaseNotesURL: String? {
+            guard !latest.isEmpty, SemanticVersion(latest) != nil else { return nil }
+            return "\(Install.repositoryURL)/releases/tag/\(latest)"
+        }
     }
 
     /// Ask the source, or read what the last ask recorded.
@@ -425,7 +441,13 @@ public enum UpdateCommand {
         outcome.stdout.append("   \(report.install.describedSource)")
 
         if report.verdict == .available {
-            outcome.stdout.append("   update with:  \(report.install.updateCommand)")
+            outcome.stdout.append("   update with:    \(report.install.updateCommand)")
+            if let notes = report.releaseNotesURL {
+                // Under the command, not above it: the command is what most
+                // people came for, and the notes are what the careful ones
+                // want first. Both are readable before anything happens.
+                outcome.stdout.append("   release notes:  \(notes)")
+            }
         }
         if report.appDrift {
             outcome.stdout.append(contentsOf: appDriftLines(report))
@@ -563,6 +585,9 @@ public enum UpdateCommand {
             ("cached", .bool(report.fromCache)),
             ("error", report.error.isEmpty ? .null : .string(report.error)),
             ("seamed", .bool(seamed)),
+            // Appended, like every field after the first release: the page
+            // for `latest`, or null when there is no release to point at.
+            ("release_notes_url", report.releaseNotesURL.map { JSONValue.string($0) } ?? .null),
         ])
     }
 

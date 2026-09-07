@@ -77,7 +77,7 @@ simmer --help               # the rest, including the exit-code API
 
 ### Staying up to date
 
-`simmer update` compares what you are running against the newest published release and prints the command that installs it — `brew upgrade simmer`, `make install`, or the one-paste line above, depending on how this copy got here.
+`simmer update` compares what you are running against the newest published release and prints the command that installs it — `brew upgrade simmer`, `make install`, or the one-paste line above, depending on how this copy got here — plus the release's own page, so you can read what is in it first.
 
 **`simmer update --apply` runs that command for you**, and the menu bar offers the same thing as **Install it now** — because most of the people the menu bar exists for do not have a terminal open.
 It asks for no password, and it never pipes a script from the internet into a shell: the one-paste install already leaves its checkout at `~/.local/share/simmer`, so an update fetches the new tag there and runs `make install`.

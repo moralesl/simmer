@@ -17,6 +17,8 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   A bundle install has the one-paste installer's checkout at `~/.local/share/simmer`, so the plan fetches the new tag there and runs `make install`; Homebrew gets `brew upgrade simmer`.
   It refuses in a developer's own checkout — that may hold local commits, an unfinished branch or a stash — and refuses when it cannot tell whether there is anything to install.
   `applied`, `steps` and `apply_error` on `--json`; exit 0 means nothing is left to do.
+- **The release notes, before you install anything.** `simmer update` prints the release's own page under the install command, the menu bar's update group carries **Release notes…**, and Raycast's check gets an *Open Release Notes* action.
+  simmer composes the URL from the tag and fetches nothing for it — its one outbound request is still the `HEAD` that names the newest release, and the browser does the reading.
 - **The same answer in four more places.** A conditional row in the menu bar carrying **Install it now** and the command to copy, plus a permanent "Check for Updates…" item; a footer that always says which version you are on and which is newest; an informational row in `doctor`; a row in the Raycast claims list and a "Simmer Check for Updates" command.
   All of them render from one `UpdateCommand` in the core, so they cannot disagree about what "up to date" means.
 - **`Simmer.app` checks once a day**, off the main thread, and posts **one banner per new version** — never the same version twice, and nothing at all when you are current, ahead of the newest release, or the check could not answer.
@@ -44,7 +46,7 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ### Machine surface
 
-- **New:** `update --json` (`action`, `verdict`, `installed`, `latest`, `update_available`, `provenance`, `update_command`, `app_version`, `app_drift`, `checked_at`, `cached`, `error`, `seamed`), and the `update` and `app_version` rows in `doctor --json`.
+- **New:** `update --json` (`action`, `verdict`, `installed`, `latest`, `update_available`, `provenance`, `update_command`, `app_version`, `app_drift`, `checked_at`, `cached`, `error`, `seamed`, `release_notes_url`), and the `update` and `app_version` rows in `doctor --json`.
   Nothing existing changed.
 - **New seam:** `SIMMER_FAKE_APPLY=<file>` — `--apply`'s steps are recorded instead of run, which is how the plan is asserted without a build.
 - **New seam:** `SIMMER_FAKE_LATEST=<tag|error>`.

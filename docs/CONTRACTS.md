@@ -82,7 +82,10 @@ The two exceptions are the flat surfaces, which have no types at all: `--machine
 A reader must never have to discover that one field answers the same question in a different type than its neighbour, and one field must never carry two types across two surfaces of the same binary.
 The acceptance suite asserts this against the raw JSON text, because `JSONSerialization` bridges `0`/`1` to `Bool` and would let exactly that drift through a typed assertion.
 
-`update --json`: `action` (`checked`, or `updated`/`refused` under `--apply`), `verdict` (`current`·`available`·`ahead`·`unknown`), `installed`, `latest` (the release tag as published, `v` and all, or `null`), `update_available` (boolean), `provenance` (`homebrew`·`bundle`·`checkout`·`unknown`), `update_command`, `app_version` (the installed bundle's, or `null`), `app_drift` (boolean), `checked_at`, `cached` (boolean), `error` (or `null`), `seamed` (boolean).
+`update --json`: `action` (`checked`, or `updated`/`refused` under `--apply`), `verdict` (`current`·`available`·`ahead`·`unknown`), `installed`, `latest` (the release tag as published, `v` and all, or `null`), `update_available` (boolean), `provenance` (`homebrew`·`bundle`·`checkout`·`unknown`), `update_command`, `app_version` (the installed bundle's, or `null`), `app_drift` (boolean), `checked_at`, `cached` (boolean), `error` (or `null`), `seamed` (boolean), `release_notes_url` (the page for `latest`, or `null`).
+
+**`release_notes_url` is composed, never fetched.** It is `<repository>/releases/tag/<latest>`, and it is `null` unless `latest` parses as a version — the tag arrives as the last path component of a redirect and round-trips through a `key=value` cache file, and this is the field a surface hands to a browser.
+Reading the notes costs simmer no request: the one outbound request stays the `HEAD` that names the newest tag, and the browser fetches the page.
 
 **`latest` keeps the `v`; the human surfaces drop it.** The field is the string a caller hands to `git checkout` or matches against a release page, so it is the tag verbatim.
 A sentence that puts `v0.3.0` next to `0.2.0` reads like two different kinds of thing, so the prose says `0.3.0` — presentation, which guarantee 5 leaves free.

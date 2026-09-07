@@ -142,6 +142,27 @@ import Testing
                              env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
         #expect(result.code == 0, "\(result.combined)")
     }
+
+    /// The release's own page, so nobody has to install a version to find out
+    /// what is in it. Composed from the tag — no second outbound request.
+    @Test func theReleasePageIsAFieldAndAPrintedLine() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let json = object(sim.run(["update", "--json"],
+                                  env: ["SIMMER_FAKE_LATEST": "v9.9.9"]).out)
+        #expect(json["release_notes_url"] as? String
+            == "https://github.com/moralesl/simmer/releases/tag/v9.9.9")
+
+        let human = sim.run(["update"], env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+        #expect(human.out.contains("/releases/tag/v9.9.9"), "\(human.combined)")
+    }
+
+    /// Null rather than a URL ending in nothing, and typed the way every other
+    /// "there is no answer" field on this surface is typed.
+    @Test func aCheckThatNamedNoReleaseCarriesNoPage() {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["update", "--json"], env: ["SIMMER_FAKE_LATEST": "error"])
+        #expect(object(result.out)["release_notes_url"] is NSNull, "\(result.out)")
+    }
 }
 
 /// `--apply` through the binary. Every step is recorded rather than run

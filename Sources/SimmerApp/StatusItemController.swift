@@ -96,7 +96,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                   updateLine: UpdateCommand.statusLine(update),
                                   updateCommand: update.install.updateCommand,
                                   versionLine: UpdateCommand.footerLine(update),
-                                  canApplyUpdate: AppState.shared.canApplyUpdate(update))
+                                  canApplyUpdate: AppState.shared.canApplyUpdate(update),
+                                  releaseNotesURL: update.releaseNotesURL)
         let model = MenuModel.build(aggregate: ctx.aggregate(), batteryLine: batteryLine,
                                     install: install)
         for entry in model {
@@ -185,6 +186,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             }
         case .applyUpdate:
             AppState.shared.applyUpdate()
+        case .openReleaseNotes(let url):
+            // The browser fetches the notes; simmer does not. Its one
+            // outbound request stays the `HEAD` that names the newest tag
+            // (CONTRACTS.md § One outbound request).
+            if let url = URL(string: url) { NSWorkspace.shared.open(url) }
         case .quit:
             NSApp.terminate(nil)
         }

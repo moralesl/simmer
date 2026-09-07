@@ -10,7 +10,7 @@ Seven commands in the root search, over the same contract everything else reads.
 | **Simmer Longer** | adds to *your* deadline, counted from your current one |
 | **Simmer Down** | hands Raycast's claim back |
 | **Nothing Past** | the evening ceiling no claim may cross, or lift it |
-| **Simmer Check for Updates** | asks GitHub which release is newest, and either installs it (⏎) or hands you the command |
+| **Simmer Check for Updates** | asks GitHub which release is newest, and either installs it (⏎), opens its release notes, or hands you the command |
 
 Typing "simmer" shows the state without opening anything:
 

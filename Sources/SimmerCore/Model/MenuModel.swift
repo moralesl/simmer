@@ -26,6 +26,11 @@ public enum MenuAction: Equatable, Sendable {
     /// `UpdateCommand.applyPlan` has a plan: a developer's own checkout is not
     /// machinery for simmer to move onto a tag.
     case applyUpdate
+    /// Open the release's own page in the browser — the notes, for someone
+    /// deciding whether to install it. Carries the URL rather than composing
+    /// one in the renderer, so the menu and `update --json` point at the same
+    /// page by construction.
+    case openReleaseNotes(String)
     case quit
 }
 
@@ -88,16 +93,22 @@ public struct MenuInstall: Sendable, Equatable {
     /// There is a plan to run — so the menu may offer to run it rather than
     /// only hand over a command that needs a terminal.
     public var canApplyUpdate: Bool
+    /// `UpdateCommand.Report.releaseNotesURL` — nil when there is no release
+    /// to point at, which is what keeps the row conditional here rather than
+    /// in the renderer.
+    public var releaseNotesURL: String?
 
     public init(version: String, canHandBackUnattended: Bool,
                 updateLine: String? = nil, updateCommand: String = "",
-                versionLine: String? = nil, canApplyUpdate: Bool = false) {
+                versionLine: String? = nil, canApplyUpdate: Bool = false,
+                releaseNotesURL: String? = nil) {
         self.version = version
         self.canHandBackUnattended = canHandBackUnattended
         self.updateLine = updateLine
         self.updateCommand = updateCommand
         self.versionLine = versionLine
         self.canApplyUpdate = canApplyUpdate
+        self.releaseNotesURL = releaseNotesURL
     }
 }
 
@@ -124,6 +135,17 @@ public enum MenuModel {
                 children.append(MenuItemModel(title: "Install it now",
                                               symbol: "arrow.down.circle",
                                               action: .applyUpdate))
+            }
+            // Above the separator with "Install it now", because it is the
+            // other thing you do with a version you have not got: read what
+            // is in it first. A menu that only offers to install it asks for
+            // a decision it gives you nothing to make.
+            if let notes = install.releaseNotesURL {
+                children.append(MenuItemModel(title: "Release notes…",
+                                              symbol: "doc.text",
+                                              action: .openReleaseNotes(notes)))
+            }
+            if install.canApplyUpdate || install.releaseNotesURL != nil {
                 children.append(.separator)
             }
             children.append(MenuItemModel(title: install.updateCommand,
