@@ -110,6 +110,9 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
   The guarantee that replaces it is a lane, not a pattern — `make test-release` runs the acceptance suite against `.build/release/simmer` on both OS legs, and it failed on both the first time it ran.
 - **A new subcommand can no longer be unreachable.** The sugar layer's verb list and the parser's subcommand list are two hand-kept lists in two files, and a name missing from the first made a working command report "did not understand the duration".
   A structural test now derives both from the source and fails if they disagree.
+- **A failing `update --apply` reported its failure before the plan it describes.** `simmer update --apply > log 2>&1` — which is how anybody reports this going wrong — read back with "Could not install simmer 0.3.0" on the first line and "▸ updating simmer 0.2.0 → 0.3.0" on the third.
+  `print` goes through stdio, which block-buffers when stdout is not a terminal, while a refusal is written straight to the stderr descriptor: correct on a tty, backwards in every log a person would send you.
+  Stdout is now flushed before any stderr is written, so one command writing to both comes back in the order it said things. An acceptance test asserts it through a single descriptor, because two pipes cannot see a sequence at all.
 - **`make test-raycast` tests the checkout rather than whatever is installed.** The extension resolves its own binary — `~/.local/bin/simmer` first — so the lane measured the installed copy, and a change adding a `--json` field was red with "update --json lost release_notes_url": a message naming the field and not the cause, green again only after `make install`, while the Swift lane had been green all along.
   It now builds and points `SIMMER_BIN` at the same debug product `make test` drives.
 

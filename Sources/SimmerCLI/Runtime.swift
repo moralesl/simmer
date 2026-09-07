@@ -140,6 +140,25 @@ enum Runtime {
     /// `run`, whose stdout belongs to the command it wraps — see RunCLI.
     enum HumanStream { case stdout, stderr }
 
+    /// Lines said BEFORE the answer, while the work is still happening —
+    /// `update --apply`'s plan, which a person reads during the minute or two
+    /// `make install` takes.
+    ///
+    /// They cannot travel in the Outcome: the Outcome is delivered when the
+    /// work is finished, and a plan shown after the compile it describes is
+    /// not a plan. So they are printed here and flushed here, which is the
+    /// half that was missing — see `emit`.
+    static func say(_ lines: [String]) {
+        for line in lines { print(line) }
+        flushSaidSoFar()
+    }
+
+    /// Push stdio's buffer to the descriptor, so anything written straight to
+    /// a descriptor afterwards lands after it and not before.
+    private static func flushSaidSoFar() {
+        fflush(stdout)
+    }
+
     /// Print, post, exit. The single exit path for every subcommand.
     static func deliver(_ outcome: Outcome, human: HumanStream = .stdout) -> Never {
         emit(outcome, human: human)
@@ -153,6 +172,16 @@ enum Runtime {
             case .stderr: FileHandle.standardError.write(Data((line + "\n").utf8))
             }
         }
+        // Before a single byte of stderr, always.
+        //
+        // `print` goes through stdio, which is line-buffered on a tty and
+        // BLOCK-buffered on a pipe or a file; the stderr writes below go
+        // straight to the descriptor. So the moment one command writes to
+        // both — which `update --apply` is the first to do, with a plan on
+        // stdout and a failure sentence on stderr — `simmer … > log 2>&1`
+        // reads back in the wrong order: the failure first, the plan it
+        // describes three lines later.
+        flushSaidSoFar()
         for line in outcome.stderr {
             FileHandle.standardError.write(Data((line + "\n").utf8))
         }

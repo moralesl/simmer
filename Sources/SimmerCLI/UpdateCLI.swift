@@ -112,9 +112,11 @@ struct UpdateCLI: ParsableCommand {
             let appWasRunning = ledger.readAppStatus()?.heartbeatIsFresh(now: env.now()) == true
 
             if !common.json {
-                for line in UpdateCommand.applyPreamble(plan, installed: report.installed) {
-                    print(line)
-                }
+                // Said now, not carried in the Outcome: this is what is about
+                // to happen, and `make install` takes a minute or two. Through
+                // `Runtime.say`, which flushes — otherwise a failure sentence
+                // written straight to stderr overtakes it in any redirect.
+                Runtime.say(UpdateCommand.applyPreamble(plan, installed: report.installed))
             }
             for step in plan.steps {
                 let result = Runtime.execute(step, recordTo: env.applyRecordFile,

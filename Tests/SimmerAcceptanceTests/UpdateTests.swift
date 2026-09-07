@@ -354,6 +354,34 @@ import Testing
         #expect(!ran.contains("install NOTES=0"), "recorded after the failure: \(ran)")
     }
 
+    /// The plan comes before the failure, in a redirect as well as on a tty.
+    ///
+    /// `simmer update --apply > log 2>&1` is how anybody reports this going
+    /// wrong, and it used to read back with "Could not install simmer 9.9.9"
+    /// on line 1 and "▸ updating simmer 0.2.0 → 9.9.9" on line 3: stdio
+    /// block-buffers stdout when it is not a tty, and the failure goes
+    /// straight to the descriptor. Asserted through one descriptor for both
+    /// streams, because two pipes cannot see a sequence at all.
+    @Test func theFailureLandsAfterThePlanItDescribes() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_FAKE_APPLY_FAIL"] = "installing"
+        let text = sim.runInterleaved(["update", "--apply"], env: env)
+
+        guard let plan = text.range(of: "updating simmer"),
+              let failure = text.range(of: "Could not install") else {
+            #expect(Bool(false), "\(text)")
+            return
+        }
+        #expect(plan.lowerBound < failure.lowerBound,
+                "the failure sentence overtook the plan it describes:\n\(text)")
+    }
+
     /// The fourth phase, and the only one that is not a failed install: the
     /// update landed and the menu bar did not come back. Before this the sole
     /// sign was the ABSENCE of "· Simmer.app relaunched" from a success line,
