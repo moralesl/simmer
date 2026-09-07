@@ -14,7 +14,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyArgs, capArgs, claimArgs, extendArgs, releaseArgs, statusArgs, updateArgs } from "../src/args.ts";
-import { applyUpdate, checkUpdate, resolveBinary, run, runText, SimmerRefusal } from "../src/simmer.ts";
+import { applyUpdate, checkUpdate, latestDisplay, resolveBinary, run, runText, SimmerRefusal } from "../src/simmer.ts";
 import type { SimmerMutation, SimmerStatus } from "../src/simmer.ts";
 
 const bin = resolveBinary();
@@ -313,6 +313,27 @@ test("updateArgs asks for JSON, and cached by default", () => {
   assert.deepEqual(updateArgs(false), ["update", "--json"]);
   // Read-only: nothing is claimed, so nothing is owned.
   assert.ok(!updateArgs().includes("--owner"));
+});
+
+/**
+ * One place decides how a tag is spelled, because three views each stripping
+ * their own prefix is three places to forget — and two of them had, so a
+ * launcher said "simmer v9.9.9 is out" over "you have 0.2.0".
+ */
+test("the tag is spelled for its audience, in one place", () => {
+  const of = (latest: string | null) =>
+    latestDisplay({ latest } as unknown as import("../src/simmer.ts").SimmerUpdate);
+
+  assert.equal(of("v9.9.9"), "9.9.9", "a human sentence drops the v");
+  assert.equal(of("V9.9.9"), "9.9.9");
+  assert.equal(of("0.2.0"), "0.2.0", "a tag without one is unchanged");
+  // Not a version: passed through rather than trimmed into something that
+  // looks like one. `simmer update` answers `unknown` for these anyway.
+  assert.equal(of("version-two"), "version-two");
+  assert.equal(of("latest"), "latest");
+  // No release to name. The core's latestDisplay answers the same, so a
+  // caller that wants a word for it supplies its own.
+  assert.equal(of(null), "");
 });
 
 test("applyArgs asks for JSON and never for a cached answer", () => {

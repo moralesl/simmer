@@ -245,6 +245,30 @@ export async function run<T>(
 }
 
 /**
+ * The release, spelled the way `installed` is spelled.
+ *
+ * `latest` carries the tag as published — `v0.3.0` — because that is the string
+ * a caller hands to `git checkout` or matches against a release page. A
+ * sentence that puts `v0.3.0` next to `0.2.0` reads like two different kinds of
+ * thing, so every human surface drops the prefix and the field keeps it
+ * (CONTRACTS.md § `latest` keeps the `v`).
+ *
+ * One function, used at every render site in this extension, for the reason the
+ * core has exactly one `UpdateCommand.Report.latestDisplay`: three views each
+ * stripping their own prefix is three places to forget, and two of them had.
+ *
+ * Empty when there is no release to name — the same answer the core's version
+ * gives for an empty tag, so a caller that wants a word for it supplies its own
+ * (`latestDisplay(u) || "unknown"`).
+ */
+export function latestDisplay(update: SimmerUpdate): string {
+  const tag = update.latest ?? "";
+  // Only in front of a digit: a tag that is not a version is passed through
+  // rather than trimmed into something that looks like one.
+  return /^[vV]\d/.test(tag) ? tag.slice(1) : tag;
+}
+
+/**
  * Is there a newer simmer.
  *
  * The one command whose non-zero exit is not a refusal: `simmer update` exits 1

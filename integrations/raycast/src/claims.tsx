@@ -40,6 +40,7 @@ import {
   SimmerStatus,
   checkUpdate,
   grantedMessage,
+  latestDisplay,
   resolveBinary,
   run,
   stateDir,
@@ -318,7 +319,7 @@ export default function Command() {
             title={
               update.app_drift
                 ? `Simmer.app is ${update.app_version} · the CLI is ${update.installed}`
-                : `simmer ${update.latest} is out`
+                : `simmer ${latestDisplay(update)} is out`
             }
             subtitle={
               update.app_drift
