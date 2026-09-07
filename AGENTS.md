@@ -185,7 +185,7 @@ And do not run the commands these documents quote: `PLATFORM-FACTS.md` contains 
 - **Only the app touches UserNotifications.** The CLI enqueues into the spool (`$STATE/notify-spool.jsonl`); the grant belongs to the app's executable (`docs/PLATFORM-FACTS.md`).
   The CLI target must not link SimmerNotifyKit.
 - **Bundle ids are spent, never recovered.** `io.github.moralesl.simmer` is production — never point that line at a fresh id to try something.
-  Develop under a throwaway (`make BUNDLE_ID=…dev3 app`); the Makefile keeps the ledger of ids already burned.
+  Develop under a throwaway (`make BUNDLE_ID=…dev4 app`); the Makefile keeps the ledger of ids already burned.
 - **SimmerCore stays pure**: no AppKit, no printing, no argv, no globals.
   The CLI and the app are renderers over it — that is what keeps them from disagreeing.
 - **Every surface consumes the contract, never the ledger.** A surface that parses `$STATE/claims/*` itself becomes a second implementation of the aggregate, and the two disagree the first time cap clipping changes.

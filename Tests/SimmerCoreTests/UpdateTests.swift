@@ -44,11 +44,14 @@ import Testing
     /// thing under test.
     private let all: (String) -> Bool = { _ in true }
     private let nothing: (String) -> Bool = { _ in false }
+    /// A home with nothing under it, so provenance is decided by the path
+    /// alone in the cases that are about the path alone.
+    private let home = "/Users/nobody"
 
     @Test func aFormulasCellarIsHomebrewEvenThoughItHoldsABundle() {
         let install = Install.detect(
             executablePath: "/opt/homebrew/Cellar/simmer/0.3.0/Simmer.app/Contents/MacOS/simmer",
-            exists: all)
+            home: home, exists: all)
         // The order matters: the `.app` test would otherwise claim this and
         // print the one-paste installer to the one person whose package
         // manager already knows how to update them.
@@ -58,7 +61,8 @@ import Testing
 
     @Test func anInstalledBundleIsTheOnePasteInstaller() {
         let install = Install.detect(
-            executablePath: "/Applications/Simmer.app/Contents/MacOS/simmer", exists: nothing)
+            executablePath: "/Applications/Simmer.app/Contents/MacOS/simmer",
+            home: home, exists: nothing)
         #expect(install.kind == .bundle)
         #expect(install.bundle == "/Applications/Simmer.app")
         #expect(install.updateCommand.contains("bootstrap.sh"))
@@ -66,7 +70,7 @@ import Testing
 
     @Test func aCheckoutIsGitPullAndMakeInstall() {
         let root = "/Users/x/src/simmer"
-        let install = Install.detect(executablePath: "\(root)/.build/debug/simmer") {
+        let install = Install.detect(executablePath: "\(root)/.build/debug/simmer", home: home) {
             $0 == "\(root)/Package.swift" || $0 == "\(root)/.git"
         }
         #expect(install.kind == .checkout)
@@ -78,7 +82,8 @@ import Testing
     /// package, and `git pull` in it would be an instruction about the wrong
     /// repository.
     @Test func aPackageWithoutAGitDirectoryIsNotACheckout() {
-        let install = Install.detect(executablePath: "/opt/vendored/.build/debug/simmer") {
+        let install = Install.detect(executablePath: "/opt/vendored/.build/debug/simmer",
+                                     home: home) {
             $0.hasSuffix("Package.swift")
         }
         #expect(install.kind == .unknown)
@@ -89,8 +94,145 @@ import Testing
     /// one — the reason the walk looks at path extensions rather than
     /// string-matching ".app".
     @Test func onlyARealBundlePathCounts() {
-        #expect(Install.detect(executablePath: "/tmp/notanapp/simmer", exists: nothing).kind
-                == .unknown)
+        #expect(Install.detect(executablePath: "/tmp/notanapp/simmer",
+                               home: home, exists: nothing).kind == .unknown)
+    }
+}
+
+/// Where a bundle says it came from, and what that changes.
+///
+/// `make install` stamps `$(CURDIR)` into the bundle's `Info.plist`. Before
+/// it did, every bundle was assumed to have come from the installer's
+/// checkout at `~/.local/share/simmer` — so a Mac installed from a
+/// maintainer's own checkout was told to repair itself in a directory that is
+/// not there, and `update --apply` refused for the same reason.
+@Suite struct InstallSourceTests {
+    private let app = "/Users/luis/Applications/Simmer.app/Contents/MacOS/simmer"
+    private let home = "/Users/luis"
+    private let mine = "/Users/luis/workspace/tools/simmer"
+
+    private func detect(recorded: String?, present: [String]) -> Install {
+        Install.detect(executablePath: app, home: home,
+                       exists: { path in present.contains(where: { path.hasPrefix($0) }) },
+                       plist: { _ in recorded.map { [Install.sourceKey: $0] } ?? [:] })
+    }
+
+    @Test func aBundleBuiltInSomebodysCheckoutIsUpdatedThroughThatCheckout() {
+        let install = detect(recorded: mine, present: [mine])
+        #expect(install.kind == .bundle, "provenance is still bundle — the stamp is a second axis")
+        #expect(install.source == .checkout(mine))
+        #expect(install.updateCommand == "cd \(mine) && git pull && make install")
+        #expect(install.repairCommand == "make -C \(mine) install")
+        #expect(install.describedSource.contains(mine))
+    }
+
+    /// `bootstrap.sh` runs `make -C ~/.local/share/simmer install`, so the
+    /// installer stamps the same key with its own path — and that path is the
+    /// one shape simmer may move onto a tag.
+    @Test func theInstallersOwnCheckoutIsStillTheInstallers() {
+        let installer = "\(home)/\(Install.installerCheckout)"
+        let install = detect(recorded: installer, present: [installer])
+        #expect(install.source == .installer(installer))
+        #expect(install.updateCommand.contains("bootstrap.sh"))
+    }
+
+    /// A bundle installed by a simmer older than the stamp. The installer's
+    /// checkout is where those came from if they came from anywhere, so the
+    /// answer is exactly what it was before the stamp existed.
+    @Test func aBundleWithNoStampFallsBackToTheInstallersCheckout() {
+        let installer = "\(home)/\(Install.installerCheckout)"
+        #expect(detect(recorded: nil, present: [installer]).source == .installer(installer))
+        #expect(detect(recorded: nil, present: []).source == .none)
+    }
+
+    /// The directory that installed this copy has been moved or deleted.
+    /// Named, because "there is no checkout" is true and useless.
+    @Test func aSourceThatIsGoneIsNamedRatherThanForgotten() {
+        let install = detect(recorded: mine, present: [])
+        #expect(install.source == .gone(mine))
+        #expect(install.repairCommand == nil)
+        #expect(install.updateCommand.contains("bootstrap.sh"))
+        #expect(install.describedSource.contains("no longer there"))
+    }
+
+    /// The machine surface gets two new fields rather than a fifth
+    /// `provenance` value: every reader switches on that one exhaustively.
+    @Test func provenanceKeepsItsFourValues() {
+        for source in [detect(recorded: mine, present: [mine]),
+                       detect(recorded: nil, present: []),
+                       detect(recorded: mine, present: [])] {
+            #expect(source.kind == .bundle)
+        }
+    }
+}
+
+/// The record knows which version wrote it.
+///
+/// Two minutes after 0.3.0 was installed, `doctor` said "simmer 0.3.0 is ahead
+/// of the newest release (0.2.0)" and the menu footer said "newest" — both
+/// computed from an answer 0.2.0 had cached before the 0.3.0 tag existed.
+@Suite struct UpdateRecordIdentityTests {
+    private func ledger() -> Ledger {
+        Ledger(stateDir: FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-record-\(UUID().uuidString)"))
+    }
+
+    private func install() -> Install {
+        Install.detect(executablePath: "/Applications/Simmer.app/Contents/MacOS/simmer",
+                       home: "/Users/nobody", exists: { _ in false })
+    }
+
+    private func check(installed: String, ledger: Ledger, cached: Bool,
+                       latest: String = "v0.2.0", now: Int = 1_800_000_000)
+        -> UpdateCommand.Report {
+        UpdateCommand.check(now: now, installed: installed, install: install(),
+                            appVersion: nil, ledger: ledger,
+                            source: FakeReleaseSource(value: latest), cached: cached)
+    }
+
+    @Test func aFreshCheckRecordsTheBinaryThatMadeIt() {
+        let led = ledger()
+        _ = check(installed: "0.2.0", ledger: led, cached: false)
+        #expect(led.readUpdateRecord(writtenBy: "0.2.0")?.installed == "0.2.0")
+        #expect(led.readUpdateRecord(writtenBy: "0.3.0") == nil)
+    }
+
+    /// The whole bug, in one case: 0.2.0 recorded "the newest release is
+    /// v0.2.0", 0.3.0 was installed over it, and the cached read turned that
+    /// into "you are ahead of the newest release".
+    @Test func aRecordFromTheVersionYouReplacedIsNotAnAnswer() {
+        let led = ledger()
+        _ = check(installed: "0.2.0", ledger: led, cached: false, latest: "v0.2.0")
+
+        let after = check(installed: "0.3.0", ledger: led, cached: true)
+        #expect(after.verdict == .unknown, "0.2.0's answer was repeated as 0.3.0's")
+        #expect(after.error.contains("not checked yet"))
+        #expect(UpdateCommand.footerLine(after) == "simmer 0.3.0 · not checked yet")
+    }
+
+    @Test func theBinaryThatWroteItMayStillReadIt() {
+        let led = ledger()
+        _ = check(installed: "0.2.0", ledger: led, cached: false, latest: "v0.9.0")
+        let again = check(installed: "0.2.0", ledger: led, cached: true)
+        #expect(again.verdict == .available)
+        #expect(again.fromCache)
+    }
+
+    /// A record older than the day the app refreshes on says so, and only
+    /// then: a note on every line teaches the reader to ignore it.
+    @Test func aCachedAnswerOlderThanADayCarriesItsAge() {
+        let led = ledger()
+        _ = check(installed: "0.2.0", ledger: led, cached: false, latest: "v0.2.0")
+
+        let sameDay = check(installed: "0.2.0", ledger: led, cached: true,
+                            now: 1_800_000_000 + 3 * 3600)
+        #expect(UpdateCommand.cacheNote(sameDay) == "")
+        #expect(UpdateCommand.footerLine(sameDay) == "simmer 0.2.0 · newest")
+
+        let weekLater = check(installed: "0.2.0", ledger: led, cached: true,
+                              now: 1_800_000_000 + 7 * 86_400)
+        #expect(UpdateCommand.cacheNote(weekLater).contains("checked"))
+        #expect(UpdateCommand.footerLine(weekLater).contains("(checked"))
     }
 }
 
@@ -107,7 +249,7 @@ import Testing
         UpdateCommand.check(
             now: 1_800_000_000, installed: installed,
             install: Install.detect(executablePath: "/Applications/Simmer.app/Contents/MacOS/simmer",
-                                    exists: { _ in false }),
+                                    home: "/Users/nobody", exists: { _ in false }),
             appVersion: appVersion, ledger: ledger ?? self.ledger(),
             source: FakeReleaseSource(value: latest), cached: cached, seamed: seamed)
     }
@@ -272,8 +414,13 @@ import Testing
 /// What `--apply` will and will not do. The decision is data, so all of it is
 /// assertable without anything being built, downloaded or installed.
 @Suite struct UpdateApplyTests {
+    /// `installerCheckout` is whether `~/.local/share/simmer` is on this
+    /// fixture's disk. It belongs here rather than in the `exists` a test
+    /// hands to `applyPlan`, because the bundle's source is placed when the
+    /// binary is placed — one decision, made once, exactly as it is on a Mac.
     private func report(installed: String, latest: String, kind: Install.Kind,
-                        home: String = "/Users/x") -> UpdateCommand.Report {
+                        home: String = "/Users/x",
+                        installerCheckout: Bool = true) -> UpdateCommand.Report {
         let path: String
         switch kind {
         case .homebrew: path = "/opt/homebrew/Cellar/simmer/9.9.9/Simmer.app/Contents/MacOS/simmer"
@@ -281,8 +428,10 @@ import Testing
         case .checkout: path = "\(home)/src/simmer/.build/debug/simmer"
         case .unknown: path = "/tmp/simmer"
         }
-        let install = Install.detect(executablePath: path) {
-            kind == .checkout && ($0.hasSuffix("Package.swift") || $0.hasSuffix(".git"))
+        let installer = "\(home)/\(Install.installerCheckout)"
+        let install = Install.detect(executablePath: path, home: home) {
+            if kind == .checkout { return $0.hasSuffix("Package.swift") || $0.hasSuffix(".git") }
+            return installerCheckout && $0.hasPrefix(installer)
         }
         #expect(install.kind == kind, "fixture placed as \(install.kind)")
         let dir = FileManager.default.temporaryDirectory
@@ -300,7 +449,7 @@ import Testing
     @Test func beingCurrentIsNothingToDoRatherThanARefusal() {
         let decision = UpdateCommand.applyPlan(
             for: report(installed: "0.2.0", latest: "v0.2.0", kind: .bundle),
-            home: "/Users/x", exists: all)
+            exists: all)
         guard case .nothingToDo(let sentence) = decision else {
             #expect(Bool(false), "\(decision)"); return
         }
@@ -310,7 +459,7 @@ import Testing
     @Test func beingAheadIsAlsoNothingToDo() {
         let decision = UpdateCommand.applyPlan(
             for: report(installed: "0.9.0", latest: "v0.2.0", kind: .bundle),
-            home: "/Users/x", exists: all)
+            exists: all)
         guard case .nothingToDo = decision else { #expect(Bool(false), "\(decision)"); return }
     }
 
@@ -318,7 +467,7 @@ import Testing
     @Test func aFailedCheckRefusesRatherThanInstallingAnything() {
         let decision = UpdateCommand.applyPlan(
             for: report(installed: "0.2.0", latest: "error", kind: .bundle),
-            home: "/Users/x", exists: all)
+            exists: all)
         guard case .refused = decision else { #expect(Bool(false), "\(decision)"); return }
     }
 
@@ -327,7 +476,7 @@ import Testing
     @Test func aBundleInstallUpdatesTheInstallersCheckout() {
         let decision = UpdateCommand.applyPlan(
             for: report(installed: "0.2.0", latest: "v0.3.0", kind: .bundle),
-            home: "/Users/x", exists: all)
+            exists: all)
         guard case .run(let plan) = decision else { #expect(Bool(false), "\(decision)"); return }
 
         #expect(plan.target == "0.3.0")
@@ -349,7 +498,7 @@ import Testing
         for kind in [Install.Kind.bundle, .homebrew, .checkout, .unknown] {
             let decision = UpdateCommand.applyPlan(
                 for: report(installed: "0.2.0", latest: "v0.3.0", kind: kind),
-                home: "/Users/x", exists: all)
+                exists: all)
             guard case .run(let plan) = decision else { continue }
             plans += 1
             for step in plan.steps {
@@ -368,8 +517,9 @@ import Testing
     /// carries the command that does work.
     @Test func aBundleWithNoInstallerCheckoutRefusesWithTheCommand() {
         let decision = UpdateCommand.applyPlan(
-            for: report(installed: "0.2.0", latest: "v0.3.0", kind: .bundle),
-            home: "/Users/x", exists: nothing)
+            for: report(installed: "0.2.0", latest: "v0.3.0", kind: .bundle,
+                        installerCheckout: false),
+            exists: nothing)
         guard case .refused(let why) = decision else { #expect(Bool(false), "\(decision)"); return }
         #expect(why.contains("bootstrap.sh"))
     }
@@ -381,16 +531,170 @@ import Testing
     @Test func aDevelopersOwnCheckoutIsNeverTouched() {
         let decision = UpdateCommand.applyPlan(
             for: report(installed: "0.2.0", latest: "v0.3.0", kind: .checkout),
-            home: "/Users/x", exists: all)
+            exists: all)
         guard case .refused(let why) = decision else { #expect(Bool(false), "\(decision)"); return }
         #expect(why.contains("your own checkout"))
         #expect(why.contains("make install"))
     }
 
+    /// A bundle assembled in somebody's own checkout, on a clean tree, on the
+    /// branch the remote calls default: `git pull && make install`, which is
+    /// the command that copy already prints. "A developer's own checkout is
+    /// never moved onto a tag" was about local commits and unfinished
+    /// branches, not about every checkout — and while it covered this shape
+    /// too, a Mac installed from a checkout had a menu item that could only
+    /// ever report a refusal.
+    @Test func aCleanCheckoutBundleIsPulledAndRebuilt() {
+        let decision = UpdateCommand.applyPlan(
+            for: checkoutBundle(), exists: all,
+            checkoutState: { _ in .init(branch: "main", defaultBranch: "main", clean: true) })
+        guard case .run(let plan) = decision else { #expect(Bool(false), "\(decision)"); return }
+
+        #expect(plan.steps.count == 3)
+        #expect(plan.steps[0].described == "git -C \(mine) fetch --quiet")
+        #expect(plan.steps[1].described == "git -C \(mine) merge --ff-only --quiet @{u}")
+        #expect(plan.steps[2].described == "make -C \(mine) install NOTES=0")
+        // No tag is checked out, so the version this lands is whatever the
+        // branch holds. Claiming the exact one would be a claim nobody made.
+        #expect(plan.target == "0.3.0 or newer")
+        #expect(plan.reopenBundle == "/Users/luis/Applications/Simmer.app")
+    }
+
+    /// The conditions, each refused by name. Uncommitted work and an
+    /// unfinished branch are exactly what "simmer does not rearrange somebody's
+    /// desk" was about, and every refusal carries the command that works.
+    @Test func aCheckoutThatIsNotReadyIsRefusedWithTheReason() {
+        let cases: [(UpdateCommand.CheckoutState?, String)] = [
+            (.init(branch: "main", defaultBranch: "main", clean: false), "uncommitted changes"),
+            (.init(branch: "feat/x", defaultBranch: "main", clean: true), "is on feat/x, not main"),
+            (.init(branch: "", defaultBranch: "main", clean: true), "is not on a branch"),
+            (.init(branch: "main", defaultBranch: "", clean: true), "which branch is default"),
+            (.init(branch: "main", defaultBranch: "main", clean: true, aheadOfUpstream: 2),
+             "has 2 commits that main has not pushed"),
+            (.init(branch: "main", defaultBranch: "main", clean: true, aheadOfUpstream: nil),
+             "tracks nothing"),
+            (nil, "cannot read the checkout"),
+        ]
+        for (state, expected) in cases {
+            let decision = UpdateCommand.applyPlan(for: checkoutBundle(), exists: all,
+                                                   checkoutState: { _ in state })
+            guard case .refused(let why) = decision else {
+                #expect(Bool(false), "\(String(describing: state)): \(decision)")
+                continue
+            }
+            #expect(why.contains(expected), "\(why)")
+            #expect(why.contains("cd \(mine) && git pull && make install"), "\(why)")
+        }
+    }
+
+    /// The condition that clean-and-on-default does not cover, and the one
+    /// this refusal exists for in the first place.
+    ///
+    /// A developer's checkout with local commits is clean and on `main`, so
+    /// the first two conditions pass it — and the plan's own steps do not
+    /// catch it either: `git merge --ff-only @{u}` SUCCEEDS against an
+    /// upstream that is already an ancestor, because that is a no-op. So the
+    /// plan ran to the end, `make install` shipped the unreleased tree, and
+    /// `--apply` reported success naming a release the installed binary does
+    /// not report. Verified against real `git`, not assumed.
+    @Test func aCheckoutWithUnpushedCommitsIsRefusedAndTheCountIsNamed() {
+        let decision = UpdateCommand.applyPlan(
+            for: checkoutBundle(), exists: all,
+            checkoutState: { _ in
+                .init(branch: "main", defaultBranch: "main", clean: true, aheadOfUpstream: 1)
+            })
+        guard case .refused(let why) = decision else { #expect(Bool(false), "\(decision)"); return }
+        #expect(why.contains("has 1 commit that main has not pushed"),
+                "one commit is singular, and the count is what tells somebody which state they are in: \(why)")
+        #expect(why.contains("would install those rather than the release"), "\(why)")
+        #expect(why.contains("git -C \(mine) push"), "the refusal names the command that clears it: \(why)")
+    }
+
+    /// In step with the upstream is the shape the plan is for, and it still
+    /// runs — the new condition must not refuse the case it was built around.
+    @Test func aCheckoutInStepWithItsUpstreamStillRuns() {
+        let decision = UpdateCommand.applyPlan(
+            for: checkoutBundle(), exists: all,
+            checkoutState: { _ in
+                .init(branch: "main", defaultBranch: "main", clean: true, aheadOfUpstream: 0)
+            })
+        guard case .run(let plan) = decision else { #expect(Bool(false), "\(decision)"); return }
+        #expect(plan.steps.count == 3)
+    }
+
+    /// The seam's fourth field, including what a typo in it must do.
+    ///
+    /// A malformed count answering "in step" would be the one wrong answer
+    /// that lets the plan run — so it answers "cannot read this checkout",
+    /// which refuses. Same reason `SIMMER_FAKE_APPLY_FAIL` fails nothing on a
+    /// typo rather than failing something.
+    @Test(arguments: [
+        // (the seam value, the branch it names, how far ahead, readable at all)
+        ("main:main:clean", "main", 0, true),
+        ("main:main:clean:0", "main", 0, true),
+        ("main:main:clean:3", "main", 3, true),
+        ("main:main:clean:none", "main", nil, true),
+        ("main:main:clean:soon", "", nil, false),
+        ("main:main:clean:-1", "", nil, false),
+        ("main:main", "", nil, false),
+    ])
+    func theCheckoutSeamReadsAnOptionalAheadCount(
+        value: String, branch: String, ahead: Int?, readable: Bool
+    ) {
+        let state = FakeCheckoutProbe(value: value).state(of: "/anywhere")
+        guard readable else {
+            #expect(state == nil, "\(value) should not have been readable: \(String(describing: state))")
+            return
+        }
+        #expect(state?.branch == branch)
+        #expect(state?.aheadOfUpstream == ahead)
+    }
+
+    /// Three fields still mean exactly what they meant. The seam is a
+    /// contracted surface (CONTRACTS.md § The test seam), so the fourth field
+    /// is added, never required.
+    @Test func theOldThreeFieldSeamValueIsUnchanged() {
+        let state = FakeCheckoutProbe(value: "main:main:clean").state(of: "/anywhere")
+        #expect(state == UpdateCommand.CheckoutState(branch: "main", defaultBranch: "main",
+                                                     clean: true, aheadOfUpstream: 0))
+    }
+
+    /// The directory that installed this copy is gone. Refused, and the
+    /// refusal names which directory rather than saying there never was one.
+    @Test func aBundleWhoseSourceVanishedIsRefusedByName() {
+        let install = Install.detect(
+            executablePath: "/Users/luis/Applications/Simmer.app/Contents/MacOS/simmer",
+            home: "/Users/luis", exists: { _ in false },
+            plist: { _ in [Install.sourceKey: mine] })
+        let decision = UpdateCommand.applyPlan(for: report(install: install), exists: nothing)
+        guard case .refused(let why) = decision else { #expect(Bool(false), "\(decision)"); return }
+        #expect(why.contains(mine))
+        #expect(why.contains("bootstrap.sh"))
+    }
+
+    private var mine: String { "/Users/luis/workspace/tools/simmer" }
+
+    private func checkoutBundle() -> UpdateCommand.Report {
+        let install = Install.detect(
+            executablePath: "/Users/luis/Applications/Simmer.app/Contents/MacOS/simmer",
+            home: "/Users/luis", exists: { $0.hasPrefix(mine) },
+            plist: { _ in [Install.sourceKey: mine] })
+        #expect(install.source == .checkout(mine))
+        return report(install: install)
+    }
+
+    private func report(install: Install) -> UpdateCommand.Report {
+        UpdateCommand.check(
+            now: 1_800_000_000, installed: "0.2.0", install: install, appVersion: nil,
+            ledger: Ledger(stateDir: FileManager.default.temporaryDirectory
+                .appendingPathComponent("simmer-apply-\(UUID().uuidString)")),
+            source: FakeReleaseSource(value: "v0.3.0"), cached: false, seamed: false)
+    }
+
     @Test func homebrewUpgradesThroughBrew() {
         let decision = UpdateCommand.applyPlan(
             for: report(installed: "0.2.0", latest: "v0.3.0", kind: .homebrew),
-            home: "/Users/x", exists: { $0 == "/opt/homebrew/bin/brew" })
+            exists: { $0 == "/opt/homebrew/bin/brew" })
         guard case .run(let plan) = decision else { #expect(Bool(false), "\(decision)"); return }
         #expect(plan.steps.map(\.described) == ["brew upgrade simmer"])
     }
@@ -398,7 +702,7 @@ import Testing
     @Test func homebrewWithoutBrewRefusesRatherThanGuessingAPath() {
         let decision = UpdateCommand.applyPlan(
             for: report(installed: "0.2.0", latest: "v0.3.0", kind: .homebrew),
-            home: "/Users/x", exists: nothing)
+            exists: nothing)
         guard case .refused = decision else { #expect(Bool(false), "\(decision)"); return }
     }
 
@@ -463,7 +767,7 @@ import Testing
         return UpdateCommand.check(
             now: 1_800_000_000, installed: installed,
             install: Install.detect(executablePath: "/Applications/Simmer.app/Contents/MacOS/simmer",
-                                    exists: { _ in false }),
+                                    home: "/Users/nobody", exists: { _ in false }),
             appVersion: nil, ledger: Ledger(stateDir: dir),
             source: FakeReleaseSource(value: latest), cached: false, seamed: seamed)
     }
@@ -565,7 +869,7 @@ import Testing
         return UpdateCommand.check(
             now: 1_800_000_000, installed: installed,
             install: Install.detect(executablePath: "/Applications/Simmer.app/Contents/MacOS/simmer",
-                                    exists: { _ in false }),
+                                    home: "/Users/nobody", exists: { _ in false }),
             appVersion: nil, ledger: Ledger(stateDir: dir),
             source: FakeReleaseSource(value: latest), cached: false, seamed: false)
     }
@@ -806,14 +1110,15 @@ import Testing
             .appendingPathComponent("simmer-phase-\(UUID().uuidString)")
         return UpdateCommand.check(
             now: 1_800_000_000, installed: "0.2.0",
-            install: Install.detect(executablePath: path, exists: { _ in true }),
+            install: Install.detect(executablePath: path, home: home,
+                                    exists: { _ in true }),
             appVersion: nil, ledger: Ledger(stateDir: dir),
             source: FakeReleaseSource(value: "v9.9.9"), cached: false, seamed: false)
     }
 
     private func steps(_ kind: Install.Kind) -> [UpdateCommand.ApplyStep] {
         guard case .run(let plan) = UpdateCommand.applyPlan(
-            for: report(kind: kind), home: "/Users/x", exists: { _ in true })
+            for: report(kind: kind), exists: { _ in true })
         else { #expect(Bool(false), "no plan for \(kind)"); return [] }
         return plan.steps
     }

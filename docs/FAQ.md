@@ -26,16 +26,36 @@ Your state (`~/.local/state/simmer/`) is left alone; delete it if you want the l
 **I removed simmer but `sudo -l` still shows the pmset rule.** Look for it under another name: `sudo grep -rn disablesleep /etc/sudoers /etc/sudoers.d/`.
 One tested machine carried a rule called `awake` from before the tool was renamed, and every simmer install adopted it silently instead of writing its own.
 
-**A release broke something — how do I go back?** One command, and which one depends on how this copy got here.
-`simmer update --json` prints it as `provenance`; `simmer update` says it in prose ("installed as Simmer.app", "running from the checkout at …").
+### The update check
 
-| provenance | going back to `v0.2.0` |
+The setup window has two checkboxes and one line each; this is the rest of it.
+
+**What the daily check sends.** One request to github.com, asking which release is newest.
+It is a `HEAD` request that carries no query, no cookies and no cache, and the only thing it says about the sender is `simmer/<version>` in its User-Agent — no identifier, no machine name, no telemetry.
+GitHub sees the request itself, and therefore the IP address it came from, exactly as it would if you opened the releases page in a browser.
+Finding a newer release puts a row in the menu bar and posts one banner per version, and that is all it does: installing is the second checkbox, or a command you run.
+Turn it off in the setup window, or set `SIMMER_NO_UPDATE_CHECK=1`.
+`simmer update`, typed by a person who is asking, is never suppressed by either — a command that answered "not checking" to the question "check" would be a silent drop in a new place.
+
+**What an unattended install does.** It is off by default, and it rides on the daily check: with the check off it cannot fire, and the setup window disables it rather than showing a switch that lies.
+An update quits `Simmer.app`, replaces the binary the guard's LaunchAgent points at, takes a minute or two to compile, and opens the app again as its last step.
+Your state is not part of it: the sudo rule, the claims under `claims/` and the cap are exactly where they were afterwards.
+So it never starts while a claim is live — that is exactly the walked-away window simmer exists to protect, and an update is the one thing that would end it.
+A release skipped for that reason is retried at the next daily check; nothing is lost by waiting.
+
+**A release broke something — how do I go back?** One command, and which one depends on how this copy got here.
+`simmer update --json` prints it as `provenance` and `install_source_kind`; `simmer update` says it in prose ("installed as Simmer.app", "installed as Simmer.app from the checkout at …", "running from the checkout at …").
+
+| provenance · `install_source_kind` | going back to `v0.2.0` |
 |---|---|
-| `bundle` — the one-paste installer | `git -C ~/.local/share/simmer checkout v0.2.0 && make -C ~/.local/share/simmer install` |
-| `checkout` — your own repository | `git checkout v0.2.0 && make install`, in it |
+| `bundle` · `installer` — the one-paste installer | `git -C ~/.local/share/simmer checkout v0.2.0 && make -C ~/.local/share/simmer install` |
+| `bundle` · `checkout` — installed from your own repository | `git -C <install_source> checkout v0.2.0 && make -C <install_source> install` |
+| `checkout` — running out of your own repository | `git checkout v0.2.0 && make install`, in it |
 | `homebrew` | Homebrew has no way back to a version it has already replaced — see below |
 
-The bundle row is the same checkout `simmer update --apply` builds from, moved onto an older tag instead of a newer one, so it is the same recipe `bootstrap.sh` ran and it needs no password.
+`install_source` is the checkout `make install` ran in, recorded in the bundle at install time — so the second row needs no guessing about where your copy came from.
+The first two rows are the same checkout `simmer update --apply` builds from, moved onto an older tag instead of a newer one, so they are the same recipe that installed it and they need no password.
+Going back in your own repository leaves it on a detached head at the tag; `git switch -` puts it back when you are done.
 `make install` quits `Simmer.app`; open it again afterwards (`open -a Simmer`), because nothing else will — bringing the app back is `simmer update --apply`'s last step, and a rollback is not an `--apply`.
 The guard's LaunchAgent is rewritten to point at the older binary.
 
@@ -63,6 +83,8 @@ Homebrew's own documented route to an older version is `brew version-install`, w
 For simmer this is currently theory: there is no tap yet (`docs/ROADMAP.md`), so nobody has a Homebrew install to roll back.
 
 **A release broke something for everyone, not just me.** It is fixed forward with a new patch version, never by deleting the tag — `docs/RELEASING.md` § Undoing one says why, and it is the same reason a rollback is a local action rather than a published one.
+
+### Claims, caps and notifications
 
 **What is a claim?** Your request for awake time: a deadline, a reason, a battery floor, and your name on it.
 The Mac stays awake until the latest live claim ends.

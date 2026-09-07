@@ -32,8 +32,9 @@ import Testing
         var files: [String: Data] = [:]
 
         func verdict(extensionsDir: String = "/home/.config/raycast/extensions",
-                     checkout: String? = "/home/.local/share/simmer") -> RaycastExtension.Verdict {
-            RaycastExtension.inspect(extensionsDir: extensionsDir, checkout: checkout,
+                     comparison: RaycastExtension.Comparison
+                         = .against("/home/.local/share/simmer")) -> RaycastExtension.Verdict {
+            RaycastExtension.inspect(extensionsDir: extensionsDir, comparison: comparison,
                                      read: { files[$0] }, entries: { dirs[$0] })
         }
     }
@@ -157,8 +158,10 @@ import Testing
         world.dirs[Self.extensions] = ["simmer"]
         world.dirs[Self.installed] = ["status.js", "package.json"]
         world.files["\(Self.installed)/package.json"] = manifest(["status"])
-        guard case .unknown(let why) = world.verdict(checkout: nil) else {
-            #expect(Bool(false), "\(world.verdict(checkout: nil))")
+        let brew = RaycastExtension.Comparison
+            .impossible("a Homebrew install has no checkout to compare it against")
+        guard case .unknown(let why) = world.verdict(comparison: brew) else {
+            #expect(Bool(false), "\(world.verdict(comparison: brew))")
             return
         }
         #expect(why.contains("Homebrew"))
@@ -176,25 +179,63 @@ import Testing
     }
 
     /// Which checkout follows provenance, for the same reason
-    /// `updateCommand` does: the answer depends on how this copy got here.
+    /// `updateCommand` does: the answer depends on how this copy got here —
+    /// and, for a bundle, on the checkout the bundle itself records.
     @Test func theCheckoutFollowsProvenance() {
+        let installer = "/Users/x/\(Install.installerCheckout)"
         let bundle = Install.detect(
             executablePath: "/Applications/Simmer.app/Contents/MacOS/simmer",
-            exists: { _ in false })
-        #expect(RaycastExtension.checkout(for: bundle, home: "/Users/x")
-            == "/Users/x/\(UpdateCommand.installerCheckout)")
+            home: "/Users/x",
+            exists: { $0.hasPrefix(installer) })
+        #expect(RaycastExtension.comparison(for: bundle) == .against(installer))
 
         // Only the root carries both markers; the intermediate directories
         // must not, or the walk up the tree stops at the first one.
         let own = Install.detect(
             executablePath: "/Users/dev/simmer/.build/debug/simmer",
+            home: "/Users/dev",
             exists: { ["/Users/dev/simmer/Package.swift", "/Users/dev/simmer/.git"].contains($0) })
-        #expect(RaycastExtension.checkout(for: own, home: "/Users/dev") == "/Users/dev/simmer")
+        #expect(RaycastExtension.comparison(for: own) == .against("/Users/dev/simmer"))
 
         let brew = Install.detect(
             executablePath: "/opt/homebrew/Cellar/simmer/0.3.0/Simmer.app/Contents/MacOS/simmer",
+            home: "/Users/x",
             exists: { _ in true })
-        #expect(RaycastExtension.checkout(for: brew, home: "/Users/x") == nil)
+        guard case .impossible(let why) = RaycastExtension.comparison(for: brew) else {
+            #expect(Bool(false), "Homebrew has no checkout to compare against")
+            return
+        }
+        #expect(why.contains("Homebrew"))
+    }
+
+    /// A bundle assembled in somebody's own checkout is compared against THAT
+    /// checkout. Before the bundle recorded where it came from, this row said
+    /// "~/.local/share/simmer has no integrations/raycast to compare it
+    /// against" on a Mac whose checkout was sitting one directory away.
+    @Test func aBundleFromACheckoutIsComparedAgainstIt() {
+        let mine = "/Users/luis/workspace/tools/simmer"
+        let bundle = Install.detect(
+            executablePath: "/Users/luis/Applications/Simmer.app/Contents/MacOS/simmer",
+            home: "/Users/luis",
+            exists: { $0.hasPrefix(mine) },
+            plist: { _ in [Install.sourceKey: mine] })
+        #expect(RaycastExtension.comparison(for: bundle) == .against(mine))
+    }
+
+    /// The directory it was installed from is gone. "There is no checkout" is
+    /// true and useless; naming the one that went missing is what a person
+    /// can act on.
+    @Test func aVanishedSourceIsNamedRatherThanCalledAbsent() {
+        let bundle = Install.detect(
+            executablePath: "/Users/luis/Applications/Simmer.app/Contents/MacOS/simmer",
+            home: "/Users/luis",
+            exists: { _ in false },
+            plist: { _ in [Install.sourceKey: "/Users/luis/old/simmer"] })
+        guard case .impossible(let why) = RaycastExtension.comparison(for: bundle) else {
+            #expect(Bool(false), "a checkout that is not there cannot be compared against")
+            return
+        }
+        #expect(why.contains("/Users/luis/old/simmer"))
     }
 
     /// The fix is `npm run dev`, not `npm run build`: `ray build` produces the

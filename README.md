@@ -82,7 +82,8 @@ simmer --help               # the rest, including the exit-code API
 **`simmer update --apply` runs that command for you**, and the menu bar offers the same thing as **Install it now** — because most of the people the menu bar exists for do not have a terminal open.
 It asks for no password, and it never pipes a script from the internet into a shell: the one-paste install already leaves its checkout at `~/.local/share/simmer`, so an update fetches the new tag there and runs `make install`.
 Simmer.app quits and comes back; a claim you are holding survives it.
-In your own checkout it refuses and tells you to `git pull && make install` — that is your repository, not simmer's machinery.
+If you installed with `make install` from your own checkout, that is the checkout it updates through — the bundle records which one it was — and it pulls and rebuilds only when that tree is clean and on the branch the remote calls default.
+Anything else refuses and names the reason: a copy running straight out of a checkout is your repository rather than simmer's machinery, and so is one with uncommitted work in it.
 
 `Simmer.app` makes the same check once a day, puts one row in the menu bar when there is something newer, and posts **one banner per new version** — never the same one twice, and nothing at all when you are current.
 The bottom of the menu always says which version you are on and which is newest.

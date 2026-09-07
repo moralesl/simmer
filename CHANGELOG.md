@@ -5,6 +5,77 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ## Unreleased
 
+<!-- release: patch -->
+
+### Changed
+
+- **The setup window says less.** The two update checkboxes had a paragraph each — eight sentences between them, in a window whose other three rows are a title and one line.
+  Each is one line now, and each is the promise that decides its box: how little the daily check does, and that an install can never land on a live claim.
+  Everything the paragraphs carried moved into `docs/FAQ.md` § The update check, which a new **Learn more…** link under the pair opens — so nothing is lost and nothing is on screen twice.
+  `StructureTests` holds both halves: a caption that grows a second line fails, and so does a link whose anchor the FAQ no longer has.
+
+### Releasing
+
+- **The release is a pull request that is always open, and merging it is the release.**
+  0.3.0 was cut by hand: six steps from a laptop shell, each one remembered.
+  Now every push to `main` leaves exactly one pull request current — title `release: X.Y.Z`, branch `release/next`, one commit holding the `CHANGELOG.md` rename and the `SimmerVersion.string` bump, and the notes GitHub would publish as its body.
+  Reading it is the review; merging it lands the release commit, and a job on `main` sees a version no tag names, tags it, and hands over to the publish path.
+  So a release can be taken from a phone, and the decision stays exactly where it was: a person, in front of something they can read first.
+  Nothing about what a release IS moves — `release.yml` is called rather than copied, so every check that stood before a tag still stands before it, on the same commit, in the same order.
+  Only `main` acts: run from any other ref the workflow reports what a release would be and stops, so a dispatch from a branch cannot open a pull request out of that branch or tag a commit nobody released.
+- **A release declares its own number, next to the notes that earned it.**
+  One line anywhere under `## Unreleased` — `<!-- release: patch -->`, `minor` or `major` — travels with the change, in the pull request that makes it, reviewed by whoever reviews the notes.
+  Without it the only override was a label on the release pull request, which made the mechanism's first act in front of somebody a wrong number to be corrected: this release would have opened as 0.4.0 and been relabelled to 0.3.1.
+  An HTML comment rather than a visible line because it is an instruction to CI and not a note to whoever reads the release, because a visible *"released as a patch"* under a heading called **Unreleased** is a claim about something that has not happened, and because a `.md` diff is raw markdown — so it is visible exactly where it is reviewed and nowhere else.
+  It is **consumed** when the section is renamed: a directive to CI has no business in published notes, and a one-release decision must not repeat itself at the next one. `release-check` refuses a release section that still carries one.
+  Precedence is **label → declaration → the category rule**, because the label is the later decision and the one taken looking at the release itself; a misspelt or duplicated declaration is refused rather than ignored, since ignoring it ships the release at whatever the rule said while somebody believes they declared otherwise.
+- **The version number is read out of the CHANGELOG rather than remembered.**
+  `scripts/release.sh` is `docs/RELEASING.md` § What a version number means, as code: an entry under `### Machine surface` or `### The test seam` in `## Unreleased` makes the next release a **minor**, an empty section means there is nothing to release, and anything else is a **patch**.
+  A minor is *declared* by writing under one of those headings, never guessed from prose — "adds a `--json` field" and "adds a menu row" are the same sentence to a machine.
+  A **major** is not inferred at all: removing a field, renaming one and changing one's type read exactly like adding one, so it takes a label on the release pull request.
+  All three kinds are declarable the same way — `release: major`, `release: minor`, `release: patch`, exactly one, two refused rather than chosen between — because "the rule was too cautious" is not the only reason to overrule it.
+  Sometimes it is *we are shipping this as a patch anyway, and we know what that costs*, and a rule with no override is one that gets worked around outside the mechanism, where nothing records who decided or what the rule had said.
+  So the pull request prints both, and which of the two said so: *"a **patch**, declared in the CHANGELOG, where the rule read this as a **minor**"*.
+  A table test drives the rule from `swift test`, so it rides every CI leg.
+- **`release-check` is a check on the pull request**, and it is what makes the label safe.
+  CI computes the number when it writes the branch; a label added afterwards changes the answer and nothing recomputes until the next push to `main`.
+  The check re-derives it from `main` through the same label reader the branch was written with, and goes red on the mismatch — so a declared number is accepted and an undeclared one cannot slip through.
+  On every other pull request it asks one question: is there still somewhere for the next change's notes to land.
+- **`make release-check` stays, for a laptop, and now runs the same assertions CI does.**
+  Its file checks *are* `scripts/release.sh check`, so a laptop and a runner cannot answer differently, and its epilogue points at pushing `main` rather than at tagging by hand.
+  Tagging by hand still works and still publishes.
+
+### Fixed
+
+- **A verdict cached by the version you replaced is no longer repeated as this one's.**
+  Two minutes after installing 0.3.0, `doctor` reported "simmer 0.3.0 is ahead of the newest release (0.2.0)" and the menu footer said "newest": 0.2.0 had recorded that answer the day before the 0.3.0 tag existed, and the new binary read the file as a fact about now.
+  The record carries the version that wrote it, and a reader that is not that version treats it as absent — so the first `doctor`, menu tick or `--cached` read after an install says "not checked yet", and `Simmer.app`'s daily check fires instead of skipping on a freshness stamp it did not write.
+  A cached answer older than a day now says how old it is, on the footer, the `doctor` row and the launcher's accessory.
+- **`make install` records which checkout it ran in, and every sentence about "the installer's checkout" follows it.**
+  The bundle is the same bundle whichever checkout assembled it, so simmer assumed `~/.local/share/simmer` — the path `bootstrap.sh` uses — whatever the truth was.
+  On a Mac installed with `make install` from its own checkout that produced a `doctor` footer telling the reader to run `make -C ~/.local/share/simmer install` in a directory that is not there, a Raycast row claiming there was no checkout to compare the extension against while the checkout sat one directory away, and an `update --apply` that refused for the same reason.
+  `$(CURDIR)` is now stamped into the bundle's `Info.plist` (`SimmerInstallSource`), and the update command, the repair command, `doctor`'s rows and the Raycast comparison are all derived from it.
+  A bundle installed by an older simmer carries no stamp and is placed exactly as it was before: the installer's checkout, if that is on the Mac.
+- **`update --apply` works on a Mac installed from a checkout.**
+  It pulls that checkout and re-runs `make install` — the two commands the same copy already prints — and only when the tree is clean and on the branch the remote calls default.
+  Anything else refuses by name: uncommitted changes, another branch, a detached head, a remote whose default branch cannot be read locally, or a recorded checkout that has been moved or deleted.
+  **Local commits included** — a clean tree on `main` holding work nobody has pushed passed both other conditions, and the plan's own steps did not catch it either, because `git merge --ff-only @{u}` succeeds against an upstream that is already an ancestor: it is a no-op, so `make install` shipped the developer's unreleased tree and `--apply` reported success naming a release the installed binary does not report.
+  The refusal names the count and the command that clears it, and a branch tracking nothing refuses too — there is no upstream to update from.
+  "A developer's own checkout is never moved onto a tag" still holds; it was about local commits and unfinished branches, and no checkout but the installer's is moved onto a tag.
+- **The Raycast check says the same thing the CLI does.** Its provenance line read "installed as Simmer.app" for every bundle, which is what the CLI's own prose used to say; it now names the checkout the bundle was built in, or says that checkout is no longer there.
+  A simmer too old to carry the fields says what it said before.
+
+### Machine surface
+
+- `update --json` gains **`install_source`** (the checkout this copy was built in, or `null`) and **`install_source_kind`** (`installer`·`checkout`·`gone`·`none`).
+  Appended, like every field after the first release.
+  **`provenance` keeps its four values** — `homebrew`·`bundle`·`checkout`·`unknown` — because it is a closed set that every reader switches on exhaustively, this repository's own Raycast extension included; a fifth value would have broken each of them.
+- **`SIMMER_FAKE_CHECKOUT`** joins the test seam: `<branch>:<default branch>:clean|dirty[:<ahead>]`, the read that decides whether `--apply` may pull a working checkout.
+  A seamed process without it reads nothing, exactly as one without `SIMMER_FAKE_LATEST` does.
+  The optional fourth field is how many commits the branch has that its upstream does not — `none` for a branch tracking nothing — and **absent means zero**, so every three-field value still says what it said.
+  A count that is not a non-negative number answers "cannot read this checkout" rather than "in step": in step is the one value that lets the plan run, and a typo must not be the thing that grants it.
+- The `update-check` state file gains an `installed=` line. It is not a machine surface — `simmer update --json` is how anything else asks — and a file written by an older simmer is read as absent rather than misread.
+
 ## 0.3.0 — 2026-09-07
 
 ### Added

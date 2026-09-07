@@ -271,6 +271,8 @@ test("update --json carries every field the views read", { skip }, async () => {
     "seamed",
     "release_notes_url",
     "auto_update",
+    "install_source",
+    "install_source_kind",
   ] as const) {
     assert.ok(key in update, `update --json lost ${key}`);
   }

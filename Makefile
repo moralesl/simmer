@@ -14,7 +14,8 @@ PREFIX       ?= $(HOME)/Applications
 # Ids spent on the maintainer's Mac, and therefore unusable:
 #   .dev   — denied on first install
 #   .dev2  — the id the rewrite was developed under
-# Development after this point uses .dev3 (make BUNDLE_ID=…dev3 app), which is
+#   .dev3  — denied, spent rendering the setup window (0.3.1)
+# Development after this point uses .dev4 (make BUNDLE_ID=…dev4 app), which is
 # then spent too. There is no supply problem; there is no recovery either.
 BUNDLE_ID    ?= io.github.moralesl.simmer
 GUARD_LABEL   = io.github.moralesl.simmer.guard
@@ -133,16 +134,24 @@ release-notes:
 
 # Everything that must be true before a tag exists. Runs the suite, because a
 # tag on a red commit is an install everyone gets.
+#
+# The ordinary path is no longer this: it is merging the release pull request
+# CI keeps open (docs/RELEASING.md). This stays the same gate for a laptop —
+# and the file assertions in it ARE `scripts/release.sh check`, character for
+# character what CI's `release-check` leg runs on that pull request. One
+# implementation, so a laptop and a runner cannot answer differently.
 release-check:
 	@printf 'releasing %s\n\n' '$(VERSION)'
 	@test -z "$$(git status --porcelain)" || { 	  echo "the working tree is dirty — a tag must name a commit that exists"; exit 1; }
 	@branch="$$(git rev-parse --abbrev-ref HEAD)"; [ "$$branch" = main ] || { 	  echo "on $$branch, not main — releases are cut from main"; exit 1; }
 	@git rev-parse -q --verify 'refs/tags/v$(VERSION)' >/dev/null && { 	  echo "v$(VERSION) is already a tag. Bump Sources/SimmerCore/Version.swift first."; 	  exit 1; } || true
-	@# The notes have to exist before the release does. A section is also what
+	@# The notes have to exist before the release does — the section, its date,
+	@# its body, and `## Unreleased` still above it. A section is also what
 	@# `StructureTests` asserts for the compiled-in version, so this can only
-	@# fail here if the heading's date is missing.
-	@grep -q '^## $(VERSION) — ' CHANGELOG.md || { 	  echo "CHANGELOG.md has no '## $(VERSION) — <date>' section"; exit 1; }
-	@test -n "$$($(MAKE) --no-print-directory release-notes)" || { 	  echo "the $(VERSION) section in CHANGELOG.md is empty"; exit 1; }
+	@# fail here if one of the others is wrong.
+	@echo "▸ the two files, asked what CI asks"
+	@./scripts/release.sh check \
+	  --released "$$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' | tr '\n' ' ')"
 	@echo "▸ the suite, against the commit that would be tagged"
 	@$(MAKE) --no-print-directory test >/dev/null || { echo "tests are red"; exit 1; }
 	@$(MAKE) --no-print-directory test-raycast >/dev/null || { 	  echo "the extension's suite is red"; exit 1; }
@@ -151,12 +160,16 @@ release-check:
 	@echo "▸ these are the release notes GitHub will carry"
 	@$(MAKE) --no-print-directory release-notes | sed 's/^/    /'
 	@echo ""
-	@echo "▸ nothing has been tagged. Yours to run:"
+	@echo "▸ nothing has been tagged, and nothing here needs to be."
+	@echo "    git push origin main"
+	@echo ""
+	@echo "  CI takes it from there: release-pr.yml on main finds a version no tag"
+	@echo "  names, tags it, and calls release.yml — which runs the whole matrix"
+	@echo "  again on the tagged commit and publishes the section above."
+	@echo ""
+	@echo "  Tagging by hand still works, and still starts release.yml:"
 	@echo "    git tag -a v$(VERSION) -m 'simmer $(VERSION)'"
 	@echo "    git push origin v$(VERSION)"
-	@echo ""
-	@echo "  The tag push runs .github/workflows/release.yml, which verifies this"
-	@echo "  again on a clean runner and publishes the release from the section above."
 
 # Assemble the bundle: both binaries inside Contents/MacOS — the bundle IS the
 # notification identity, and the CLI posting from inside it is what lets a
@@ -201,8 +214,14 @@ app: build
 	# launched from the Dock inherits none of the shell's environment, so a
 	# shell exporting XDG_STATE_HOME put the app on one ledger and the CLI
 	# on another — the guard's bug, in the other half of the bundle.
+	# @INSTALL_SOURCE@: where this bundle was built. `simmer doctor` and
+	# `simmer update` both name a checkout to run `make install` in, and
+	# before this they named ~/.local/share/simmer whatever the truth was —
+	# so a Mac installed from a maintainer's own checkout was told to repair
+	# itself in a directory that does not exist there.
 	sed -e 's/@BUNDLE_ID@/$(BUNDLE_ID)/g' -e 's/@VERSION@/$(VERSION)/g' \
 	    -e 's|@STATE_HOME@|$(STATE_HOME)|g' \
+	    -e 's|@INSTALL_SOURCE@|$(CURDIR)|g' \
 	    app/Info.plist.template > $(STAGED_APP)/Contents/Info.plist
 	# The app executable is NOT named "Simmer": APFS is case-insensitive,
 	# so "Simmer" and the CLI "simmer" would silently be the same file.

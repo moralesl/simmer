@@ -194,6 +194,162 @@ import Testing
             .appendingPathComponent("Applications/Simmer.app/Contents/MacOS/simmer").path]
     }
 
+    /// A bundle that records the checkout it was built in — what `make
+    /// install` leaves behind on a Mac installed from somebody's own checkout,
+    /// which is how the maintainer's Mac is installed and the shape every
+    /// sentence about "the installer's checkout" used to be wrong about.
+    /// `ahead` is the fourth field of `SIMMER_FAKE_CHECKOUT`: the number of
+    /// commits the branch has that its upstream does not, or `none` for a
+    /// branch tracking nothing. It defaults to being in step, so every caller
+    /// written before the field existed still describes what it described.
+    private func checkoutBundleInstall(_ sim: Sim, clean: Bool = true,
+                                       branch: String = "main",
+                                       ahead: String = "0",
+                                       appVersion: String? = nil) -> [String: String] {
+        let checkout = sim.root.appendingPathComponent("workspace/simmer")
+        try? FileManager.default.createDirectory(
+            at: checkout.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        try? "all:\n".write(to: checkout.appendingPathComponent("Makefile"),
+                            atomically: true, encoding: .utf8)
+
+        let contents = sim.root.appendingPathComponent("Applications/Simmer.app/Contents")
+        try? FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        try? """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
+        "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+        \t<key>SimmerInstallSource</key>
+        \t<string>\(checkout.path)</string>
+        \(appVersion.map { "\t<key>CFBundleShortVersionString</key>\n\t<string>\($0)</string>" } ?? "")
+        </dict>
+        </plist>
+
+        """.write(to: contents.appendingPathComponent("Info.plist"),
+                  atomically: true, encoding: .utf8)
+
+        return [
+            "SIMMER_BIN": contents.appendingPathComponent("MacOS/simmer").path,
+            "SIMMER_FAKE_CHECKOUT": "\(branch):main:\(clean ? "clean" : "dirty"):\(ahead)",
+        ]
+    }
+
+    /// The checkout it was built in is the checkout it updates through — the
+    /// same two commands that copy prints, run for a person who has no
+    /// terminal to paste them into.
+    @Test func aCheckoutBundleUpdatesThroughItsOwnCheckout() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        var env = checkoutBundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+        env["SIMMER_FAKE_APPLY"] = log.path
+        let result = sim.run(["update", "--apply", "--json"], env: env)
+
+        #expect(result.code == 0, "\(result.combined)")
+        let json = object(result.out)
+        #expect(json["action"] as? String == "updated")
+        #expect(json["applied"] as? Bool == true)
+        // Provenance keeps its four values; the checkout is two new fields.
+        #expect(json["provenance"] as? String == "bundle")
+        #expect(json["install_source_kind"] as? String == "checkout")
+        #expect((json["install_source"] as? String)?.hasSuffix("workspace/simmer") == true)
+        #expect((json["update_command"] as? String)?.contains("git pull") == true)
+
+        let ran = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+        let lines = ran.split(separator: "\n").map(String.init)
+        #expect(lines.count == 3, "recorded: \(lines)")
+        #expect(lines[0].contains("fetch --quiet"))
+        #expect(lines[1].contains("merge --ff-only"))
+        #expect(lines[2].contains("install NOTES=0"))
+        #expect(!ran.contains("checkout --quiet"), "a working checkout was moved onto a tag")
+    }
+
+    /// Uncommitted work, or an unfinished branch: refused, with the reason and
+    /// the command that works. Nothing is run.
+    @Test func aCheckoutThatIsNotReadyIsRefusedAndNothingRuns() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+
+        for (env0, expected) in [(checkoutBundleInstall(sim, clean: false), "uncommitted changes"),
+                                 (checkoutBundleInstall(sim, branch: "feat/x"), "not main"),
+                                 // Clean, on main, and holding work nobody else
+                                 // has — the shape both conditions above pass.
+                                 (checkoutBundleInstall(sim, ahead: "2"),
+                                  "has 2 commits that main has not pushed"),
+                                 (checkoutBundleInstall(sim, ahead: "none"), "tracks nothing")] {
+            var env = env0
+            env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+            env["SIMMER_FAKE_APPLY"] = log.path
+            let result = sim.run(["update", "--apply", "--json"], env: env)
+
+            #expect(result.code == 1, "\(result.combined)")
+            let json = object(result.out)
+            #expect(json["action"] as? String == "refused")
+            #expect(json["applied"] as? Bool == false)
+            #expect((json["apply_error"] as? String)?.contains(expected) == true, "\(json)")
+        }
+        #expect(((try? String(contentsOf: log, encoding: .utf8)) ?? "").isEmpty,
+                "a refusal ran something")
+    }
+
+    /// The record carries the version that wrote it, and a reader that is not
+    /// that version treats it as absent.
+    ///
+    /// Two minutes after 0.3.0 was installed, `doctor` reported "simmer 0.3.0
+    /// is ahead of the newest release (0.2.0)" and the menu footer said
+    /// "newest": 0.2.0 had recorded that answer the day before the 0.3.0 tag
+    /// existed, and the new binary read it as a fact about now.
+    @Test func aRecordFromAnotherVersionIsNotRepeatedAsThisOnesAnswer() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        try? FileManager.default.createDirectory(at: sim.stateDir,
+                                                 withIntermediateDirectories: true)
+        try """
+        checked=\(Sim.epoch - 3600)
+        latest=v0.1.0
+        error=
+        seamed=1
+        installed=0.0.1-someone-else
+
+        """.write(to: sim.stateDir.appendingPathComponent("update-check"),
+                  atomically: true, encoding: .utf8)
+
+        let result = sim.run(["update", "--cached", "--json"])
+        #expect(result.code == 1, "\(result.combined)")
+        let json = object(result.out)
+        #expect(json["verdict"] as? String == "unknown")
+        #expect(json["latest"] is NSNull, "another binary's answer was reported as this one's")
+        #expect((json["error"] as? String)?.contains("not checked yet") == true, "\(json)")
+        #expect(json["cached"] as? Bool == true)
+
+        // And the same check, made by this binary, is read back.
+        _ = sim.run(["update", "--json"], env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
+        let again = object(sim.run(["update", "--cached", "--json"]).out)
+        #expect(again["verdict"] as? String == "available")
+        #expect(again["latest"] as? String == "v9.9.9")
+    }
+
+    /// `doctor`'s last line names a checkout that is on this Mac.
+    ///
+    /// It used to say `make -C ~/.local/share/simmer install` whatever the
+    /// truth was, so the one instruction printed under a red row was a command
+    /// in a directory that does not exist on a Mac installed from a checkout.
+    @Test func doctorRepairsThroughTheCheckoutThisCopyCameFrom() {
+        let sim = Sim(); defer { sim.tearDown() }
+        // A bundle whose CFBundleShortVersionString is not the CLI's: the one
+        // update-shaped thing doctor reports red, and therefore the shortest
+        // way to make it print the repair line at all.
+        let env = checkoutBundleInstall(sim, appVersion: "0.0.1")
+        let human = sim.run(["doctor"], env: env).combined
+        let checkout = sim.root.appendingPathComponent("workspace/simmer").path
+
+        #expect(human.contains("make -C \(checkout) install"), "\(human)")
+        #expect(!human.contains(".local/share/simmer"), "\(human)")
+    }
+
     @Test func applyRunsThePlanAndSaysWhatItRan() throws {
         let sim = Sim(); defer { sim.tearDown() }
         let log = sim.root.appendingPathComponent("apply.log")

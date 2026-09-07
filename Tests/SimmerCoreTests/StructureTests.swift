@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import SimmerCore
 
-/// Two structural decisions that nothing in the code can express, and that a
+/// Structural decisions that nothing in the code can express, and that a
 /// person can therefore undo by accident in one line. They were prose in a
 /// document; they are assertions now, which is the only form that survives a
 /// contributor who has not read the document.
@@ -103,6 +103,67 @@ import Testing
         let parserOnly = parserVerbs.subtracting(sugarVerbs)
         #expect(sugarVerbs == parserVerbs,
                 "sugar knows \(sugarOnly) with nothing behind it; the parser has \(parserOnly) that sugar swallows")
+    }
+
+    /// The setup window's two update captions are one line each.
+    ///
+    /// They were paragraphs — eight sentences and an environment variable under
+    /// a checkbox, in a window whose other three rows are a title and one line
+    /// — and prose asking for brevity is prose. What a person needs in order to
+    /// tick the box stays on screen; the rest is one click away in the FAQ, and
+    /// the length is the part a gate can hold.
+    ///
+    /// 78 characters is what fits on one rendered line at 11pt in the 460pt
+    /// label, measured on the window itself rather than assumed.
+    @Test func theUpdateCaptionsAreOneLineEach() throws {
+        let source = try Self.read("Sources/SimmerApp/SetupWindow.swift")
+        for caption in ["updateCaption", "autoCaption"] {
+            guard let declaration = source
+                .components(separatedBy: "let \(caption) = NSTextField(wrappingLabelWithString:")
+                .dropFirst().first?
+                .components(separatedBy: ")").first else {
+                #expect(Bool(false), "\(caption) is not a wrapping label any more")
+                continue
+            }
+            let literals = Self.quoted(in: declaration)
+            #expect(literals.count == 1,
+                    "\(caption) is \(literals.count) concatenated literals — one line is one literal")
+            let text = literals.joined()
+            #expect(text.count <= 78,
+                    "\(caption) is \(text.count) characters and wraps onto a second line: \(text)")
+        }
+    }
+
+    /// "Learn more…" points at a heading that exists.
+    ///
+    /// The captions above are short because the detail moved into
+    /// `docs/FAQ.md`, and the only way back to it from a Mac with no terminal
+    /// open is that link. A renamed heading does not break it loudly: GitHub
+    /// serves the page and silently ignores an anchor it cannot resolve, so the
+    /// person who clicked lands at the top of the FAQ and reads about
+    /// `caffeinate` instead. Only a gate notices.
+    @Test func theLearnMoreLinkLandsOnAHeadingTheFAQStillHas() throws {
+        let source = try Self.read("Sources/SimmerApp/SetupWindow.swift")
+        guard let url = Self.quoted(in: source.components(separatedBy: "static let updateFAQURL")
+            .dropFirst().first ?? "").first,
+              let anchor = url.components(separatedBy: "#").dropFirst().first, !anchor.isEmpty else {
+            #expect(Bool(false), "SetupWindow.updateFAQURL is not a literal URL with an anchor")
+            return
+        }
+        #expect(url.contains("docs/FAQ.md"), "the link left the FAQ: \(url)")
+
+        // GitHub's rule for the anchor it generates from a heading: lowercased,
+        // punctuation dropped, spaces to hyphens.
+        let headings = try Self.read("docs/FAQ.md")
+            .components(separatedBy: "\n")
+            .filter { $0.hasPrefix("#") }
+            .map { heading -> String in
+                let words = heading.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces).lowercased()
+                return String(words.map { $0 == " " ? "-" : $0 }
+                    .filter { $0.isLetter || $0.isNumber || $0 == "-" })
+            }
+        #expect(headings.contains(anchor),
+                "docs/FAQ.md has no heading whose anchor is #\(anchor) — the link scrolls nowhere. It has: \(headings)")
     }
 
     /// Every double-quoted string in a fragment of Swift source.
@@ -252,6 +313,28 @@ import Testing
         }
         #expect(quit.lowerBound < replace.lowerBound)
         #expect(body.contains("pgrep -qx simmer-app"))
+    }
+
+    /// The bundle is the same bundle whichever checkout assembled it, so the
+    /// only way to know which one did is for `make install` to write it down.
+    /// Without it, `doctor` and `update` both named `~/.local/share/simmer`
+    /// whatever the truth was — a directory that is not on a Mac installed
+    /// from somebody's own checkout, so its repair command could not be run
+    /// and `update --apply` refused.
+    ///
+    /// Three lines have to agree, and none of them is type-checked.
+    @Test func theBundleRecordsWhichCheckoutInstalledIt() throws {
+        let plist = try Self.read("app/Info.plist.template")
+        #expect(plist.contains("SimmerInstallSource"))
+        #expect(plist.contains("@INSTALL_SOURCE@"))
+
+        let makefile = try Self.read("Makefile")
+        #expect(makefile.contains("@INSTALL_SOURCE@|$(CURDIR)"),
+                "the placeholder is in the template but nothing substitutes it")
+
+        let install = try Self.read("Sources/SimmerCore/Model/Install.swift")
+        #expect(install.contains("SimmerInstallSource"),
+                "the plist carries it and nothing reads it")
     }
 
     @Test func theAppIsToldWhichLedgerToRead() throws {
