@@ -80,7 +80,7 @@ jobs:
                   --changelog "$RUNNER_TEMP/main-changelog.md"
                   --version-file "$RUNNER_TEMP/main-version.swift")
             if gh pr list --head release/next --state open \
-                 --json labels --jq '.[0].labels[].name' 2>/dev/null \
+                 --json labels --jq '.[0].labels // [] | .[].name' \
                  | grep -qx 'release: major'; then
               echo "labelled 'release: major'"
               rule+=(--major)

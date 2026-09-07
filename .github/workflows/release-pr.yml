@@ -87,7 +87,7 @@ jobs:
           # a person who puts it there.
           major=false
           if gh pr list --head release/next --state open \
-               --json labels --jq '.[0].labels[].name' 2>/dev/null \
+               --json labels --jq '.[0].labels // [] | .[].name' \
                | grep -qx 'release: major'; then
             major=true
             echo "the open release pull request is labelled 'release: major'"
