@@ -77,6 +77,7 @@ It moves once, in a release commit CI writes, and `docs/RELEASING.md` is that pr
 What your pull request owes a release is its notes, under `## Unreleased` in `CHANGELOG.md`.
 Where you put them decides the next version number: an entry under `### Machine surface` or `### The test seam` makes it a **minor**, anything else a **patch** — so a contract change filed under `### Added` is a minor that ships as a patch.
 Nothing reads your prose for hints; the heading is the declaration.
+A maintainer can overrule it either way with a `release: major` / `minor` / `patch` label on the release pull request, and the pull request then says both the number and what the rule had read.
 
 Every push to `main` then keeps one pull request open titled `release: X.Y.Z`, carrying the version bump and the notes GitHub would publish.
 Merging it is the release.

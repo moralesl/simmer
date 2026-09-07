@@ -17,11 +17,14 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 - **The version number is read out of the CHANGELOG rather than remembered.**
   `scripts/release.sh` is `docs/RELEASING.md` § What a version number means, as code: an entry under `### Machine surface` or `### The test seam` in `## Unreleased` makes the next release a **minor**, an empty section means there is nothing to release, and anything else is a **patch**.
   A minor is *declared* by writing under one of those headings, never guessed from prose — "adds a `--json` field" and "adds a menu row" are the same sentence to a machine.
-  A **major** is not inferred at all: removing a field, renaming one and changing one's type read exactly like adding one, so it takes the `release: major` label on the release pull request.
+  A **major** is not inferred at all: removing a field, renaming one and changing one's type read exactly like adding one, so it takes a label on the release pull request.
+  All three kinds are declarable the same way — `release: major`, `release: minor`, `release: patch`, exactly one, two refused rather than chosen between — because "the rule was too cautious" is not the only reason to overrule it.
+  Sometimes it is *we are shipping this as a patch anyway, and we know what that costs*, and a rule with no override is one that gets worked around outside the mechanism, where nothing records who decided or what the rule had said.
+  So the pull request prints both: *"a **patch**, declared by label, where the rule read this as a **minor**"*.
   A table test drives the rule from `swift test`, so it rides every CI leg.
 - **`release-check` is a check on the pull request**, and it is what makes the label safe.
   CI computes the number when it writes the branch; a label added afterwards changes the answer and nothing recomputes until the next push to `main`.
-  The check re-derives it from `main` — label included — and goes red on the mismatch, so a major cannot be published as a patch.
+  The check re-derives it from `main` through the same label reader the branch was written with, and goes red on the mismatch — so a declared number is accepted and an undeclared one cannot slip through.
   On every other pull request it asks one question: is there still somewhere for the next change's notes to land.
 - **`make release-check` stays, for a laptop, and now runs the same assertions CI does.**
   Its file checks *are* `scripts/release.sh check`, so a laptop and a runner cannot answer differently, and its epilogue points at pushing `main` rather than at tagging by hand.

@@ -79,11 +79,18 @@ jobs:
             rule=(next-version
                   --changelog "$RUNNER_TEMP/main-changelog.md"
                   --version-file "$RUNNER_TEMP/main-version.swift")
-            if gh pr list --head release/next --state open \
-                 --json labels --jq '.[0].labels // [] | .[].name' \
-                 | grep -qx 'release: major'; then
-              echo "labelled 'release: major'"
-              rule+=(--major)
+
+            # The same reader `release-pr.yml` used when it wrote the number.
+            # This leg exists precisely because a label added AFTERWARDS
+            # changes the answer with nothing to recompute it — so it has to
+            # read the labels the same way, or it would be red on every
+            # override and green on none of the mistakes.
+            declared="$(gh pr list --head release/next --state open \
+                          --json labels --jq '.[0].labels // [] | .[].name' \
+                        | ./scripts/release.sh bump-label)"
+            if [ -n "$declared" ]; then
+              echo "the pull request declares a $declared"
+              rule+=(--bump "$declared")
             fi
 
             expected="$(./scripts/release.sh "${rule[@]}" | sed -n 's/^version=//p')"

@@ -64,22 +64,32 @@ A **minor** is declared, not guessed: writing an entry under `### Machine surfac
 Prose is never read for hints — "adds a `--json` field" and "adds a menu row" are the same sentence to a machine, and guessing wrong in the permissive direction ships a contract change announced as a bug fix.
 Anything else is a patch.
 
-### How a major is declared
+### Declaring the number instead
 
-Put the label **`release: major`** on the release pull request.
+Three labels on the release pull request overrule the rule: **`release: major`**, **`release: minor`**, **`release: patch`**.
+Exactly one; two is refused rather than chosen between.
 
-A major cannot be inferred at all: removing a field, renaming one and changing one's type read exactly like adding one.
-Only a person knows which, so a person says so.
+A **major** can only ever come from here.
+Removing a field, renaming one and changing one's type read exactly like adding one, so nothing can infer it — only a person knows which, and this is where they say so.
 
-The label changes the answer, and the branch is not rebuilt until the next push to `main` — so the `release-check` leg on the pull request re-derives the number *including the label* and goes red on the mismatch.
-To recompute immediately instead: **Actions → release-pr → Run workflow**, or
+The other two exist because "the rule was too cautious" is not the only reason to overrule it.
+Sometimes it is *we are shipping this as a patch anyway, and we know what that costs* — which is how 0.3.1 went out over a `### Machine surface` entry the rule read as a minor.
+A rule with no override is a rule that gets worked around outside the mechanism, where nothing records who decided or what the rule had said.
+So the pull request says both:
+
+> The number is `0.3.1`: a **patch**, declared by label, where `docs/RELEASING.md` § What a version number means read this as a **minor**.
+
+The label changes the answer, and the branch is not rebuilt until the next push to `main` — so the `release-check` leg re-derives the number *including the label* and goes red on any mismatch.
+That is what makes a label a mechanism rather than a note, and it is why one reader (`scripts/release.sh bump-label`) serves both halves: two readers is how they would come to disagree on the one pull request where it matters.
+
+To recompute immediately rather than waiting for the next push: **Actions → release-pr → Run workflow**, or
 
 ```bash
-gh workflow run release-pr.yml --ref main
+gh workflow run release-pr.yml --ref main -f bump=patch
 ```
 
-That workflow also takes a `version` input, which names the number outright.
-It is the escape hatch for the release the rule cannot see; every check below still runs the same way.
+The `bump` input is the same declaration, for a run that has no pull request to label yet; its default, `rule`, means no declaration at all.
+For a number no bump can reach — jumping to `0.9.0`, say — there is no input: cut it by hand (§ From a laptop), which is a person at a keyboard, which is where an unusual release belongs.
 
 **Only `main` acts.** Dispatched from any other ref, `release-pr.yml` reports what a release from that ref would be and stops — nothing is pushed, opened, tagged or published.
 Without that, a dispatch from a feature branch would have built `release/next` out of *that* branch, and a bumped version on it would have been tagged and published from a commit nobody released.
@@ -171,7 +181,7 @@ Fixing forward is the way out, and it is the only one this repository supports.
 
 Those first and third bullets are the two headings the version rule reads: an entry under **`### Machine surface`** or **`### The test seam`** in `## Unreleased` makes the next release a minor.
 Writing one there is how the release is told; a machine-surface change filed under `### Added` is a minor that ships as a patch.
-The major half is the `release: major` label, for the reason above: prose cannot distinguish a field added from a field removed.
+That is everything the rule can work out on its own — and § Declaring the number instead is how a person overrules it, in either direction, on the record.
 
 **And what it promises in the other direction: that you can go back.** State is append-only in practice as well as on paper — `format=2` claim files with the same key set since `0.1.0`, and parsers that ignore keys they do not know — so an older binary reads what a newer one wrote.
 The exact command per provenance, the two wrinkles below `0.2.0`, and the reason a rollback has to be preceded by `simmer update --auto off` are in `FAQ.md` § A release broke something.
