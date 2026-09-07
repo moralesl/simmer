@@ -95,10 +95,23 @@ test-release: build
 # Deliberately NOT folded into `test`: that target is hermetic and finishes in
 # seconds, and making it depend on an npm install would cost every Swift change
 # the extension's setup. Two lanes, both named.
+#
+# It drives the binary through SIMMER_BIN, because the extension otherwise
+# resolves its own — `~/.local/bin/simmer` first — and this lane then measured
+# the INSTALLED copy rather than the checkout. A change adding a `--json` field
+# was red here as "update --json lost release_notes_url": a message that names
+# the field and not the cause, green again only after `make install`, while the
+# Swift lane had been green all along. Both lanes now test the same binary.
+#
+# The debug product, deliberately: that is what `swift test` builds, and a lane
+# pointed at a release build would be asserting against something no other gate
+# ran.
 test-raycast:
+	swift build
 	# `npm ci` deletes node_modules and reinstalls from the lockfile, which is
 	# right on a fresh checkout and pure waste on the fifth run of the day.
-	cd integrations/raycast && { [ -d node_modules ] || npm ci; } \
+	SIMMER_BIN="$$(swift build --show-bin-path)/simmer"; export SIMMER_BIN; \
+	  cd integrations/raycast && { [ -d node_modules ] || npm ci; } \
 	  && npm run typecheck && npx eslint src tests && npm test
 
 # ── releasing ───────────────────────────────────────────────────────────────
