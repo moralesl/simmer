@@ -302,8 +302,9 @@ All additive to the surface above:
   Order is chronological — the switch flips before the claim file lands, and the stream says so.
   Fields are append-only.
   Nothing reads it yet; `watch`/`why` stay uncontracted.
-- **`simmer update` reports; it never installs.** It prints the command for the copy it is running from and stops there.
-  An update replaces a running app and the binary the guard's LaunchAgent points at, and it can be asked for while a claim is live — so the shape is `simmer uninstall`'s, for the same reason: an operation that happens rarely, in front of a person already at a keyboard, is better as a command they can read first than as a button that acts on their behalf.
+- **`simmer update` reports; installing is a second, explicit thing to ask for.** Bare, it prints the command for the copy it is running from and stops there — `--apply` runs it, and `--auto on` lets the daily check run it (both below).
+  An update replaces a running app and the binary the guard's LaunchAgent points at, and it can be asked for while a claim is live — so the default shape is `simmer uninstall`'s, for the same reason: an operation that happens rarely, in front of a person already at a keyboard, is better as a command they can read first than as a button that acts on their behalf.
+  What the two additions buy is the case that shape does not serve — a person with no terminal, and a copy nobody opens — and each pays for it separately: `--apply` by running only the command it would have printed, `--auto` by being off until asked and refusing while a claim is live.
   `--cached` reports the last check and makes no network request, which is what every surface that is not the one being asked uses — `doctor`, the menu bar, a launcher row.
   `doctor` therefore answers the same on a train as in the office.
 - **One outbound request, and it is the only one.** A `HEAD` to `github.com/moralesl/simmer/releases/latest`, whose redirect names the newest tag.
