@@ -2,5 +2,5 @@
 /// read from here (the Makefile extracts it for the plist) — three hand-kept
 /// copies is how versions drift.
 public enum SimmerVersion {
-    public static let string = "0.2.0"
+    public static let string = "0.3.0"
 }

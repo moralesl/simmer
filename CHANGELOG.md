@@ -5,6 +5,8 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ## Unreleased
 
+## 0.3.0 — 2026-09-07
+
 ### Added
 
 - **`simmer update`** — is there a newer release, and what would install *this* copy.
