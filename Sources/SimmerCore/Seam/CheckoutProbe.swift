@@ -16,7 +16,7 @@ public protocol CheckoutProbe: Sendable {
     func state(of path: String) -> UpdateCommand.CheckoutState?
 }
 
-/// `git`, three read-only questions, no network.
+/// `git`, four read-only questions, no network.
 ///
 /// `origin` by name rather than "the first remote": the default branch is only
 /// meaningful against the remote the checkout was cloned from, and a
@@ -35,7 +35,24 @@ public struct GitCheckoutProbe: CheckoutProbe {
             branch: read(["-C", path, "symbolic-ref", "--quiet", "--short", "HEAD"]),
             defaultBranch: withoutRemote(read(["-C", path, "symbolic-ref", "--quiet", "--short",
                                                "refs/remotes/origin/HEAD"])),
-            clean: status.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            clean: status.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            aheadOfUpstream: aheadOfUpstream(path))
+    }
+
+    /// How many commits this branch has that its upstream does not.
+    ///
+    /// Nil when there is no upstream — `rev-list` exits non-zero with "no
+    /// upstream configured", and a branch tracking nothing has nothing to
+    /// update FROM, which refuses rather than guessing at `origin/main`.
+    ///
+    /// Local, like every other read here: it compares against this checkout's
+    /// idea of the remote rather than fetching one. Stale in the safe
+    /// direction — a pushed commit this checkout has not seen the push of
+    /// counts as ahead and refuses.
+    private func aheadOfUpstream(_ path: String) -> Int? {
+        let result = Shell.run(git, ["-C", path, "rev-list", "--count", "@{upstream}..HEAD"])
+        guard result.status == 0 else { return nil }
+        return Int(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// `origin/main` → `main`. By prefix, so a branch called
@@ -56,15 +73,37 @@ public struct GitCheckoutProbe: CheckoutProbe {
 /// `SIMMER_FAKE_CHECKOUT=main:main:clean` — branch, the remote's default
 /// branch, and `clean` or `dirty`. `absent` answers nil, which is the
 /// unreadable case.
+///
+/// A fourth field says how far ahead of its upstream the branch is:
+/// `main:main:clean:2` for two unpushed commits, `main:main:clean:none` for a
+/// branch that tracks nothing. **Optional, and absent means zero**, so every
+/// three-field value written before this existed still says exactly what it
+/// said — the seam is a contracted surface (CONTRACTS.md § The test seam) and
+/// contracted surfaces are append-only.
 public struct FakeCheckoutProbe: CheckoutProbe {
     public let value: String
     public init(value: String) { self.value = value }
 
     public func state(of path: String) -> UpdateCommand.CheckoutState? {
         let parts = value.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-        guard parts.count == 3 else { return nil }
+        guard parts.count == 3 || parts.count == 4 else { return nil }
+
+        // A fourth field that is neither `none` nor a number is a typo, and a
+        // typo must not quietly mean "in step" — that is the value that lets
+        // the plan run.
+        var ahead: Int? = 0
+        if parts.count == 4 {
+            if parts[3] == "none" {
+                ahead = nil
+            } else if let count = Int(parts[3]), count >= 0 {
+                ahead = count
+            } else {
+                return nil
+            }
+        }
         return UpdateCommand.CheckoutState(branch: parts[0], defaultBranch: parts[1],
-                                           clean: parts[2] == "clean")
+                                           clean: parts[2] == "clean",
+                                           aheadOfUpstream: ahead)
     }
 }
 

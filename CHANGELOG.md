@@ -51,6 +51,8 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 - **`update --apply` works on a Mac installed from a checkout.**
   It pulls that checkout and re-runs `make install` — the two commands the same copy already prints — and only when the tree is clean and on the branch the remote calls default.
   Anything else refuses by name: uncommitted changes, another branch, a detached head, a remote whose default branch cannot be read locally, or a recorded checkout that has been moved or deleted.
+  **Local commits included** — a clean tree on `main` holding work nobody has pushed passed both other conditions, and the plan's own steps did not catch it either, because `git merge --ff-only @{u}` succeeds against an upstream that is already an ancestor: it is a no-op, so `make install` shipped the developer's unreleased tree and `--apply` reported success naming a release the installed binary does not report.
+  The refusal names the count and the command that clears it, and a branch tracking nothing refuses too — there is no upstream to update from.
   "A developer's own checkout is never moved onto a tag" still holds; it was about local commits and unfinished branches, and no checkout but the installer's is moved onto a tag.
 - **The Raycast check says the same thing the CLI does.** Its provenance line read "installed as Simmer.app" for every bundle, which is what the CLI's own prose used to say; it now names the checkout the bundle was built in, or says that checkout is no longer there.
   A simmer too old to carry the fields says what it said before.
@@ -60,8 +62,10 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 - `update --json` gains **`install_source`** (the checkout this copy was built in, or `null`) and **`install_source_kind`** (`installer`·`checkout`·`gone`·`none`).
   Appended, like every field after the first release.
   **`provenance` keeps its four values** — `homebrew`·`bundle`·`checkout`·`unknown` — because it is a closed set that every reader switches on exhaustively, this repository's own Raycast extension included; a fifth value would have broken each of them.
-- **`SIMMER_FAKE_CHECKOUT`** joins the test seam: `<branch>:<default branch>:clean|dirty`, the read that decides whether `--apply` may pull a working checkout.
+- **`SIMMER_FAKE_CHECKOUT`** joins the test seam: `<branch>:<default branch>:clean|dirty[:<ahead>]`, the read that decides whether `--apply` may pull a working checkout.
   A seamed process without it reads nothing, exactly as one without `SIMMER_FAKE_LATEST` does.
+  The optional fourth field is how many commits the branch has that its upstream does not — `none` for a branch tracking nothing — and **absent means zero**, so every three-field value still says what it said.
+  A count that is not a non-negative number answers "cannot read this checkout" rather than "in step": in step is the one value that lets the plan run, and a typo must not be the thing that grants it.
 - The `update-check` state file gains an `installed=` line. It is not a machine surface — `simmer update --json` is how anything else asks — and a file written by an older simmer is read as absent rather than misread.
 
 ## 0.3.0 — 2026-09-07
