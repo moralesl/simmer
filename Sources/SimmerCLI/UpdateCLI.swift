@@ -85,7 +85,18 @@ struct UpdateCLI: ParsableCommand {
         }
 
         let exists = { FileManager.default.fileExists(atPath: $0) }
+        let (owner, _) = env.resolveOwner(flag: common.owner)
         let answer = { (result: SimmerCore.UpdateCommand.ApplyResult) -> Never in
+            // Every ending, in the one place all four pass through: the log
+            // gets a line, and the "an install is under way" record is gone.
+            //
+            // The record is written by the app before this process starts, so
+            // this process is the only thing that knows when it stops being
+            // true — and on three of the four endings nothing installed at
+            // all. Clearing it here is what keeps a refusal from leaving a
+            // menu row that says "Installing…" for fifteen minutes.
+            ledger.log(UpdateCommand.applyLogSentence(result), now: env.now())
+            ledger.clearInstallInProgress()
             // Do not re-inline this. Assembling the Outcome here instead —
             // which is what these four endings used to do — is what the
             // RELEASE binary silently lost: one line where the CLI built it,
@@ -112,6 +123,24 @@ struct UpdateCLI: ParsableCommand {
             // first step: `make install` quits it, so asking later would
             // always answer no and the menu bar would silently not come back.
             let appWasRunning = ledger.readAppStatus()?.heartbeatIsFresh(now: env.now()) == true
+
+            // Before the first step, because the first step is where the
+            // minutes go. One line in the log so the attempt is answerable
+            // tomorrow, and one banner through the spool so it is answerable
+            // now — the app drains the spool every three seconds and is still
+            // alive for the whole build, and a file is the only channel that
+            // survives it being replaced afterwards.
+            ledger.log(UpdateCommand.applyLogSentence(starting: plan, owner: owner),
+                       now: env.now())
+            // Through the same gate `Runtime.emit` puts every other banner
+            // behind: suppressing notifications is the person's switch, and a
+            // second enqueue path that ignored it would be the one banner
+            // `SIMMER_NOTIFY=none` cannot silence.
+            if env.notifyTransport != "none" {
+                ledger.enqueueNotification(
+                    UpdateCommand.startingNotification(plan, installed: report.installed),
+                    now: env.now())
+            }
 
             if !common.json {
                 // Said now, not carried in the Outcome: this is what is about

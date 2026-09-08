@@ -473,6 +473,59 @@ public enum UpdateCommand {
             + plan.steps.map { "   \($0.described)" }
     }
 
+    /// The banner for an install that has just started.
+    ///
+    /// Enqueued into the spool by the child rather than posted by the app, for
+    /// the reason the spool exists: `make install` quits `Simmer.app`, so the
+    /// only process guaranteed to be alive across the whole update is the
+    /// child, and a file is the only channel that survives the poster being
+    /// replaced mid-flight.
+    ///
+    /// It carries a body, and that is not decoration. Every banner this tool
+    /// has ever been seen to show has one; the one banner nobody has ever seen
+    /// — the app's own "Updating simmer…" — was the only one posted with
+    /// `body: ""`. On macOS a `UNMutableNotificationContent` with no
+    /// informative text is accepted by `add` and never presented, which is
+    /// indistinguishable from a banner that worked (BRIDGE § Done, T1).
+    public static func startingNotification(_ plan: ApplyPlan,
+                                            installed: String) -> NotificationRequest {
+        NotificationRequest(
+            title: "Installing simmer \(plan.target)…",
+            subtitle: "Simmer.app will quit and come back",
+            body: "Building \(plan.target) from source — a minute or two. "
+                + "You are on \(installed) until it lands.",
+            sound: false)
+    }
+
+    /// One line for `simmer.log`, per apply, per ending — so that "I clicked
+    /// Install it now and something happened" is answerable tomorrow.
+    ///
+    /// The log is listed in CONTRACTS.md § State but is not a machine surface:
+    /// `--json` is how anything else asks, so this wording is free to change
+    /// the way every other human sentence is.
+    public static func applyLogSentence(starting plan: ApplyPlan, owner: String) -> String {
+        "update: installing \(plan.target) for \(owner)"
+    }
+
+    public static func applyLogSentence(_ result: ApplyResult) -> String {
+        switch result {
+        case .nothingToDo(let sentence):
+            return "update: nothing to install — \(sentence)"
+        case .refused(let why):
+            return "update: refused — \(why)"
+        case .failed(let step, let detail, let plan):
+            // The phase first: which part stopped is the fact that decides
+            // whether anything on this Mac changed, and the command is the
+            // evidence behind it.
+            return "update: \(plan.target) failed while \(step.phase.rawValue) "
+                + "— \(step.described): \(detail)"
+        case .installed(let plan, let reopened, let relaunchFailure):
+            let app = relaunchFailure.map { "Simmer.app did not come back — \($0)" }
+                ?? (reopened ? "Simmer.app relaunched" : "Simmer.app was not running")
+            return "update: installed \(plan.target) · \(app)"
+        }
+    }
+
     /// Bringing the app back after `make install` replaced it. Composed here
     /// rather than in the CLI so it carries a phase like every other step and
     /// its failure reaches the same sentence.
@@ -591,18 +644,40 @@ public enum UpdateCommand {
                                     seamed: Bool, json: Bool) -> Outcome {
         switch result {
         case .nothingToDo(let sentence):
+            // A banner on both branches, because the caller that cannot read
+            // either stream is the menu: `applyUpdate` spawns the child with
+            // stdout and stderr on /dev/null, so before this the two endings
+            // that install nothing were completely silent from a click —
+            // the menu bar simply never changed and never said why.
+            var banner = Outcome()
+            banner.notifications = [NotificationRequest(
+                title: "Nothing to install",
+                subtitle: "", body: sentence, sound: false)]
             guard json else {
-                var outcome = Outcome()
-                outcome.stdout = ["✅ \(sentence)"]
-                return outcome
+                banner.stdout = ["✅ \(sentence)"]
+                return banner
             }
-            return jsonApplyOutcome(report, seamed: seamed, applied: false,
-                                    plan: nil, error: nil, exit: 0)
+            var outcome = jsonApplyOutcome(report, seamed: seamed, applied: false,
+                                           plan: nil, error: nil, exit: 0)
+            outcome.notifications = banner.notifications
+            return outcome
 
         case .refused(let why):
-            guard json else { return Outcome.failure(why) }
-            return jsonApplyOutcome(report, seamed: seamed, applied: false,
-                                    plan: nil, error: why, exit: 1)
+            // The refusal sentence names the way that works instead, so it is
+            // the whole message and belongs in the body rather than being
+            // summarised in a title nobody can act on.
+            let notifications = [NotificationRequest(
+                title: "simmer did not install the update",
+                subtitle: "", body: why, sound: false)]
+            guard json else {
+                var failure = Outcome.failure(why)
+                failure.notifications = notifications
+                return failure
+            }
+            var outcome = jsonApplyOutcome(report, seamed: seamed, applied: false,
+                                           plan: nil, error: why, exit: 1)
+            outcome.notifications = notifications
+            return outcome
 
         case .failed(let step, let detail, let plan):
             // `applyFailed` writes the sentence naming the part that stopped;

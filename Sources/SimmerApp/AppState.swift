@@ -252,33 +252,84 @@ final class AppState {
     /// replacing the bundle, so whatever is driving the update has to outlive
     /// being quit. A child process does; this one does not.
     ///
-    /// Nothing is waited for. The child posts its own banner through the spool
-    /// when it finishes, and because the spool is a file rather than a
-    /// connection, that banner survives the app being replaced and relaunched
+    /// Nothing is waited for. Every banner about this comes from the child
+    /// through the spool, and because the spool is a file rather than a
+    /// connection, those banners survive the app being replaced and relaunched
     /// in between — which is the whole reason the spool exists.
+    ///
+    /// What this method says itself is the *record*: one file, written before
+    /// the child has done anything, so that the menu tells the truth from the
+    /// first time it is opened after the click. That is the channel that
+    /// cannot be suppressed (PLATFORM-FACTS.md § Notifications), and it is
+    /// re-readable, which a banner is not.
     func applyUpdate() {
         guard !seamActive else { return }
+        // What the child is about to install, decided from the same cached
+        // report and the same `applyPlan` the menu item's presence was decided
+        // from — so the row names the release rather than guessing at one.
+        // No plan means the child will refuse, and then nothing is installing:
+        // the record is not written at all rather than written and retracted
+        // (the refusal reaches the person as the child's own banner).
+        let report = cachedUpdateReport()
+        var target: String?
+        if case .run(let plan) = UpdateCommand.applyPlan(
+            for: report, exists: { FileManager.default.fileExists(atPath: $0) },
+            checkoutState: checkoutState) { target = plan.target }
+
         let child = Process()
         child.executableURL = URL(fileURLWithPath: environment.binPath)
         child.arguments = ["update", "--apply", "--owner", "menubar"]
         child.standardOutput = FileHandle.nullDevice
         child.standardError = FileHandle.nullDevice
         child.standardInput = FileHandle.nullDevice
+
+        let ledger = Ledger(stateDir: environment.stateDir)
+        let startedAt = environment.now()
+        if let target {
+            ledger.writeInstallInProgress(target: target, now: startedAt,
+                                         installed: AppState.version)
+            NotificationCenter.default.post(name: .simmerStateChanged, object: nil)
+        }
+        // The child exiting while THIS app is still alive means the update did
+        // not get as far as replacing the bundle — a build error, most of all.
+        // The child says what went wrong through the spool; this ends the
+        // "Installing…" row, which would otherwise sit there claiming an
+        // install that stopped minutes ago. On the success path the app is
+        // quit before the child exits, so this never runs and the version
+        // change is what ends the record instead.
+        child.terminationHandler = { _ in
+            let ledger = Ledger(stateDir: self.environment.stateDir)
+            guard let record = ledger.readInstallInProgress(
+                writtenBy: AppState.version, now: self.environment.now()),
+                record.startedAt == startedAt else { return }
+            ledger.clearInstallInProgress()
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .simmerStateChanged, object: nil)
+            }
+        }
+
         do {
             try child.run()
         } catch {
+            // Nothing was started, so nothing is installing: the record goes
+            // before the banner, or the menu keeps a promise the failure has
+            // already broken.
+            ledger.clearInstallInProgress()
+            NotificationCenter.default.post(name: .simmerStateChanged, object: nil)
             Notifier.shared.post([NotificationRequest(
                 title: "Could not start the update",
                 subtitle: "", body: error.localizedDescription, sound: false)])
             return
         }
-        // Said now, because a compile takes a minute or two and the next thing
-        // that visibly happens is the menu bar disappearing as the bundle is
-        // replaced. Without this line that reads as a crash.
-        Notifier.shared.post([NotificationRequest(
-            title: "Updating simmer…",
-            subtitle: "Simmer.app will quit and come back",
-            body: "", sound: false)])
+    }
+
+    /// The install this Mac has started and not yet seen the end of, for the
+    /// menu. Nil unless THIS version wrote it and it is recent enough to be
+    /// plausible — `Ledger.readInstallInProgress` decides both.
+    func installInProgress() -> String? {
+        Ledger(stateDir: environment.stateDir)
+            .readInstallInProgress(writtenBy: AppState.version, now: environment.now())?
+            .target
     }
 
     // MARK: the in-process assertion — belt and braces for idle sleep
