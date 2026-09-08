@@ -163,8 +163,16 @@ fetch() {
     git -C "$DIR" fetch --quiet --tags --force "$REPO" \
         "+refs/heads/*:refs/remotes/origin/*" ||
       die "could not fetch $REPO into $DIR — check the network, or the URL $REPO"
-    git -C "$DIR" checkout --quiet "$REF" 2>/dev/null ||
-      die "no such ref: $REF"
+    # git's own line stands, and simmer's refusal says only what it knows.
+    # `2>/dev/null || die "no such ref: $REF"` named a cause this script cannot
+    # see: on a checkout with a local change to a file the ref would overwrite,
+    # git refuses, the tag resolves perfectly well, and the reader was told the
+    # release does not exist (R1 finding 2). It is the same lie the switching
+    # sentence of `update --apply` is worded to avoid, one file over — and this
+    # is the half a person reaches by pasting the command a failure recommends.
+    git -C "$DIR" checkout --quiet "$REF" ||
+      die "could not switch $DIR to $REF — git's reason is above; \
+look with 'git -C $DIR status'"
     # A branch needs fast-forwarding; a tag is already exactly what it says.
     # The two are told apart explicitly: swallowing every merge failure so
     # tags could pass also swallowed a diverged BRANCH, and then printed
