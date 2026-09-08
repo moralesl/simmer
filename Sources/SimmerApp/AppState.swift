@@ -105,20 +105,54 @@ final class AppState {
     /// and the person's own switch in the setup window. `force` is the menu
     /// item — someone asking is not the background check and is not gated by
     /// its schedule, only by the seam.
+    ///
+    /// Returns **nil when the check was started**, and otherwise the reason it
+    /// was not — because a caller who is showing somebody a spinner has to be
+    /// able to tell "no answer yet" from "no answer coming". Every one of the
+    /// three refusals above used to be a silent `return`, which was harmless
+    /// while the answer was a banner and is a spinner that never stops now that
+    /// the answer is a row (`StatusItemController.startCheck`). Absent and
+    /// empty are different answers here for the same reason they are on
+    /// `installing`: a reason, never a bare false.
+    @discardableResult
     func refreshUpdateCheck(force: Bool = false,
-                            then finished: ((UpdateCommand.Report) -> Void)? = nil) {
-        guard !seamActive else { return }
+                            then finished: ((UpdateCommand.Report) -> Void)? = nil) -> String? {
         let ledger = Ledger(stateDir: environment.stateDir)
         if !force {
-            guard !environment.backgroundUpdateCheckDisabled,
-                  ledger.backgroundUpdateChecksEnabled else { return }
+            // The seam bars the DAILY pass: a seamed process does no work of
+            // its own about a machine it is not reporting on. It does not bar a
+            // person asking, because what the seam is there to prevent — an
+            // outbound request, an answer about someone else's Mac — is already
+            // prevented one layer down: `makeReleaseSource()` hands a seamed
+            // process `SeamedReleaseSource`, which answers "seamed — set
+            // SIMMER_FAKE_LATEST to answer this without the network" and
+            // touches nothing. Barring the click as well made the menu item
+            // silent under every seam, which is the one behaviour a row with a
+            // spinner cannot have.
+            guard !seamActive else {
+                return "the SIMMER_FAKE_PMSET seam is in force — the daily check is off"
+            }
+            guard !environment.backgroundUpdateCheckDisabled else {
+                return "SIMMER_NO_UPDATE_CHECK is set"
+            }
+            guard ledger.backgroundUpdateChecksEnabled else {
+                return "the daily check is switched off in Setup"
+            }
             // `writtenBy:` and not just freshness: a record the previous
             // version left behind is a day's silence on a Mac that has just
             // been updated, and the first thing the new binary should do is
             // ask the question again under its own version.
+            //
+            // And not a seamed one: a forced check under `SIMMER_FAKE_LATEST`
+            // writes a record like any other, and believing it would let one
+            // test click suppress the next real check for 24 hours. The
+            // defence `UpdateCommand` has had since the seam existed, on the
+            // one reader that lacked it — a seamed process never reaches this
+            // line at all (`seamActive` returned above), so the record's own
+            // flag is the whole question here.
             if let record = ledger.readUpdateRecord(writtenBy: AppState.version),
-               record.isFresh(now: environment.now()) {
-                return
+               record.isFresh(now: environment.now()), !record.seamed {
+                return "today's check has already been made"
             }
         }
         let install = Install.detect(executablePath: environment.binPath,
@@ -162,6 +196,7 @@ final class AppState {
                 NotificationCenter.default.post(name: .simmerStateChanged, object: nil)
             }
         }
+        return nil
     }
 
     /// Marks this check's version as announced and hands back the banner for

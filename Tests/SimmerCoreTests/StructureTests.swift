@@ -1131,6 +1131,360 @@ import Testing
             Self.expectStaysInsideTheCheckout(command, run: "a `ray build` in \(manifest)")
         }
     }
+
+    // MARK: - the menu that must not rebuild itself
+
+    /// Every function of a Swift source in which `needle` appears **as code**,
+    /// in source order, with `<top level>` for an occurrence outside any
+    /// function.
+    ///
+    /// Comments and string literals are stripped first, and that is the whole
+    /// reason this is a reader rather than a `grep`: three of the four
+    /// occurrences of `removeAllItems` in `StatusItemController.swift` are
+    /// comments explaining why the call is where it is, and the gate below
+    /// would have passed on any arrangement of them. A "never calls X" check
+    /// that reads the comment saying it never calls X has been shipped in this
+    /// repository before (T36, 7 Sep).
+    ///
+    /// A wrapped call — `menu\n    .removeAllItems()` — is found, because the
+    /// stripped text is searched as a whole and not line by line. Empty is
+    /// empty: a needle that appears nowhere gives `[]`, which the caller must
+    /// tell from `["menuNeedsUpdate"]` itself.
+    static func functionsCalling(_ needle: String, in source: String) -> [String] {
+        // Strip in one pass, keeping newlines and the byte offsets of what is
+        // left, so a `func` line and a call are still in the same order.
+        var code = ""
+        var inLineComment = false, inString = false, inMultilineString = false
+        var blockDepth = 0
+        let characters = Array(source)
+        var index = 0
+        while index < characters.count {
+            let character = characters[index]
+            let next = index + 1 < characters.count ? characters[index + 1] : "\0"
+            let third = index + 2 < characters.count ? characters[index + 2] : "\0"
+
+            if inLineComment {
+                if character.isNewline { inLineComment = false; code.append("\n") }
+                index += 1
+                continue
+            }
+            if blockDepth > 0 {
+                if character == "/" && next == "*" { blockDepth += 1; index += 2; continue }
+                if character == "*" && next == "/" { blockDepth -= 1; index += 2; continue }
+                if character.isNewline { code.append("\n") }
+                index += 1
+                continue
+            }
+            if inMultilineString {
+                if character == "\"" && next == "\"" && third == "\"" {
+                    inMultilineString = false; index += 3; continue
+                }
+                if character.isNewline { code.append("\n") }
+                index += 1
+                continue
+            }
+            if inString {
+                // A single-line literal ends at the newline whatever else is
+                // on the line: the compiler rejects one that does not, so a
+                // scanner that carries it on is reading a file no compiler
+                // would accept — and it reads the whole rest of it as string.
+                // One stray quote, and the gate is green about nothing.
+                if character.isNewline { inString = false; code.append("\n"); index += 1; continue }
+                // The escape skip stops at the same edge, for the same reason:
+                // a trailing backslash must not step the scanner over the
+                // newline and take the line below into the literal with it.
+                if character == "\\" && !next.isNewline { index += 2; continue }
+                if character == "\"" { inString = false }
+                index += 1
+                continue
+            }
+            if character == "/" && next == "/" { inLineComment = true; index += 2; continue }
+            if character == "/" && next == "*" { blockDepth = 1; index += 2; continue }
+            if character == "\"" && next == "\"" && third == "\"" {
+                inMultilineString = true; index += 3; continue
+            }
+            if character == "\"" { inString = true; index += 1; continue }
+            code.append(character)
+            index += 1
+        }
+
+        // Then walk what is left, keeping a stack of the functions whose braces
+        // are still open. A stack and not the last name seen: a nested function
+        // or a closure that ends must hand the enclosing one back, or every
+        // call after the first nested `}` is attributed to the wrong function.
+        var open: [(name: String, depth: Int)] = []
+        var depth = 0
+        var found: [String] = []
+        var pendingFunction: String?
+        for line in code.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
+            if let range = line.range(of: "func ") {
+                let rest = line[range.upperBound...]
+                let name = rest.prefix { $0.isLetter || $0.isNumber || $0 == "_" }
+                if !name.isEmpty { pendingFunction = String(name) }
+            }
+            // Where on the line the call is, so it is attributed to the
+            // function whose braces are open AT that point — not to whatever
+            // was open before the line, and not to whatever survives it.
+            // `func f(_ m: NSMenu) { m.removeAllItems() }` is legal Swift and
+            // opens and closes `f` on the line that calls: appending before
+            // the walk reads `<top level>`, appending after it reads the same,
+            // and only the offset of the call itself reads `f`.
+            let callOffset = line.range(of: needle)
+                .map { line.distance(from: line.startIndex, to: $0.lowerBound) }
+            for (offset, character) in line.enumerated() {
+                if offset == callOffset { found.append(open.last?.name ?? "<top level>") }
+                if character == "{" {
+                    depth += 1
+                    if let pendingFunction {
+                        open.append((pendingFunction, depth))
+                    }
+                    pendingFunction = nil
+                } else if character == "}" {
+                    if open.last?.depth == depth { open.removeLast() }
+                    depth -= 1
+                }
+            }
+        }
+        return found
+    }
+
+    /// `removeAllItems()` is called in exactly one function, and it is the one
+    /// AppKit calls before the menu is shown.
+    ///
+    /// It is what closes a menu that is tracking — measured in
+    /// `Prototypes/T8Probe`, which is why T8's option c is buildable at all —
+    /// so every change made while the menu is up mutates the items that are
+    /// already there. That is one line away from being undone: a second
+    /// `menu.removeAllItems()` in a refresh path looks like tidy code, works in
+    /// every unit test, and dismisses the menu under the one person who clicked
+    /// the row this ticket exists for.
+    ///
+    /// The count is asserted as well as the name, so the gate cannot pass by
+    /// the rebuild disappearing: `[]` would mean the menu is never rebuilt at
+    /// all, which is a different bug and not a pass.
+    @Test func onlyMenuNeedsUpdateRebuildsTheMenu() throws {
+        let controller = try Self.read("Sources/SimmerApp/StatusItemController.swift")
+        #expect(Self.functionsCalling("removeAllItems", in: controller) == ["menuNeedsUpdate"], """
+        `removeAllItems()` closes a tracking NSMenu. It belongs in `menuNeedsUpdate`, which \
+        AppKit calls before a menu is shown, and nowhere else — a change made while the menu \
+        is up mutates the items that are there (`applyUpdateGroup`).
+        """)
+        // The other rebuild AppKit offers, and the one a refresh path reaches
+        // for by name. `refreshTitle` is the menu bar's TITLE and must stay
+        // clear of the menu itself.
+        #expect(Self.functionsCalling("menu.update()", in: controller) == [])
+        // Submenus, on the spelling this file actually uses. The line here was
+        // `functionsCalling("setSubmenu", …) == []` and could not fail: the
+        // file assigns `item.submenu =`, so `setSubmenu` was absent whatever
+        // the code did and the gate was green about nothing (R2 nit 7). The
+        // needle is the assignment and not the receiver's name, or the gate
+        // reads only the rows that happen to call their item `item`.
+        //
+        // Named rather than counted, and both in `apply`: that is the one
+        // mutator that sets every property a model can decide, including back
+        // to nothing. A submenu attached anywhere else — a refresh path
+        // reaching for the one row it wants to change — leaves the rest of
+        // that row carrying the last state's leftovers, and does it to an item
+        // in a menu that is on screen.
+        #expect(Self.functionsCalling(".submenu = ", in: controller) == ["apply", "apply"], """
+        Attaching a submenu belongs to `apply` and nowhere else: it is the only place that resets         every property of a row, so attaching a submenu elsewhere leaves the row half-updated         under an open menu. Two lines, because `apply` clears the submenu before it decides.
+        """)
+    }
+
+    /// The answer reaches the person once: as a row while the menu is open, as
+    /// a banner while it is not — and the banner path clears it, or the next
+    /// open shows the row for an answer the banner has already delivered.
+    ///
+    /// A source-text gate and not a behavioural test, because `simmer-app` has
+    /// no test target: `NSMenu` and `NSStatusItem` are not reachable from a
+    /// unit suite here, and a test that drove them would put a menu on this
+    /// Mac's screen. The three sites are named rather than counted, so the
+    /// gate cannot pass by the clear moving somewhere else: `startCheck`
+    /// before a check begins, `deliverAnswer` after the banner is posted,
+    /// `menuDidClose` when the row that was seen goes away.
+    @Test func theBannerPathClearsTheAnswerItDelivered() throws {
+        let controller = try Self.read("Sources/SimmerApp/StatusItemController.swift")
+        #expect(Self.functionsCalling("answer = nil", in: controller)
+            == ["startCheck", "deliverAnswer", "menuDidClose"], """
+        The answer is visible on exactly one channel: the row while the menu is open, the \
+        banner while it is not. `deliverAnswer` clears it after posting the banner, or the \
+        next open shows the row for an answer the banner already gave — "never neither, and \
+        never both", the doc comment above `deliverAnswer`.
+        """)
+    }
+
+    /// The reader above, held to the shapes that defeat a text gate — over
+    /// synthetic sources, because the only way to drive them against the real
+    /// controller is to edit it, and evidence that has to be produced by hand
+    /// is evidence nobody reproduces.
+    @Test func theFunctionReaderIsNotFooledByCommentsOrLineEndings() {
+        let call = "        menu.removeAllItems()\n"
+        func source(_ body: String) -> String { "final class C {\n" + body + "}\n" }
+
+        // The plain case, and the one the gate asserts.
+        #expect(Self.functionsCalling("removeAllItems", in: source(
+            "    func menuNeedsUpdate(_ menu: NSMenu) {\n" + call + "    }\n"))
+            == ["menuNeedsUpdate"])
+
+        // The same function written on one line — legal Swift, and the shape
+        // any rewrite reaches for. The line opens the function, calls, and
+        // closes it, so the attribution has to be taken where the call is and
+        // not before the line's braces are walked or after they all are.
+        #expect(Self.functionsCalling("removeAllItems", in: source(
+            "    func menuNeedsUpdate(_ m: NSMenu) { m.removeAllItems() }\n"))
+            == ["menuNeedsUpdate"])
+
+        // A comment that names the call — every kind. This is the real file's
+        // shape: three of its four occurrences are these.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            /// `removeAllItems()` is what closes a tracking menu.
+            func applyUpdateGroup() {
+                // never removeAllItems() here
+                /* not even removeAllItems() in a block comment */
+                item.title = "x"
+            }
+        """)) == [])
+
+        // A string literal holding the needle, single-line and multi-line —
+        // a log line or a test message must not read as a call.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            func log() {
+                print("removeAllItems() closes a tracking menu")
+                print(\"\"\"
+                removeAllItems() closes a tracking menu
+                \"\"\")
+            }
+        """)) == [])
+
+        // A literal nobody closed — one stray quote, which the compiler
+        // catches and a text scanner does not. The literal has to end at the
+        // newline, or every line below it is inside a string and the gate is
+        // green about a file it never read.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            func log() {
+                print("removeAllItems)
+            }
+            func applyUpdateGroup() {
+                menu.removeAllItems()
+            }
+        """)) == ["applyUpdateGroup"])
+
+        // And a literal whose last character is a backslash: the escape skip
+        // must not step over the newline either, or the line below is read as
+        // more of the string and the call on it is never seen.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            func applyUpdateGroup() {
+                print("a literal ending in a backslash \\
+                menu.removeAllItems()
+            }
+        """)) == ["applyUpdateGroup"])
+
+        // CRLF and CR alone: the same answer, not a name with a carriage
+        // return glued to it and not one long line whose braces never close.
+        let crlf = source("    func menuNeedsUpdate() {\n" + call + "    }\n")
+            .replacingOccurrences(of: "\n", with: "\r\n")
+        #expect(Self.functionsCalling("removeAllItems", in: crlf) == ["menuNeedsUpdate"])
+        let cr = source("    func menuNeedsUpdate() {\n" + call + "    }\n")
+            .replacingOccurrences(of: "\n", with: "\r")
+        #expect(Self.functionsCalling("removeAllItems", in: cr) == ["menuNeedsUpdate"])
+
+        // Wrapped over two lines, which is how a formatter leaves a long
+        // receiver — and the shape a line-by-line reader misses.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            func menuNeedsUpdate() {
+                statusItem.menu?
+                    .removeAllItems()
+            }
+        """)) == ["menuNeedsUpdate"])
+
+        // A nested closure that ends must hand the enclosing function back,
+        // or the second call is attributed to whatever came last.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            func refreshTitle() {
+                DispatchQueue.main.async { print(1) }
+                menu.removeAllItems()
+            }
+        """)) == ["refreshTitle"])
+
+        // A function whose name merely BEGINS with the good one does not
+        // answer for it: this is the fixture that makes the gate fail, and it
+        // is why the assertion is on equality and not on `contains`.
+        let impostor = source("""
+            func menuNeedsUpdateSoon() {
+                menu.removeAllItems()
+            }
+        """)
+        #expect(Self.functionsCalling("removeAllItems", in: impostor) == ["menuNeedsUpdateSoon"])
+        #expect(Self.functionsCalling("removeAllItems", in: impostor) != ["menuNeedsUpdate"])
+
+        // Two calls, one of them where it does not belong: the gate's real
+        // failure, planted, so that the red is known to be reachable.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            func menuNeedsUpdate() {
+                menu.removeAllItems()
+            }
+            func applyUpdateGroup() {
+                menu.removeAllItems()
+            }
+        """)) == ["menuNeedsUpdate", "applyUpdateGroup"])
+
+        // Outside any function at all — a top-level statement in a `main.swift`
+        // — is named rather than dropped: absent and "somewhere I cannot name"
+        // are different answers.
+        #expect(Self.functionsCalling("removeAllItems", in: "menu.removeAllItems()\n")
+            == ["<top level>"])
+
+        // And a needle that is nowhere is empty, which the caller tells from
+        // the good answer by equality.
+        #expect(Self.functionsCalling("removeAllItems", in: source(
+            "    func menuNeedsUpdate() {\n        item.title = \"x\"\n    }\n")) == [])
+    }
+
+    /// Every reader of the update record defends itself against a seamed one.
+    ///
+    /// A seamed check writes a record like any other, and that record then
+    /// answers "checked" for the next 24 hours. `UpdateCommand`'s own reader
+    /// has defended itself against that since the seam existed; `AppState`'s
+    /// daily-check guard did not, so one `SIMMER_FAKE_LATEST=… simmer update`
+    /// bought a day's silence from the menu bar. A trap fixed in one reader of
+    /// a question is a finding in every other reader of the same question.
+    ///
+    /// The gate reads the text between the lookup and the brace that opens
+    /// whatever the lookup guards, which is where a defence has to be — and it
+    /// asserts WHICH files read the record, so a third reader added without a
+    /// defence fails here rather than passing for being unlisted.
+    @Test func everyReaderOfTheUpdateRecordDefendsAgainstASeamedOne() throws {
+        var readers: [(file: String, guarded: String)] = []
+        // The enumerator that `BannerTextTests` already sweeps `Sources` with,
+        // rather than a second one: one reader of "every Swift file we ship".
+        for url in BannerTextTests.swiftFiles(under: "Sources") {
+            let code = Self.codeOnly(of: try String(contentsOf: url, encoding: .utf8))
+            var from = code.startIndex
+            while let call = code.range(of: "readUpdateRecord(", range: from..<code.endIndex) {
+                // The declaration in `Ledger` is not a reader: it is the
+                // question, and it is every caller that has to defend itself.
+                guard !code[..<call.lowerBound].hasSuffix("func ") else {
+                    from = call.upperBound
+                    continue
+                }
+                let brace = code.range(of: "{", range: call.upperBound..<code.endIndex)
+                readers.append((url.lastPathComponent,
+                                String(code[call.upperBound..<(brace?.lowerBound ?? code.endIndex)])))
+                from = call.upperBound
+            }
+        }
+        #expect(readers.map(\.file) == ["AppState.swift", "UpdateCommand.swift"], """
+        The readers of the update record are the list this gate defends. One appeared or \
+        moved: add it here, with the `seamed` defence the others have.
+        """)
+        for reader in readers {
+            #expect(reader.guarded.contains("seamed"), """
+            \(reader.file) reads the update record and never mentions `seamed` before acting \
+            on it. A seamed check writes a record that answers "checked" for 24 hours, so the \
+            reader that believes it suppresses the next real check for a day.
+            """)
+        }
+    }
 }
 
 /// What `bootstrap.sh`'s `fetch()` does to a checkout that is already there.

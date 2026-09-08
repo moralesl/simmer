@@ -270,6 +270,55 @@ import Testing
         #expect(!check(installed: "0.2.0", latest: "error").updateAvailable)
     }
 
+    /// Every one of the answer row's titles puts a value from the report into
+    /// its sentence, so a verdict that arrives with that value empty draws a
+    /// degenerate one: `"Update available:  — you have 0.3.2"`,
+    /// `"…is ahead of the newest release ()"`, `"Could not check for updates — "`.
+    /// `MenuModel.answerGroup` (`MenuModel.swift:403`) says in prose that
+    /// `check` never answers that way and draws the titles unguarded; this is
+    /// the assertion that says it. R2 nit 6.
+    ///
+    /// The last row is the one that can actually happen. A record whose
+    /// `latest` and `error` are both empty is a legal ledger state — a file
+    /// written before the `error` field existed, or a truncated one — and the
+    /// cache path reads it straight back into `report`. What stops the
+    /// degenerate title there is one line, `UpdateCommand.swift:161`: delete
+    /// `if report.error.isEmpty { report.error = "no release information" }`
+    /// and this row goes red with an empty reason, which is the menu drawing
+    /// "Could not check for updates — " and sending the reader to a terminal.
+    ///
+    /// The `Set` line is what keeps the loop from being vacuous: all four
+    /// verdicts have to be in the sweep for the switch to have looked at them.
+    @Test func noVerdictArrivesWithHalfOfItsSentenceEmpty() {
+        let blank = ledger()
+        blank.writeUpdateRecord(.init(checkedAt: 1_800_000_000, latest: "", error: "",
+                                      installed: "0.2.0"))
+        let reports = [
+            check(installed: "0.2.0", latest: "v0.3.0"),                // available
+            check(installed: "0.2.0", latest: "v0.2.0"),                // current
+            check(installed: "0.3.0", latest: "v0.2.0"),                // ahead
+            check(installed: "0.2.0", latest: "error"),                 // the source said why
+            check(installed: "0.2.0", latest: ""),                      // nothing was asked
+            check(installed: "0.2.0", latest: "nightly"),               // cannot compare
+            check(installed: "0.2.0", latest: "v0.3.0", cached: true),  // never checked
+            check(installed: "0.2.0", latest: "v0.3.0", cached: true, ledger: blank),
+        ]
+        #expect(Set(reports.map(\.verdict.rawValue))
+            == ["available", "current", "ahead", "unknown"])
+        for report in reports {
+            switch report.verdict {
+            case .available, .ahead:
+                #expect(!report.latestDisplay.isEmpty,
+                        "\(report.verdict.rawValue) with no release to name")
+            case .unknown:
+                #expect(!report.error.isEmpty, "unknown with no reason to give")
+            case .current:
+                // The only title that names neither: it is about the install.
+                break
+            }
+        }
+    }
+
     /// A tag that is not a version is a question this cannot answer, not a
     /// reason to claim currency.
     @Test func anUnparseableTagIsUnknownRatherThanCurrent() {

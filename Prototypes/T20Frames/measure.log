@@ -1,0 +1,15 @@
+retrying the opening click — the menu was not up
+0-baseline	open=true	closes=0	window=true	items=19
+1-title	open=true	closes=0	window=true	items=19
+2-view-in	open=true	closes=0	window=true	items=19
+3-view-out	open=true	closes=0	window=true	items=19
+4-submenu	open=true	closes=0	window=true	items=19
+5-hidden-on	open=true	closes=0	window=true	items=19
+6-hidden-off	open=true	closes=0	window=true	items=19
+7-insert-at-0	open=true	closes=0	window=true	items=21
+8-remove-inserted	open=true	closes=0	window=true	items=19
+handler-runs=0
+AXIsProcessTrusted=false
+checkRow.item.title=Check for Updates… hasAction=true hasTarget=true isEnabled=true
+checkRow.view.accessibilityLabel=Check for Updates… role=AXMenuItem isElement=true enabled=true
+PASS every mutation of an open menu, zero closes
