@@ -1163,6 +1163,65 @@ import Testing
         #expect(!log.contains("ERROR"), "\(log)")
     }
 
+    /// The three answers a removal can give, and which one `retire` is quiet
+    /// about.
+    ///
+    /// `false` was two answers wearing one word — "it changed under us" and
+    /// "it was never there" — and `retire` told them apart with a SECOND
+    /// `fileExists`, after the removal had already answered. A genuine
+    /// `extend`-landed-under-the-tick whose file then went between the two
+    /// questions read as the harmless one and was silenced, which is the only
+    /// case the ERROR line exists for.
+    @Test func aRemovalSaysWhyItDidNotHappenAndRetireSilencesOnlyTheGoneOne() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let claim = Claim(owner: "agent:eval", until: 2000, started: 900)
+        #expect(ledger.write(claim))
+        let snapshot = ledger.claims()[0]
+
+        // `.changed` — an `extend` landed between the snapshot and the tick.
+        let extended = Claim(owner: snapshot.owner, until: 5000, started: snapshot.started)
+        #expect(ledger.write(extended))
+        #expect(ledger.outcomeOfRemovingClaim(id: snapshot.id, ifStillMatching: snapshot)
+                == .changed)
+        #expect(ledger.retire(snapshot, why: "time is up", now: 2001) == false)
+        var log = (try? String(contentsOf: ledger.logFile, encoding: .utf8)) ?? ""
+        #expect(log.contains("ERROR: could not retire agent:eval"),
+                "the one case the ERROR line is for was silenced: \(log)")
+        var events = (try? String(contentsOf: ledger.eventsFile, encoding: .utf8)) ?? ""
+        #expect(!events.contains("\"retire\""), "an ending that did not happen: \(events)")
+        // The renewed claim is untouched — the whole point of the snapshot.
+        #expect(ledger.claims().map(\.until) == [5000])
+
+        // …and the window the old code decided in: the record changed, and
+        // then went. The answer is taken from the read that saw it change, so
+        // the file being absent a moment later cannot turn the ERROR off.
+        let record = ledger.claimsDir.appendingPathComponent(snapshot.id)
+        let changedThenVanished = ledger
+            .outcomeOfRemovingClaim(id: snapshot.id, ifStillMatching: snapshot)
+        try? FileManager.default.removeItem(at: record)
+        #expect(!FileManager.default.fileExists(atPath: record.path))
+        #expect(changedThenVanished == .changed,
+                "the second question is what the old code answered with")
+
+        // `.gone` — nothing there, and nothing said about it.
+        #expect(ledger.outcomeOfRemovingClaim(id: snapshot.id, ifStillMatching: snapshot)
+                == .gone)
+        try? FileManager.default.removeItem(at: ledger.logFile)
+        #expect(ledger.retire(snapshot, why: "time is up", now: 2002) == false)
+        log = (try? String(contentsOf: ledger.logFile, encoding: .utf8)) ?? ""
+        #expect(!log.contains("ERROR"), "a correct outcome was reported as one: \(log)")
+
+        // `.removed` — the ending happened, so it is recorded.
+        #expect(ledger.write(extended))
+        #expect(ledger.outcomeOfRemovingClaim(id: extended.id, ifStillMatching: extended)
+                == .removed)
+        #expect(ledger.write(extended))
+        #expect(ledger.retire(extended, why: "released by hand", now: 5001))
+        events = (try? String(contentsOf: ledger.eventsFile, encoding: .utf8)) ?? ""
+        #expect(events.components(separatedBy: "\"retire\"").count == 2, "\(events)")
+    }
+
     /// `removingAClaimThatIsAlreadyGoneSucceeds` above is `down`'s truth.
     /// With a snapshot in hand the answer flips: gone is not "still matching",
     /// same as `write(_:ifStillMatching:)` from the other side.

@@ -286,6 +286,21 @@ import Testing
             .filter { !$0.isEmpty }
     }
 
+    /// Swift with its line comments removed, so an absence check reads CODE.
+    ///
+    /// An absence proof that reads the whole file answers about the sentence
+    /// explaining why the thing is absent: `retire`'s own comment names the
+    /// second `fileExists` it no longer makes, and the first version of
+    /// `retireDecidesFromTheRemovalsAnswerAndNotASecondStat` was red against
+    /// the fix it was written for. Line comments only, and a `//` inside a
+    /// string literal would be cut with them — no reader here has one.
+    static func codeOnly(of source: String) -> String {
+        scriptLines(of: source).map { line -> String in
+            guard let marker = line.range(of: "//") else { return line }
+            return String(line[..<marker.lowerBound])
+        }.joined(separator: "\n")
+    }
+
     /// A markdown document's PROSE lines, fenced blocks dropped.
     ///
     /// A gate that reads a document's own examples as the thing it documents
@@ -646,6 +661,33 @@ import Testing
         // And a switch that will not move takes the claim back rather than
         // leaving a promise nothing is keeping.
         #expect(body.contains("removeClaim(id: claim.id, ifStillMatching: claim)"))
+    }
+
+    /// `retire`'s silence is decided by the removal's own answer, never by a
+    /// second question to the filesystem.
+    ///
+    /// A second `fileExists` is a second point in time, and the answers
+    /// disagree exactly in the race the ERROR line exists for: the record
+    /// changed under the tick and then went, so the stat said "not there" and
+    /// the one failure worth reporting was silenced. No fixture can reach
+    /// that window once it is closed — with the reason taken from the call
+    /// that took the decision there is nothing between the two — so what is
+    /// asserted is the shape, which is the thing that can come back.
+    @Test func retireDecidesFromTheRemovalsAnswerAndNotASecondStat() throws {
+        let source = try Self.read("Sources/SimmerCore/Model/Ledger.swift")
+        guard let after = source.components(separatedBy: "public func retire(").dropFirst().first,
+              let whole = after.components(separatedBy: "\n    }").first else {
+            Issue.record("retire is not a function of Ledger any more — re-read this test")
+            return
+        }
+        // Comments stripped: this function's own comment names the
+        // `fileExists` it stopped making, and an absence proof that reads it
+        // is answering about the explanation.
+        let body = Self.codeOnly(of: whole)
+        #expect(body.contains("outcomeOfRemovingClaim"),
+                "retire is back to a Bool that cannot say why it failed")
+        #expect(!body.contains("fileExists"),
+                "retire asks the filesystem a second time, and the two answers disagree in the one race the ERROR line is for")
     }
 
     @Test func theRunRenewerWritesUnderTheLockItChecksUnder() throws {

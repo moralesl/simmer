@@ -149,6 +149,22 @@ public struct Ledger: Sendable {
                     to: claimsDir.appendingPathComponent(claim.id))
     }
 
+    /// Why a removal did or did not happen — three answers, because `false`
+    /// was two of them and `retire`'s silence has to tell them apart.
+    public enum ClaimRemoval: Equatable, Sendable {
+        /// This call unlinked the record.
+        case removed
+        /// The record was not there. A coinciding tick already retired it and
+        /// recorded the ending, so a second one would be an ending that did
+        /// not happen — this is the answer `retire` is quiet about.
+        case gone
+        /// The record is still on disk and this call did not remove it:
+        /// either it is not the claim that was read (an `extend` landed
+        /// between the snapshot and here), or the unlink was refused. Both
+        /// are what the ERROR line names, and neither is silent.
+        case changed
+    }
+
     /// False when the record is still on disk. A claim that is already gone
     /// counts as removed — the guard and a human can race for the same claim,
     /// and both should be told the truth, which is that it is not there.
@@ -169,26 +185,72 @@ public struct Ledger: Sendable {
     /// renewal moves. Comparing whole records would refuse to delete anything
     /// a newer version had added a field to, which is the opposite failure.
     public func removeClaim(id: String, ifStillMatching expected: Claim? = nil) -> Bool {
+        let outcome = outcomeOfRemovingClaim(id: id, ifStillMatching: expected)
+        // With a snapshot in hand, only an actual removal is a removal: gone
+        // is not "still matching". Without one, `down`'s question is "is the
+        // record off disk", and a claim somebody else already retired answers
+        // yes — a race with the guard is not a failure.
+        return expected == nil ? outcome != .changed : outcome == .removed
+    }
+
+    /// The same removal, saying WHY it did not happen.
+    ///
+    /// `retire` used to re-derive the reason from a second `fileExists` after
+    /// this function had already answered, and `false` meant two different
+    /// things: the record changed under the tick, or it was never there. A
+    /// genuine "an `extend` landed" whose file then went between the two
+    /// looked like the second and was silenced — the one case the ERROR line
+    /// exists for.
+    ///
+    /// **The reason is whatever the syscall that failed said, and no later
+    /// question is asked.** `ENOENT` is the only answer that means already
+    /// gone; every other failure is a record this call did not remove and
+    /// cannot prove is absent, which is what `.changed` covers and what the
+    /// ERROR line has always said out loud ("it changed under us, or … is
+    /// still there"). Where the read and the unlink disagree — the record
+    /// matched, and vanished before the unlink — the unlink is authoritative,
+    /// because it is the later of the two and it is the one whose outcome the
+    /// caller is asking about.
+    public func outcomeOfRemovingClaim(id: String,
+                                      ifStillMatching expected: Claim? = nil) -> ClaimRemoval {
         let url = claimsDir.appendingPathComponent(id)
         if let expected {
-            // Gone since the snapshot is NOT "still matching" — same answer
-            // `write(_:ifStillMatching:)` gives from the other side. Two ticks
-            // can coincide, and the one that lost the race used to fall
-            // through to the unconditional path below, answer true, and have
-            // `retire` record the same ending twice on the event stream.
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
-                return false
+            let text: String
+            do {
+                text = try String(contentsOf: url, encoding: .utf8)
+            } catch {
+                return Ledger.isNoSuchFile(error) ? .gone : .changed
             }
             let current = Claim.parse(text, fallbackId: id)
             guard current.until == expected.until, current.started == expected.started else {
-                return false
+                return .changed
             }
         }
         do {
             try FileManager.default.removeItem(at: url)
-            return true
+            return .removed
         } catch {
-            return !FileManager.default.fileExists(atPath: url.path)
+            return Ledger.isNoSuchFile(error) ? .gone : .changed
+        }
+    }
+
+    /// Did the filesystem say "there is no such file", or something else?
+    ///
+    /// The distinction is the whole of `.gone` versus `.changed`, so it is
+    /// read from the error rather than from a second `fileExists` — a second
+    /// question is a second point in time, and answering with it is the
+    /// defect this replaced. `String(contentsOf:)` reports a missing file as
+    /// `NSFileReadNoSuchFileError` and `removeItem` as `NSFileNoSuchFileError`;
+    /// a POSIX `ENOENT` can also arrive unwrapped.
+    static func isNoSuchFile(_ error: Error) -> Bool {
+        let error = error as NSError
+        switch error.domain {
+        case NSCocoaErrorDomain:
+            return error.code == NSFileNoSuchFileError || error.code == NSFileReadNoSuchFileError
+        case NSPOSIXErrorDomain:
+            return error.code == Int(ENOENT)
+        default:
+            return false
         }
     }
 
@@ -203,11 +265,17 @@ public struct Ledger: Sendable {
         Ledger.endLegacyCaffeinate(claim)
         // Retire what was actually read: if it moved under us, the decision
         // to end it was taken about a claim that no longer exists.
-        guard removeClaim(id: claim.id, ifStillMatching: claim) else {
-            // Quiet when the file is simply gone: a coinciding tick already
-            // retired it and recorded the ending — a second ERROR line about
-            // an outcome that is correct would teach the log's reader to skim.
-            if FileManager.default.fileExists(atPath: claimsDir.appendingPathComponent(claim.id).path) {
+        //
+        // Quiet for exactly one of the three answers — `.gone`: a coinciding
+        // tick already retired it and recorded the ending, and a second ERROR
+        // line about an outcome that is correct teaches the log's reader to
+        // skim. The silence used to be decided by a second `fileExists` here,
+        // AFTER the removal had already answered, so a genuine "an `extend`
+        // landed" whose file then went was silenced too — the one case the
+        // ERROR line is for. The reason now comes from the call that took it.
+        let outcome = outcomeOfRemovingClaim(id: claim.id, ifStillMatching: claim)
+        guard outcome == .removed else {
+            if outcome != .gone {
                 log("ERROR: could not retire \(claim.owner) · \(why) — it changed under us, or \(claimsDir.appendingPathComponent(claim.id).path) is still there",
                     now: now)
             }
