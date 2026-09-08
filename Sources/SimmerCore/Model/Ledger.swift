@@ -149,6 +149,22 @@ public struct Ledger: Sendable {
                     to: claimsDir.appendingPathComponent(claim.id))
     }
 
+    /// Why a removal did or did not happen — three answers, because `false`
+    /// was two of them and `retire`'s silence has to tell them apart.
+    public enum ClaimRemoval: Equatable, Sendable {
+        /// This call unlinked the record.
+        case removed
+        /// The record was not there. A coinciding tick already retired it and
+        /// recorded the ending, so a second one would be an ending that did
+        /// not happen — this is the answer `retire` is quiet about.
+        case gone
+        /// The record is still on disk and this call did not remove it:
+        /// either it is not the claim that was read (an `extend` landed
+        /// between the snapshot and here), or the unlink was refused. Both
+        /// are what the ERROR line names, and neither is silent.
+        case changed
+    }
+
     /// False when the record is still on disk. A claim that is already gone
     /// counts as removed — the guard and a human can race for the same claim,
     /// and both should be told the truth, which is that it is not there.
@@ -169,26 +185,72 @@ public struct Ledger: Sendable {
     /// renewal moves. Comparing whole records would refuse to delete anything
     /// a newer version had added a field to, which is the opposite failure.
     public func removeClaim(id: String, ifStillMatching expected: Claim? = nil) -> Bool {
+        let outcome = outcomeOfRemovingClaim(id: id, ifStillMatching: expected)
+        // With a snapshot in hand, only an actual removal is a removal: gone
+        // is not "still matching". Without one, `down`'s question is "is the
+        // record off disk", and a claim somebody else already retired answers
+        // yes — a race with the guard is not a failure.
+        return expected == nil ? outcome != .changed : outcome == .removed
+    }
+
+    /// The same removal, saying WHY it did not happen.
+    ///
+    /// `retire` used to re-derive the reason from a second `fileExists` after
+    /// this function had already answered, and `false` meant two different
+    /// things: the record changed under the tick, or it was never there. A
+    /// genuine "an `extend` landed" whose file then went between the two
+    /// looked like the second and was silenced — the one case the ERROR line
+    /// exists for.
+    ///
+    /// **The reason is whatever the syscall that failed said, and no later
+    /// question is asked.** `ENOENT` is the only answer that means already
+    /// gone; every other failure is a record this call did not remove and
+    /// cannot prove is absent, which is what `.changed` covers and what the
+    /// ERROR line has always said out loud ("it changed under us, or … is
+    /// still there"). Where the read and the unlink disagree — the record
+    /// matched, and vanished before the unlink — the unlink is authoritative,
+    /// because it is the later of the two and it is the one whose outcome the
+    /// caller is asking about.
+    public func outcomeOfRemovingClaim(id: String,
+                                      ifStillMatching expected: Claim? = nil) -> ClaimRemoval {
         let url = claimsDir.appendingPathComponent(id)
         if let expected {
-            // Gone since the snapshot is NOT "still matching" — same answer
-            // `write(_:ifStillMatching:)` gives from the other side. Two ticks
-            // can coincide, and the one that lost the race used to fall
-            // through to the unconditional path below, answer true, and have
-            // `retire` record the same ending twice on the event stream.
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
-                return false
+            let text: String
+            do {
+                text = try String(contentsOf: url, encoding: .utf8)
+            } catch {
+                return Ledger.isNoSuchFile(error) ? .gone : .changed
             }
             let current = Claim.parse(text, fallbackId: id)
             guard current.until == expected.until, current.started == expected.started else {
-                return false
+                return .changed
             }
         }
         do {
             try FileManager.default.removeItem(at: url)
-            return true
+            return .removed
         } catch {
-            return !FileManager.default.fileExists(atPath: url.path)
+            return Ledger.isNoSuchFile(error) ? .gone : .changed
+        }
+    }
+
+    /// Did the filesystem say "there is no such file", or something else?
+    ///
+    /// The distinction is the whole of `.gone` versus `.changed`, so it is
+    /// read from the error rather than from a second `fileExists` — a second
+    /// question is a second point in time, and answering with it is the
+    /// defect this replaced. `String(contentsOf:)` reports a missing file as
+    /// `NSFileReadNoSuchFileError` and `removeItem` as `NSFileNoSuchFileError`;
+    /// a POSIX `ENOENT` can also arrive unwrapped.
+    static func isNoSuchFile(_ error: Error) -> Bool {
+        let error = error as NSError
+        switch error.domain {
+        case NSCocoaErrorDomain:
+            return error.code == NSFileNoSuchFileError || error.code == NSFileReadNoSuchFileError
+        case NSPOSIXErrorDomain:
+            return error.code == Int(ENOENT)
+        default:
+            return false
         }
     }
 
@@ -203,11 +265,17 @@ public struct Ledger: Sendable {
         Ledger.endLegacyCaffeinate(claim)
         // Retire what was actually read: if it moved under us, the decision
         // to end it was taken about a claim that no longer exists.
-        guard removeClaim(id: claim.id, ifStillMatching: claim) else {
-            // Quiet when the file is simply gone: a coinciding tick already
-            // retired it and recorded the ending — a second ERROR line about
-            // an outcome that is correct would teach the log's reader to skim.
-            if FileManager.default.fileExists(atPath: claimsDir.appendingPathComponent(claim.id).path) {
+        //
+        // Quiet for exactly one of the three answers — `.gone`: a coinciding
+        // tick already retired it and recorded the ending, and a second ERROR
+        // line about an outcome that is correct teaches the log's reader to
+        // skim. The silence used to be decided by a second `fileExists` here,
+        // AFTER the removal had already answered, so a genuine "an `extend`
+        // landed" whose file then went was silenced too — the one case the
+        // ERROR line is for. The reason now comes from the call that took it.
+        let outcome = outcomeOfRemovingClaim(id: claim.id, ifStillMatching: claim)
+        guard outcome == .removed else {
+            if outcome != .gone {
                 log("ERROR: could not retire \(claim.owner) · \(why) — it changed under us, or \(claimsDir.appendingPathComponent(claim.id).path) is still there",
                     now: now)
             }
@@ -296,9 +364,23 @@ public struct Ledger: Sendable {
         until = epoch(until)
         setAt = epoch(setAt)
         expires = epoch(expires)
-        // `expires` is contracted strictly after `until`; a value that is not
-        // is damage, and re-deriving it keeps the ceiling real for its night.
-        if expires <= until { expires = 0 }
+        // `expires` is contracted strictly after `until` AND no later than
+        // the rollover that `writeCap` derives — one night, not 75 years. A
+        // value outside that window is damage, and re-deriving it keeps the
+        // ceiling real for its own night.
+        //
+        // The upper half was missing, and it is the one shape both checks let
+        // through: `until` and `expires` each in range, `expires` strictly
+        // after `until`, mutually inconsistent. `until=1000000,
+        // expires=4102444800` read back live and every claim and every
+        // extend was then refused until 2100 — the lockout the paragraph
+        // above says this check exists to prevent, arriving from the other
+        // side.
+        //
+        // `>` and not `>=`: `Cap.rollover(after: until)` is exactly what
+        // `writeCap` records, so the value the writer produces has to read
+        // back unchanged.
+        if expires <= until || expires > Cap.rollover(after: until) { expires = 0 }
         guard until != 0 else { return nil }
         // A file written before caps expired carries no `expires`. Deriving it
         // here is what retires those caps on first read rather than stranding
@@ -437,7 +519,35 @@ public struct Ledger: Sendable {
         // silently, forever. Its lines are requests that were never posted;
         // they are drained too, and `maxAge` — not the crash — decides which
         // of them still deserve a banner.
-        var text = (try? String(contentsOf: draining, encoding: .utf8)) ?? ""
+        //
+        // …unless the name is a symlink to the SPOOL ITSELF, in which case
+        // the read follows it, the unlink below takes the link and leaves the
+        // spool, and the rename then hands the very same lines back as the
+        // fresh half: every banner posted TWICE (verified,
+        // `["one-entry", "one-entry"]`). One file cannot be both halves of
+        // one drain, so the identity is settled before the read rather than
+        // after — the recovered half is whatever the sentinel names, and a
+        // sentinel naming the spool has recovered nothing.
+        //
+        // The two names are compared by the FILE they reach — device and
+        // inode — not by their paths. A path comparison answered the symlink
+        // and missed the HARD link, where there is no target to resolve
+        // because both names ARE the file: same double post,
+        // `["hard-linked", "hard-linked"]`, measured. Asking the filesystem
+        // which file a name reaches subsumes both, and needs no list of the
+        // ways two names can meet.
+        //
+        // Not `O_NOFOLLOW` on the sentinel: a link to a file elsewhere is a
+        // real stranded half and must keep posting
+        // (`anEmptyStrandedSentinelIsNotImmortalEither` asserts it), and
+        // `O_NOFOLLOW` refuses that one too.
+        let isTheSpoolItself = Ledger.fileIdentity(atPath: draining.path)
+            .flatMap { sentinel in
+                Ledger.fileIdentity(atPath: spoolFile.path).map { $0 == sentinel }
+            } ?? false
+        var text = isTheSpoolItself
+            ? ""
+            : ((try? String(contentsOf: draining, encoding: .utf8)) ?? "")
         // Unconditional, and keyed on the sentinel EXISTING rather than on
         // what it holds. Removing it only when it read as non-empty leaves
         // exactly the same immortality behind for the shapes that read as
@@ -1088,6 +1198,33 @@ public struct Ledger: Sendable {
     /// that a defect: an `O_NOFOLLOW` refusal or a full disk lost the banner
     /// and wrote nothing about it anywhere (R2 finding 8). A short write
     /// counts as a failure too — a half-written JSONL line is not a banner.
+    /// Which FILE a path reaches, as the pair that identifies one: device and
+    /// inode.
+    ///
+    /// `stat` and not `lstat`, deliberately — the question is what the name
+    /// reaches, and a symlink reaches its target. `lstat` would answer about
+    /// the link itself and let a sentinel symlinked to the spool through as a
+    /// different file, which is the defect this identity was introduced to
+    /// close. `nil` means the name reaches nothing, which is not the same as
+    /// reaching something else: a dangling symlink and an absent name both
+    /// answer `nil`, and neither is the spool.
+    ///
+    /// Not `URL.resourceValues(forKeys: [.fileResourceIdentifierKey])`, which
+    /// looks like the Foundation-native spelling of this and is wrong for the
+    /// case that matters: measured on this Mac, it does NOT follow a symlink
+    /// (a link and its target compare unequal) and it answers non-nil for a
+    /// DANGLING link — so the sentinel symlinked to the spool would be read
+    /// as a different file again. It gets the hard link right and the one
+    /// shape finding 6 was about wrong.
+    static func fileIdentity(atPath path: String) -> (dev: dev_t, ino: ino_t)? {
+        // `Darwin.stat` names the STRUCT; the syscall of the same name is
+        // reached through a typed reference to it.
+        let syscall: (UnsafePointer<CChar>, UnsafeMutablePointer<Darwin.stat>) -> Int32 = stat
+        var info = Darwin.stat()
+        guard path.withCString({ syscall($0, &info) }) == 0 else { return nil }
+        return (info.st_dev, info.st_ino)
+    }
+
     private func append(_ text: String, to url: URL) -> Bool {
         // O_NOFOLLOW: these are append-only records inside a directory the
         // user owns, and a symlink dropped in their place would redirect every

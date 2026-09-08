@@ -105,6 +105,91 @@ import Testing
                 "sugar knows \(sugarOnly) with nothing behind it; the parser has \(parserOnly) that sugar swallows")
     }
 
+    /// Which verbs refuse `--json` is answered in three places, and they must
+    /// answer the same.
+    ///
+    /// Two of the three were already gated against each other:
+    /// `everyVerbHonoursJSON` walks the whole verb list and
+    /// `theVerbsWithoutAMachineAnswerSaySo` enumerates the refusers, and T4's
+    /// brief said in as many words that two lists of one question are two
+    /// lists that can come to disagree. It stopped one reader short. The third
+    /// is the law — `docs/CONTRACTS.md` — and it named two verbs for a release
+    /// while the code refused five, so an implementation written to the law
+    /// accepts `guard --json`, prints nothing and exits 0: the exact defect
+    /// 0.3.2 fixed, reintroduced by the document that is supposed to prevent
+    /// it. `CLI.swift`'s doc comment, the fourth, said "the two commands".
+    ///
+    /// Gated in BOTH directions, by set equality rather than containment. A
+    /// missing word is the drift that happened; a surplus one is a verb the
+    /// law promises has no machine answer while the code answers happily, and
+    /// a caller who believes the law then never asks. Neither is the safe
+    /// direction, so neither is allowed.
+    ///
+    /// The enumeration in the acceptance suite is the source: it is the one of
+    /// the three that a wrong answer makes red on its own.
+    @Test func theThreeListsOfWhichVerbsRefuseJSONNameTheSameVerbs() throws {
+        let acceptance = try Self.read("Tests/SimmerAcceptanceTests/MachineOutputTests.swift")
+        guard let rows = acceptance
+            .components(separatedBy: "func theVerbsWithoutAMachineAnswerSaySo").dropFirst().first?
+            .components(separatedBy: "for invocation in [").dropFirst().first?
+            .components(separatedBy: "]] {").first else {
+            #expect(Bool(false), "theVerbsWithoutAMachineAnswerSaySo no longer enumerates invocations")
+            return
+        }
+        // Each row is a whole invocation; the verb is its first literal.
+        let refused = Set(rows.components(separatedBy: "[").dropFirst()
+            .compactMap { Self.quoted(in: $0).first })
+        #expect(refused.count > 1, "the enumeration did not parse: \(refused)")
+
+        // The law. Fences skipped, and exactly one prose line may carry it —
+        // two would mean the gate is holding one of them in step and letting
+        // the other drift.
+        let sentences = Self.unfencedLines(of: try Self.read("docs/CONTRACTS.md"))
+            .filter { $0.contains("have none and **refuse** the flag") }
+        #expect(sentences.count == 1,
+                "docs/CONTRACTS.md states which verbs refuse --json on \(sentences.count) prose lines")
+        let law = Set(sentences.flatMap { Self.backticked(in: $0) })
+        #expect(law == refused,
+                "docs/CONTRACTS.md names \(law.subtracting(refused)) that nothing refuses, and omits \(refused.subtracting(law))")
+
+        // And `refuseJSON`'s own doc comment, the reader that said "the two
+        // commands" through 0.3.2.
+        let comment = Self.scriptLines(of: try Self.read("Sources/SimmerCLI/CLI.swift"))
+            .filter { $0.contains("///") && $0.contains("no machine answer") }
+        #expect(comment.count == 1,
+                "refuseJSON's doc comment names its verbs on \(comment.count) lines")
+        // The list may wrap, so read from the anchor line to the end of that
+        // sentence rather than from the anchor line alone.
+        let documented = Set(Self.backticked(in: Self.docCommentSentence(
+            startingAt: "no machine answer",
+            in: try Self.read("Sources/SimmerCLI/CLI.swift"))))
+        #expect(documented == refused,
+                "refuseJSON's comment names \(documented.subtracting(refused)) that nothing refuses, and omits \(refused.subtracting(documented))")
+    }
+
+    /// One sentence of a doc comment, from the line holding `anchor` to the
+    /// first `.` that ends it — because a list of five verbs wraps, and a
+    /// reader of the anchor line alone answers about half of it. Adversarial
+    /// case 3: a wrapped item read one line at a time is an item silently
+    /// truncated.
+    static func docCommentSentence(startingAt anchor: String, in source: String) -> String {
+        let lines = scriptLines(of: source)
+        guard let start = lines.firstIndex(where: { $0.contains("///") && $0.contains(anchor) })
+        else { return "" }
+        var sentence = ""
+        for line in lines[start...] {
+            guard let marker = line.range(of: "///") else { break }
+            let text = line[marker.upperBound...].trimmingCharacters(in: .whitespaces)
+            sentence += (sentence.isEmpty ? "" : " ") + text
+            if text.contains(".") { break }
+        }
+        // The sentence ends at its full stop; what follows on that line is the
+        // next one, and reading it in is how `--json` — the flag, not a verb —
+        // joined the list this gate compares.
+        if let stop = sentence.firstIndex(of: ".") { sentence = String(sentence[..<stop]) }
+        return sentence
+    }
+
     /// The setup window's two update captions are one line each.
     ///
     /// They were paragraphs — eight sentences and an environment variable under
@@ -167,6 +252,90 @@ import Testing
     }
 
     /// Every double-quoted string in a fragment of Swift source.
+    /// The tail of `bootstrap.sh` as *both* gates over it need to read it:
+    /// the last line that is neither blank nor a comment, and where it is.
+    ///
+    /// Two gates read that tail and they disagreed. `theInstallerIsTruncationSafe`
+    /// (`SudoRuleTests.swift`) reads the last non-empty, non-`#` line, so a
+    /// trailing comment is legal there — which it is: everything is inside
+    /// functions and a comment after the call cannot run. `BootstrapFetchTests`
+    /// read the last non-empty line and then dropped it, so that same trailing
+    /// comment left `main "$@"` in the "library", and sourcing it ran
+    /// `build_and_install`, `install_sudo_rule` and `launch_app` on the
+    /// tester's Mac (R3 finding 2). One reader answers both now, so a legal
+    /// tail cannot be legal to one gate and an installer to the other.
+    ///
+    /// `.whitespacesAndNewlines`, not `.whitespaces`: under CRLF every line
+    /// carries a trailing `\r`, and a reader that does not trim it answers
+    /// about `main "$@"\r`.
+    static func lastRealLine(of script: String) -> (index: Int, text: String)? {
+        let lines = scriptLines(of: script)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard let index = lines.lastIndex(where: { !$0.isEmpty && !$0.hasPrefix("#") })
+        else { return nil }
+        return (index, lines[index])
+    }
+
+    /// The `` `token` `` spellings on one line of markdown or of a doc
+    /// comment. Odd-numbered fragments of a split on the backtick are what
+    /// sat between a pair of them.
+    static func backticked(in line: String) -> [String] {
+        line.components(separatedBy: "`").enumerated()
+            .filter { $0.offset % 2 == 1 }
+            .map(\.element)
+            .filter { !$0.isEmpty }
+    }
+
+    /// Swift with its line comments removed, so an absence check reads CODE.
+    ///
+    /// An absence proof that reads the whole file answers about the sentence
+    /// explaining why the thing is absent: `retire`'s own comment names the
+    /// second `fileExists` it no longer makes, and the first version of
+    /// `retireDecidesFromTheRemovalsAnswerAndNotASecondStat` was red against
+    /// the fix it was written for. Line comments only, and a `//` inside a
+    /// string literal would be cut with them — no reader here has one.
+    static func codeOnly(of source: String) -> String {
+        scriptLines(of: source).map { line -> String in
+            guard let marker = line.range(of: "//") else { return line }
+            return String(line[..<marker.lowerBound])
+        }.joined(separator: "\n")
+    }
+
+    /// A markdown document's PROSE lines, fenced blocks dropped.
+    ///
+    /// A gate that reads a document's own examples as the thing it documents
+    /// has been written three times in three weeks here: `docs/CONTRACTS.md`
+    /// quotes JSON objects and shell transcripts that hold the same words its
+    /// law does, and a reader that counts them is answering about the
+    /// examples.
+    static func unfencedLines(of markdown: String) -> [String] {
+        var prose: [String] = []
+        var inFence = false
+        for line in scriptLines(of: markdown) {
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                inFence.toggle()
+                continue
+            }
+            if !inFence { prose.append(line) }
+        }
+        return prose
+    }
+
+    /// A shell script split into its lines — CRLF included.
+    ///
+    /// `split(separator: "\n")` cannot do this: in Swift `"\r\n"` is ONE
+    /// Character, a grapheme cluster, so it matches neither `"\n"` nor
+    /// `"\r"` and a CRLF script splits into a single line. Every reader of
+    /// its tail then answers about the whole file, which is how the first
+    /// version of `lastRealLine` read `bootstrap.sh` as one line whose text
+    /// was the entire script (caught by the CRLF row of
+    /// `theLibraryDropsTheCallHoweverTheTailIsWritten`). `isNewline` is true
+    /// for the cluster, for a bare `\r` and for `\n` alike.
+    static func scriptLines(of script: String) -> [String] {
+        script.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+            .map(String.init)
+    }
+
     static func quoted(in fragment: String) -> [String] {
         var found: [String] = []
         var current: String?
@@ -494,6 +663,33 @@ import Testing
         #expect(body.contains("removeClaim(id: claim.id, ifStillMatching: claim)"))
     }
 
+    /// `retire`'s silence is decided by the removal's own answer, never by a
+    /// second question to the filesystem.
+    ///
+    /// A second `fileExists` is a second point in time, and the answers
+    /// disagree exactly in the race the ERROR line exists for: the record
+    /// changed under the tick and then went, so the stat said "not there" and
+    /// the one failure worth reporting was silenced. No fixture can reach
+    /// that window once it is closed — with the reason taken from the call
+    /// that took the decision there is nothing between the two — so what is
+    /// asserted is the shape, which is the thing that can come back.
+    @Test func retireDecidesFromTheRemovalsAnswerAndNotASecondStat() throws {
+        let source = try Self.read("Sources/SimmerCore/Model/Ledger.swift")
+        guard let after = source.components(separatedBy: "public func retire(").dropFirst().first,
+              let whole = after.components(separatedBy: "\n    }").first else {
+            Issue.record("retire is not a function of Ledger any more — re-read this test")
+            return
+        }
+        // Comments stripped: this function's own comment names the
+        // `fileExists` it stopped making, and an absence proof that reads it
+        // is answering about the explanation.
+        let body = Self.codeOnly(of: whole)
+        #expect(body.contains("outcomeOfRemovingClaim"),
+                "retire is back to a Bool that cannot say why it failed")
+        #expect(!body.contains("fileExists"),
+                "retire asks the filesystem a second time, and the two answers disagree in the one race the ERROR line is for")
+    }
+
     @Test func theRunRenewerWritesUnderTheLockItChecksUnder() throws {
         let source = try Self.read("Sources/SimmerCLI/RunCLI.swift")
         let renewer = source.components(separatedBy: "func startRenewer()").last ?? ""
@@ -749,21 +945,104 @@ import Testing
 /// nothing is installed, and the origin is a `git init` under the test's own
 /// temp directory — no network.
 @Suite struct BootstrapFetchTests {
-    /// The script minus its final `main "$@"`, which is what makes it
-    /// sourceable. The drop is asserted rather than assumed: if that line
-    /// moves, this suite must fail loudly instead of quietly sourcing a
-    /// script that installs simmer over the tester's machine.
-    static func library(at url: URL) throws {
-        let script = try StructureTests.read("bootstrap.sh")
-        var lines = script.split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-        while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
-            lines.removeLast()
+    /// Why a script cannot be turned into a sourceable library.
+    ///
+    /// A thrown error and not a failed `#require`, because the STOP is the
+    /// property under test and a recorded expectation cannot state it:
+    /// `#expect(throws:)` catches the throw a `#require` makes, and the issue
+    /// it recorded on the way out still fails the test (measured). The
+    /// alternative, `withKnownIssue`, leaves `make test` reporting a known
+    /// issue forever, which is a red the reader learns to ignore.
+    ///
+    /// It stops just as hard as `#require` did: every caller reaches it
+    /// through `try`, so a `bootstrap.sh` whose tail this helper does not
+    /// recognise fails the suite before anything is written or sourced.
+    enum UnsourceableScript: Error, CustomStringConvertible, Equatable {
+        case noCodeAtAll
+        case tailIsNotTheCall(String)
+        case aSecondCallSurvives
+
+        var description: String {
+            switch self {
+            case .noCodeAtAll:
+                return "bootstrap.sh has no code left in it at all"
+            case .tailIsNotTheCall(let tail):
+                return "bootstrap.sh no longer ends in main \"$@\" — it ends in \(tail)"
+            case .aSecondCallSurvives:
+                return "a second main \"$@\" survived the strip, and sourcing it would install"
+            }
         }
-        #expect(lines.last == "main \"$@\"", "bootstrap.sh no longer ends in main \"$@\"")
-        lines.removeLast()
-        #expect(!lines.contains { $0 == "main \"$@\"" }, "a second call would still install")
-        try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    /// The script minus its `main "$@"`, which is what makes it sourceable.
+    ///
+    /// Every check here throws rather than recording, because each one IS the
+    /// safety argument for the next line: `#expect` records a failure and lets
+    /// the removal, the write and the `.` run anyway, which is how a tail this
+    /// helper did not recognise became an installer sourced on the tester's
+    /// Mac (R3 finding 2). Where the assertion is the reason the next
+    /// statement is safe, it has to stop.
+    ///
+    /// The tail is read through `StructureTests.lastRealLine`, the one reader
+    /// `theInstallerIsTruncationSafe` uses too, so a trailing comment is legal
+    /// to both gates or to neither.
+    static func libraryText(of script: String) throws -> String {
+        // The same split `lastRealLine` indexes into, or the index it
+        // returns names a different line here.
+        var lines = StructureTests.scriptLines(of: script)
+        guard let tail = StructureTests.lastRealLine(of: script) else {
+            throw UnsourceableScript.noCodeAtAll
+        }
+        guard tail.text == "main \"$@\"" else {
+            throw UnsourceableScript.tailIsNotTheCall(tail.text)
+        }
+        lines.remove(at: tail.index)
+        // A call in a COMMENT is not a call, which is why the comparison is
+        // against the trimmed line rather than a `contains`.
+        guard !lines.contains(where: {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines) == "main \"$@\""
+        }) else {
+            throw UnsourceableScript.aSecondCallSurvives
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    static func library(at url: URL) throws {
+        try libraryText(of: try StructureTests.read("bootstrap.sh"))
+            .write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    /// The tail shapes `bootstrap.sh` is allowed to have, each yielding a
+    /// library with no call in it — and the shape that must stop the helper
+    /// rather than be silently trimmed into one.
+    @Test func theLibraryDropsTheCallHoweverTheTailIsWritten() throws {
+        let body = "fetch() {\n  :\n}\n\nmain \"$@\""
+        for (shape, script) in [
+            ("bare", body),
+            ("trailing newline", body + "\n"),
+            ("trailing comment", body + "\n# installed by curl | bash\n"),
+            ("trailing blank lines", body + "\n\n\n"),
+            ("CRLF throughout", body.replacingOccurrences(of: "\n", with: "\r\n") + "\r\n"),
+            ("a second call in a comment", body + "\n# main \"$@\" used to live here\n"),
+        ] {
+            let library = try Self.libraryText(of: script)
+            #expect(!library.split(separator: "\n").contains {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines) == "main \"$@\""
+            }, "\(shape): the library still calls main — sourcing it installs simmer")
+            #expect(library.contains("fetch() {"), "\(shape): the library lost its functions")
+        }
+        // And the stop itself: a tail that is not the call must fail the
+        // helper, not be dropped anyway. Named exactly, so the test states
+        // WHICH refusal it expects rather than "something went wrong".
+        #expect(throws: Self.UnsourceableScript.tailIsNotTheCall("build_and_install")) {
+            _ = try Self.libraryText(of: body + "\nbuild_and_install\n")
+        }
+        #expect(throws: Self.UnsourceableScript.aSecondCallSurvives) {
+            _ = try Self.libraryText(of: body + "\nmain \"$@\"\n")
+        }
+        #expect(throws: Self.UnsourceableScript.noCodeAtAll) {
+            _ = try Self.libraryText(of: "# a comment and nothing else\n\n")
+        }
     }
 
     struct Result { let out: String, code: Int32 }
@@ -843,9 +1122,22 @@ import Testing
         let diverged = Self.fetch(ref: "main", into: checkout, from: origin, library: library)
         #expect(diverged.code != 0, "a diverged checkout passed: \(diverged.out)")
         #expect(!diverged.out.contains("updated the existing checkout"), "\(diverged.out)")
-        // A refusal that names no fix is the one thing the surface forbids.
+        // A refusal that names no fix is the one thing the surface forbids —
+        // and a refusal that names TWO is the same failure from the other
+        // side. Dropping `2>/dev/null` from the merge is what made this
+        // divergence visible at all, and it also printed git's nine-line
+        // "hint: Diverging branches can't be fast-forwarded, need to specify
+        // how to reconcile them" above simmer's one line, telling the reader
+        // to set `pull.rebase` when the fix is `git -C $DIR status`.
         #expect(diverged.out.contains("local commits"), "\(diverged.out)")
         #expect(diverged.out.contains("git -C \(checkout.path) status"), "\(diverged.out)")
+        #expect(!diverged.out.contains("hint:"),
+                "git's own hint block competes with simmer's refusal: \(diverged.out)")
+        // One line, in simmer's voice: the refusal is what `die` printed and
+        // nothing else. `step`'s own progress lines are the rest of it, so
+        // only stderr-shaped git chatter is counted out.
+        #expect(!diverged.out.contains("Diverging branches"), "\(diverged.out)")
+        #expect(!diverged.out.lowercased().contains("pull.rebase"), "\(diverged.out)")
         #expect(Self.git(["-C", checkout.path, "log", "-1", "--format=%s"]) == "local work",
                 "the checkout was moved under a refusal")
 
