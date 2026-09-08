@@ -999,7 +999,10 @@ import Testing
                      "the transport table has \(rows.count) rows naming -sender, not one: \(rows)")
         let cells = rows[0].split(separator: "|", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        try #require(cells.count >= 4, "the -sender row is not four cells wide: \(rows[0])")
+        // Four cells between five pipes split into six components, the first
+        // and the last empty; `>= 4` is what a row wrapped after the second
+        // cell also clears, which is how it used to pass on its first line.
+        try #require(cells.count >= 6, "the -sender row is not four cells wide: \(rows[0])")
         let displays = cells[2]
         #expect(!rows[0].contains("✅"),
                 "PLATFORM-FACTS presents -sender as a working transport again: \(rows[0])")
