@@ -1420,8 +1420,24 @@ import Testing
     /// can honestly prove.
     @Test func theTwoLastGatesRefuseOutLoud() throws {
         let notifier = try StructureTests.read("Sources/SimmerNotifyKit/BundleNotifier.swift")
-        #expect(notifier.contains("guard request.hasInformativeText else { return .noInformativeText }"),
-                "BundleNotifier.post is the last thing between a banner and UN")
+        let text = notifier.range(of: "guard request.hasInformativeText else { return .noInformativeText }")
+        #expect(text != nil, "BundleNotifier.post is the last thing between a banner and UN")
+        // And it comes FIRST, which is the load-bearing half. `available` is
+        // `Bundle.main.bundleIdentifier != nil` — nil in a `swift test`
+        // binary — so a text refusal ordered after it answers `.unbundled`
+        // about a defect in the request and can never be driven, whatever
+        // else changes about this package's test topology. Both spellings are
+        // unique in the file: the other two `available` guards return `()`
+        // and a `String`, not `.unbundled`.
+        let bundled = notifier.range(of: "guard available else { return .unbundled }")
+        #expect(bundled != nil)
+        if let text, let bundled {
+            #expect(text.lowerBound < bundled.lowerBound, """
+            the text refusal must precede the `available` guard: after it, a request with \
+            no informative text is answered `.unbundled`, which is a fact about the process \
+            and not about the banner
+            """)
+        }
         // …and its caller turns that answer into a line. `PostResult` exists
         // so the refusal is distinguishable from being unbundled, which is a
         // steady state and not an event.
