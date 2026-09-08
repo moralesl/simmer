@@ -596,3 +596,131 @@ import Testing
         #expect(cli.contains("simmer down --all"))
     }
 }
+
+/// What `bootstrap.sh`'s `fetch()` does to a checkout that is already there.
+///
+/// `bash -n` and the readers above only look at the script as text, so the one
+/// thing this function has to get right was proved once by hand and then
+/// unprotected: it swallowed every failed fast-forward so that a TAG could
+/// pass, which also swallowed a diverged BRANCH, printed "updated the existing
+/// checkout" over the stale tree, and handed that tree to `make install`. The
+/// installer said it had updated and then installed somebody's unpushed local
+/// work as the release, at exit 0.
+///
+/// Driven the way the script itself cannot be: everything in `bootstrap.sh`
+/// lives inside functions and the last line is `main "$@"`
+/// (`theInstallerIsTruncationSafe` is the gate on that), so dropping that one
+/// line leaves a library, and `fetch` can be called without
+/// `build_and_install` or the sudo step ever running. Nothing is built,
+/// nothing is installed, and the origin is a `git init` under the test's own
+/// temp directory — no network.
+@Suite struct BootstrapFetchTests {
+    /// The script minus its final `main "$@"`, which is what makes it
+    /// sourceable. The drop is asserted rather than assumed: if that line
+    /// moves, this suite must fail loudly instead of quietly sourcing a
+    /// script that installs simmer over the tester's machine.
+    static func library(at url: URL) throws {
+        let script = try StructureTests.read("bootstrap.sh")
+        var lines = script.split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+            lines.removeLast()
+        }
+        #expect(lines.last == "main \"$@\"", "bootstrap.sh no longer ends in main \"$@\"")
+        lines.removeLast()
+        #expect(!lines.contains { $0 == "main \"$@\"" }, "a second call would still install")
+        try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    struct Result { let out: String, code: Int32 }
+
+    /// `fetch` alone, under the three environment variables it reads.
+    static func fetch(ref: String, into dir: URL, from origin: URL, library: URL) -> Result {
+        let result = Shell.run("/usr/bin/env", [
+            "SIMMER_REPO=\(origin.path)", "SIMMER_REF=\(ref)", "SIMMER_DIR=\(dir.path)",
+            // Hermetic: git must not need this machine's identity or config.
+            "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+            "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+            "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+            "bash", "-c", ". '\(library.path)'; fetch",
+        ])
+        return Result(out: result.stdout + result.stderr, code: result.status)
+    }
+
+    @discardableResult
+    static func git(_ args: [String]) -> String {
+        let result = Shell.run("/usr/bin/env", [
+            "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+            "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+            "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+            "/usr/bin/git",
+        ] + args)
+        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    @Test func fetchTellsATagFromABranchAndRefusesADivergedCheckout() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-bootstrap-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let library = root.appendingPathComponent("lib.sh")
+        try Self.library(at: library)
+
+        let origin = root.appendingPathComponent("origin")
+        Self.git(["init", "--quiet", "--initial-branch=main", origin.path])
+        try "one".write(to: origin.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", origin.path, "add", "f"])
+        Self.git(["-C", origin.path, "commit", "--quiet", "-m", "one"])
+        Self.git(["-C", origin.path, "tag", "v9.9.9"])
+
+        let checkout = root.appendingPathComponent("co")
+        func clone(_ ref: String) {
+            try? FileManager.default.removeItem(at: checkout)
+            Self.git(["clone", "--quiet", "--branch", ref, origin.path, checkout.path])
+        }
+
+        // A TAG is already exactly what it says: nothing to fast-forward, and
+        // the script must not claim it updated anything.
+        clone("v9.9.9")
+        let tag = Self.fetch(ref: "v9.9.9", into: checkout, from: origin, library: library)
+        #expect(tag.code == 0, "\(tag.out)")
+        #expect(tag.out.contains("at v9.9.9"), "\(tag.out)")
+        #expect(!tag.out.contains("updated"), "claimed an update it did not perform: \(tag.out)")
+
+        // A BRANCH behind its upstream fast-forwards, and "updated" is true.
+        clone("main")
+        try "two".write(to: origin.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", origin.path, "commit", "--quiet", "-am", "two"])
+        let behind = Self.fetch(ref: "main", into: checkout, from: origin, library: library)
+        #expect(behind.code == 0, "\(behind.out)")
+        #expect(behind.out.contains("updated the existing checkout"), "\(behind.out)")
+        #expect(Self.git(["-C", checkout.path, "log", "-1", "--format=%s"]) == "two",
+                "said it updated and did not")
+
+        // A BRANCH that has DIVERGED is the whole reason this exists: it must
+        // die, name the way out, and leave the tree alone — because the next
+        // thing `main` does is `make -C "$DIR" install`.
+        try "local".write(to: checkout.appendingPathComponent("g"),
+                          atomically: true, encoding: .utf8)
+        Self.git(["-C", checkout.path, "add", "g"])
+        Self.git(["-C", checkout.path, "commit", "--quiet", "-m", "local work"])
+        try "three".write(to: origin.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", origin.path, "commit", "--quiet", "-am", "three"])
+        let diverged = Self.fetch(ref: "main", into: checkout, from: origin, library: library)
+        #expect(diverged.code != 0, "a diverged checkout passed: \(diverged.out)")
+        #expect(!diverged.out.contains("updated the existing checkout"), "\(diverged.out)")
+        // A refusal that names no fix is the one thing the surface forbids.
+        #expect(diverged.out.contains("local commits"), "\(diverged.out)")
+        #expect(diverged.out.contains("git -C \(checkout.path) status"), "\(diverged.out)")
+        #expect(Self.git(["-C", checkout.path, "log", "-1", "--format=%s"]) == "local work",
+                "the checkout was moved under a refusal")
+
+        // And a TAG while that same branch is still diverged: a tag checkout is
+        // detached, so the branch is irrelevant and this must not refuse.
+        Self.git(["-C", origin.path, "tag", "v9.9.10"])
+        let tagOverDiverged = Self.fetch(ref: "v9.9.10", into: checkout,
+                                         from: origin, library: library)
+        #expect(tagOverDiverged.code == 0, "\(tagOverDiverged.out)")
+        #expect(tagOverDiverged.out.contains("at v9.9.10"), "\(tagOverDiverged.out)")
+    }
+}
