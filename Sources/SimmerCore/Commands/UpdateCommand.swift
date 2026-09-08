@@ -241,6 +241,45 @@ public enum UpdateCommand {
         }
     }
 
+    /// Where a plan gets the release's files from, when it gets them from a
+    /// git remote it was told about rather than from a checkout's own
+    /// upstream: the tag it asks for, the checkout it puts it in, and the
+    /// remote it asks.
+    ///
+    /// It exists because those three were the whole of a failure nobody could
+    /// read. `update --apply` asked GitHub which release exists and asked the
+    /// install checkout's **`origin`** for that release's files, and the two
+    /// are only the same remote by coincidence: `origin` is whatever cloned
+    /// the checkout, and on a maintainer's Mac that is a dev checkout whose
+    /// `main` lags the release by however long it has been since the last
+    /// pull. On 8 Sep 2026 that cost two clicks and a `pathspec 'v0.3.3' did
+    /// not match any file(s) known to git`, with the failure banner
+    /// recommending the one-paste installer, which fetched the same `origin`
+    /// and would have failed the same way.
+    ///
+    /// One optional value rather than three optional fields on the plan: the
+    /// three are known together or not at all, so a plan with no release
+    /// fetch — Homebrew's single `brew upgrade`, a checkout fast-forwarding
+    /// its own upstream — stays distinguishable from one whose remote came
+    /// back empty. Absent and defaulted-to-empty are the pair that hands a
+    /// fallback the decision.
+    public struct ReleaseFetch: Sendable, Equatable {
+        /// The tag as published — `v0.3.3` — which is what `git checkout` is
+        /// handed and what the sentence names.
+        public let tag: String
+        /// The checkout the tag is fetched into and switched in.
+        public let checkout: String
+        /// The remote the release was learned about from, and therefore the
+        /// one that has its files.
+        public let remote: String
+
+        public init(tag: String, checkout: String, remote: String) {
+            self.tag = tag
+            self.checkout = checkout
+            self.remote = remote
+        }
+    }
+
     public struct ApplyPlan: Sendable, Equatable {
         public let steps: [ApplyStep]
         /// The release this plan installs, for the sentence at the end.
@@ -248,6 +287,20 @@ public enum UpdateCommand {
         /// The bundle to reopen afterwards — `make install` quits the running
         /// app before replacing it, so something has to bring it back.
         public let reopenBundle: String?
+        /// The remote this plan fetches the release from, with the tag and the
+        /// checkout, or nil when the plan fetches no release from a remote it
+        /// was told about. Carried as data so the sentence and the machine
+        /// surface can name it without re-deriving it from a step's arguments
+        /// — the classification `ApplyPhase` exists to avoid.
+        public let releaseFetch: ReleaseFetch?
+
+        public init(steps: [ApplyStep], target: String, reopenBundle: String?,
+                    releaseFetch: ReleaseFetch? = nil) {
+            self.steps = steps
+            self.target = target
+            self.reopenBundle = reopenBundle
+            self.releaseFetch = releaseFetch
+        }
     }
 
     public enum ApplyDecision: Sendable, Equatable {
@@ -290,9 +343,15 @@ public enum UpdateCommand {
         }
     }
 
+    /// `releaseRemote` is the remote the release was read from, and it is a
+    /// parameter rather than a constant read in here for two reasons: the
+    /// real-`git` test points it at a fixture repository on disk, and the day
+    /// an install records the remote it was bootstrapped from (`SIMMER_REPO`,
+    /// a fork or a mirror) this is the one line that has to change.
     public static func applyPlan(for report: Report,
                                  exists: (String) -> Bool,
-                                 checkoutState: (String) -> CheckoutState? = { _ in nil })
+                                 checkoutState: (String) -> CheckoutState? = { _ in nil },
+                                 releaseRemote: String = Install.repositoryURL)
         -> ApplyDecision {
         switch report.verdict {
         case .current:
@@ -352,10 +411,20 @@ public enum UpdateCommand {
                 // is what `bootstrap.sh` left it on. `--tags --force` because
                 // a tag can legitimately have moved on the remote and a stale
                 // local one would silently install the wrong thing.
+                //
+                // And from `releaseRemote` — the remote the release was read
+                // from — rather than from `origin`, which is whatever cloned
+                // this checkout. A normal install's `origin` IS that remote,
+                // so naming it changes nothing there; on the Mac whose origin
+                // is a dev checkout it is the difference between installing
+                // the release and `pathspec 'v0.3.3' did not match`. Fetching
+                // a URL updates no remote-tracking branch, which is exactly
+                // right for a checkout that only ever sits on tags.
                 return .run(ApplyPlan(
                     steps: [
                         ApplyStep(executable: "/usr/bin/git",
-                                  arguments: ["-C", checkout, "fetch", "--tags", "--force", "--quiet"],
+                                  arguments: ["-C", checkout, "fetch", "--tags", "--force",
+                                              "--quiet", releaseRemote],
                                   phase: .fetching),
                         ApplyStep(executable: "/usr/bin/git",
                                   arguments: ["-C", checkout, "checkout", "--quiet", report.latest],
@@ -367,7 +436,9 @@ public enum UpdateCommand {
                                   phase: .installing),
                     ],
                     target: report.latestDisplay,
-                    reopenBundle: report.install.bundle))
+                    reopenBundle: report.install.bundle,
+                    releaseFetch: ReleaseFetch(tag: report.latest, checkout: checkout,
+                                               remote: releaseRemote)))
 
             case .checkout(let checkout):
                 guard buildable(checkout, exists: exists) else {
@@ -444,6 +515,11 @@ public enum UpdateCommand {
                     + "rather than the release — push them first (git -C \(checkout) push), or "
                     + "\(yourself)")
         }
+        // `origin`, deliberately, and no `releaseFetch`: this checkout is
+        // somebody's own repository and what it installs is what its default
+        // branch holds, so its own upstream is the only remote that answers
+        // the question. The installer arm's remote is the release's because
+        // that checkout tracks releases and nothing else.
         return .run(ApplyPlan(
             steps: [
                 ApplyStep(executable: "/usr/bin/git",
@@ -588,15 +664,46 @@ public enum UpdateCommand {
     /// typed, in a checkout most people do not know they have, and leaves the
     /// two questions that matter — did anything change, and what do I do —
     /// entirely to the reader.
+    ///
+    /// Where the plan fetched a release from a remote (`releaseFetch`), the
+    /// two install phases also say WHERE it looked — the tag, the checkout and
+    /// the remote — because that is the whole of what the 8 Sep failure could
+    /// not tell anybody: "Could not switch to simmer 0.3.3. Nothing was
+    /// installed." is true of a checkout whose origin lags the release and of
+    /// three other things.
+    ///
+    /// Where it looked, and never **why** it failed. The same arm is reached
+    /// by a dirty tree or a stray file in that checkout, and a sentence
+    /// asserting "the tag is not there" would be a lie about those; git's own
+    /// words are on the second line, where `applyFailed` puts them. For the
+    /// same reason the switching case says `Look with:` rather than
+    /// `Run: <updateCommand>` — the update command for a bundle install is the
+    /// one-paste installer, which fetches the very remote that just failed to
+    /// yield the tag, and recommending it is how this defect recommended
+    /// itself. `git … status` reads the checkout and is true whatever the
+    /// cause.
     public static func failureSentence(phase: ApplyPhase, plan: ApplyPlan,
                                        updateCommand: String) -> String {
         let target = "simmer \(plan.target)"
         let terminal = updateCommand.isEmpty ? "" : " Run: \(updateCommand)"
         switch phase {
         case .fetching:
-            return "Could not fetch \(target). Nothing on this Mac was changed.\(terminal)"
+            // The remote it TRIED, which is the fact this sentence exists for
+            // on the day GitHub is unreachable while `origin` is fine — a
+            // plan that fetched `origin` never had that case at all.
+            let from = plan.releaseFetch.map { " from \($0.remote)" } ?? ""
+            return "Could not fetch \(target)\(from). Nothing on this Mac was changed.\(terminal)"
         case .switching:
-            return "Could not switch to \(target). Nothing was installed.\(terminal)"
+            guard let fetch = plan.releaseFetch else {
+                return "Could not switch to \(target). Nothing was installed.\(terminal)"
+            }
+            // The two clauses that answer "what happened" and "did anything
+            // change" stay first and stay as they were: a banner truncates
+            // its body, and what gets cut has to be the diagnostic tail.
+            return "Could not switch to \(target). Nothing was installed. "
+                + "Looked for the tag \(fetch.tag) in the checkout at \(fetch.checkout), "
+                + "after fetching from \(fetch.remote). "
+                + "Look with: git -C \(fetch.checkout) status"
         case .installing:
             // Deliberately not "was fetched but not installed": that is untrue
             // of the one-step Homebrew plan, which does both at once.

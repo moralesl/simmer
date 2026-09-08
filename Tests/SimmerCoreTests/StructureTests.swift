@@ -1284,6 +1284,175 @@ import Testing
         return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The ref comes from the repository `resolve_ref` asked, not from
+    /// whatever cloned the directory.
+    ///
+    /// `resolve_ref` runs `git ls-remote "$REPO"`, and `fetch` fetched
+    /// `origin` — the same split that made `simmer update --apply` fail while
+    /// switching on 8 Sep 2026, one file over. On a maintainer's Mac `origin`
+    /// is a development checkout, so the installer died with `no such ref:
+    /// v0.3.3` for a release that plainly exists, and the failure banner of
+    /// the app recommended this very script.
+    ///
+    /// Both arms, because they read different refs: a TAG needs
+    /// `--tags --force` from `$REPO`, and a BRANCH needs
+    /// `refs/remotes/origin/$REF` to have come from `$REPO` too — otherwise it
+    /// fast-forwards onto the stale `origin/main` this directory last saw and
+    /// prints "updated the existing checkout" over it.
+    @Test func theRefComesFromTheRepositoryItWasResolvedFromNotFromOrigin() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-bootstrap-lag-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let library = root.appendingPathComponent("lib.sh")
+        try Self.library(at: library)
+
+        // What GitHub holds.
+        let release = root.appendingPathComponent("release")
+        Self.git(["init", "--quiet", "--initial-branch=main", release.path])
+        try "one".write(to: release.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", release.path, "add", "f"])
+        Self.git(["-C", release.path, "commit", "--quiet", "-m", "one"])
+
+        // A development checkout, cloned before the release — the origin that
+        // lags. Cloning HERE, in this order, is what makes the fixture the Mac.
+        let dev = root.appendingPathComponent("dev")
+        Self.git(["clone", "--quiet", release.path, dev.path])
+
+        try "two".write(to: release.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", release.path, "commit", "--quiet", "-am", "two"])
+        Self.git(["-C", release.path, "tag", "v9.9.9"])
+
+        // The install checkout, cloned from the one that lags.
+        let checkout = root.appendingPathComponent("co")
+        Self.git(["clone", "--quiet", dev.path, checkout.path])
+        #expect(Self.git(["-C", checkout.path, "remote", "get-url", "origin"]) == dev.path,
+                "the fixture's origin is not the checkout that lags")
+        #expect(Self.git(["-C", checkout.path, "log", "-1", "--format=%s"]) == "one")
+
+        // The tag: it exists only in `$REPO`, and this is the failure of 8 Sep.
+        let tag = Self.fetch(ref: "v9.9.9", into: checkout, from: release, library: library)
+        #expect(tag.code == 0, "\(tag.out)")
+        #expect(!tag.out.contains("no such ref"), "\(tag.out)")
+        #expect(Self.git(["-C", checkout.path, "describe", "--tags"]) == "v9.9.9",
+                "the tag came from origin, which does not have it")
+
+        // The branch: `origin/main` must have come from `$REPO` as well, or
+        // the fast-forward lands on the stale commit and says it updated.
+        Self.git(["-C", checkout.path, "checkout", "--quiet", "main"])
+        let branch = Self.fetch(ref: "main", into: checkout, from: release, library: library)
+        #expect(branch.code == 0, "\(branch.out)")
+        #expect(Self.git(["-C", checkout.path, "log", "-1", "--format=%s"]) == "two",
+                "said it updated and landed on the stale origin: \(branch.out)")
+
+        // And `origin/*` still means "where this directory came from". The
+        // refspec writes what `$REPO` holds into a namespace of this script's
+        // own, because on a fork or mirror install the two are different
+        // repositories and `origin/main` naming one while `remote get-url
+        // origin` names the other is a lie that only shows up there
+        // (R1 finding 3). Red before that: this ref was overwritten with the
+        // release repository's commit.
+        #expect(Self.git(["-C", checkout.path, "rev-parse", "refs/remotes/origin/main"])
+            == Self.git(["-C", dev.path, "rev-parse", "main"]),
+                "the release's branches were written into origin/*")
+        #expect(Self.git(["-C", checkout.path, "rev-parse", "refs/remotes/origin/main"])
+            != Self.git(["-C", release.path, "rev-parse", "main"]),
+                "origin/main and remote get-url origin now name two repositories")
+        #expect(Self.git(["-C", checkout.path, "rev-parse",
+                          "refs/remotes/simmer-release/main"])
+            == Self.git(["-C", release.path, "rev-parse", "main"]),
+                "the namespace the branch arm reads is not what $REPO holds")
+    }
+
+    /// A checkout that cannot switch says why, and does not invent a reason.
+    ///
+    /// `git checkout --quiet "$REF" 2>/dev/null || die "no such ref: $REF"`
+    /// said `no such ref: v9.9.9` about a tag `git rev-parse --verify`
+    /// resolves, because the redirect swallowed git's own line and the refusal
+    /// then guessed at the one cause it knew a word for (R1 finding 2). It is
+    /// the same lie as "the tag is not there" on the `update --apply` side of
+    /// this ticket, which is why that sentence says where it looked and not
+    /// why it failed — and this half is the half a person reaches by pasting
+    /// the command the failure banner used to recommend.
+    ///
+    /// A local change to a file the tag would overwrite is the shape: git
+    /// refuses, the tag exists, and nothing about the ref is wrong.
+    @Test func aCheckoutThatCannotSwitchShowsGitsReasonRatherThanGuessing() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-bootstrap-dirty-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let library = root.appendingPathComponent("lib.sh")
+        try Self.library(at: library)
+
+        let origin = root.appendingPathComponent("origin")
+        Self.git(["init", "--quiet", "--initial-branch=main", origin.path])
+        try "one".write(to: origin.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", origin.path, "add", "f"])
+        Self.git(["-C", origin.path, "commit", "--quiet", "-m", "one"])
+        // The tag carries a different `f`, so switching to it has to write
+        // that file — which is what a local change to it forbids.
+        try "two".write(to: origin.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", origin.path, "commit", "--quiet", "-am", "two"])
+        Self.git(["-C", origin.path, "tag", "v9.9.9"])
+
+        let checkout = root.appendingPathComponent("co")
+        Self.git(["clone", "--quiet", "--branch", "main", origin.path, checkout.path])
+        Self.git(["-C", checkout.path, "reset", "--quiet", "--hard", "HEAD~1"])
+        try "mine".write(to: checkout.appendingPathComponent("f"),
+                         atomically: true, encoding: .utf8)
+
+        let result = Self.fetch(ref: "v9.9.9", into: checkout, from: origin, library: library)
+
+        #expect(result.code != 0, "a checkout that cannot switch passed: \(result.out)")
+        // The tag is there. Anything claiming otherwise is a sentence about a
+        // cause this script cannot know.
+        #expect(Self.git(["-C", checkout.path, "rev-parse", "--verify", "--quiet", "v9.9.9^{commit}"])
+            == Self.git(["-C", origin.path, "rev-parse", "v9.9.9^{commit}"]),
+                "the fixture's tag did not arrive, so this test is about the wrong failure")
+        #expect(!result.out.contains("no such ref"),
+                "the tag resolves and the refusal named the ref: \(result.out)")
+        // git's own words, which are the only thing here that knows the reason.
+        #expect(result.out.contains("would be overwritten"), "\(result.out)")
+        #expect(result.out.contains("could not switch"), "\(result.out)")
+        // And the tree is where it was — the next thing `main` does is
+        // `make -C "$DIR" install`.
+        #expect((try? String(contentsOf: checkout.appendingPathComponent("f"),
+                             encoding: .utf8)) == "mine",
+                "the checkout was moved under a refusal")
+        // One competing fix, not two: git's nine-line hint block stays out,
+        // the same rule the merge arm holds.
+        #expect(!result.out.contains("hint:"), "\(result.out)")
+    }
+
+    /// An absent ref still says so — the arm the message above must not be
+    /// confused with. Both refusals now carry git's own line; only this one
+    /// is about the ref.
+    @Test func anAbsentRefIsStillNamedAsAnAbsentRef() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-bootstrap-absent-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let library = root.appendingPathComponent("lib.sh")
+        try Self.library(at: library)
+
+        let origin = root.appendingPathComponent("origin")
+        Self.git(["init", "--quiet", "--initial-branch=main", origin.path])
+        try "one".write(to: origin.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", origin.path, "add", "f"])
+        Self.git(["-C", origin.path, "commit", "--quiet", "-m", "one"])
+
+        let checkout = root.appendingPathComponent("co")
+        Self.git(["clone", "--quiet", "--branch", "main", origin.path, checkout.path])
+
+        let result = Self.fetch(ref: "v0.0.1", into: checkout, from: origin, library: library)
+        #expect(result.code != 0, "\(result.out)")
+        #expect(result.out.contains("could not switch"), "\(result.out)")
+        // git's own words name the ref here, which is the difference.
+        #expect(result.out.contains("did not match") || result.out.contains("invalid reference"),
+                "git's reason for an absent ref is missing: \(result.out)")
+    }
+
     @Test func fetchTellsATagFromABranchAndRefusesADivergedCheckout() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("simmer-bootstrap-\(UUID().uuidString)")

@@ -442,12 +442,21 @@ import Testing
     /// alone can only record success, so every one of these was reachable only
     /// by breaking a real install — which is exactly the class of code that
     /// gets read once, at the worst possible moment.
+    /// The third column is what the sentence must point the reader at, and it
+    /// is not the same for all three. `switching` is the phase whose failure
+    /// means the release's files are not in the checkout — and the one-paste
+    /// installer named by `bootstrap.sh` fetches the very remote the plan just
+    /// fetched, so recommending it there is how this defect recommended
+    /// itself (8 Sep, the failure banner sent Luis to a `curl` that would have
+    /// failed identically). That phase names the checkout to look in instead;
+    /// the other two still name the command that works.
     @Test(arguments: [
-        ("fetching", "Could not fetch simmer 9.9.9"),
-        ("switching", "Could not switch to simmer 9.9.9"),
-        ("installing", "Could not install simmer 9.9.9"),
+        ("fetching", "Could not fetch simmer 9.9.9", "bootstrap.sh"),
+        ("switching", "Could not switch to simmer 9.9.9", "Look with: git -C"),
+        ("installing", "Could not install simmer 9.9.9", "bootstrap.sh"),
     ])
-    func aStepThatFailedSaysWhatDidNotFinish(_ phase: String, _ sentence: String) throws {
+    func aStepThatFailedSaysWhatDidNotFinish(_ phase: String, _ sentence: String,
+                                             _ pointsAt: String) throws {
         let sim = Sim(); defer { sim.tearDown() }
         let log = sim.root.appendingPathComponent("apply.log")
         FileManager.default.createFile(atPath: log.path, contents: nil)
@@ -462,10 +471,18 @@ import Testing
         // The sentence first, and the failing command under it as evidence.
         let lines = result.err.split(separator: "\n").map(String.init)
         #expect(lines.first?.contains(sentence) == true, "\(result.err)")
-        #expect(lines.first?.contains("bootstrap.sh") == true,
-                "the sentence names the command that works: \(result.err)")
+        #expect(lines.first?.contains(pointsAt) == true,
+                "the sentence names something to do: \(result.err)")
         #expect(result.err.contains("SIMMER_FAKE_APPLY_FAIL=\(phase)"),
                 "the failing step's own detail is kept: \(result.err)")
+        // And for `switching` — the phase whose failure means the files are
+        // not there — whatever it points at is never the remote that just
+        // failed. `fetching` keeps the retry: nothing was fetched, so running
+        // the installer again is a reasonable thing to do about it.
+        if phase == "switching" {
+            #expect(lines.first?.contains("curl") != true,
+                    "the switching sentence sent them back to the remote that failed: \(result.err)")
+        }
     }
 
     /// `apply_error` is unchanged — the failing command and its detail, which
@@ -543,6 +560,42 @@ import Testing
         #expect(extra.first?.hasPrefix("open ") == true, "\(Array(extra))")
         #expect(!steps.contains { $0.hasPrefix("open ") },
                 "the reopen is not one of the plan's steps: \(steps)")
+    }
+
+    /// The fetch line names the remote, on both surfaces a caller reads it
+    /// from — and `update --json` grew no field for it.
+    ///
+    /// The remote is `Install.repositoryURL`, a constant every reader of this
+    /// object already holds (`release_notes_url` is composed from it), so a
+    /// permanent contracted field for it would be a field with no reader. It
+    /// is in `steps`, which is documented as the plan; the key set is
+    /// asserted here so that "nothing existing moves" is a measurement rather
+    /// than a claim.
+    @Test func theFetchLineNamesTheRemoteAndNoFieldWasAdded() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+
+        let machine = sim.run(["update", "--apply", "--json"], env: env)
+        #expect(machine.code == 0, "\(machine.combined)")
+        let json = object(machine.out)
+        let steps = (json["steps"] as? [String]) ?? []
+        #expect(steps.first?.hasSuffix("fetch --tags --force --quiet "
+            + "https://github.com/moralesl/simmer") == true, "\(steps)")
+
+        // Every field `docs/CONTRACTS.md` names for this surface, and no
+        // other. `apply_error` is absent because nothing failed.
+        #expect(Set(json.keys) == Set([
+            "action", "verdict", "installed", "latest", "update_available", "provenance",
+            "update_command", "app_version", "app_drift", "checked_at", "cached", "error",
+            "seamed", "release_notes_url", "auto_update", "install_source",
+            "install_source_kind", "applied", "steps",
+        ]), "\(Set(json.keys).sorted())")
+
+        // And the plan a person reads before it runs.
+        let human = sim.run(["update", "--apply"], env: env).combined
+        #expect(human.contains("fetch --tags --force --quiet "
+            + "https://github.com/moralesl/simmer"), "\(human)")
     }
 
     /// The plan comes before the failure, in a redirect as well as on a tty.

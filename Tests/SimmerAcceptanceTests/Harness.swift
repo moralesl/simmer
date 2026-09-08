@@ -23,6 +23,10 @@ struct Sim {
     /// which is why `orphan_heal` was recorded for heals that never happened.
     var switchDir: URL { root.appendingPathComponent("switch") }
 
+    /// Where `--apply`'s steps are recorded when a test did not name a file of
+    /// its own — see the note in `seamEnvironment`.
+    var applyRecord: URL { root.appendingPathComponent("apply-recorded.log") }
+
     init() {
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("simmer-accept-\(UUID().uuidString)")
@@ -183,6 +187,19 @@ struct Sim {
             "SIMMER_FAKE_LOCKDELAY": "0",
             "SIMMER_FAKE_NOW": String(now),
             "SIMMER_NOTIFY": "none",
+            // Nothing this suite starts may spawn `git` or `make`, whether the
+            // test thought about it or not: `--apply`'s steps are recorded
+            // unless a test names its own file, and a test that names one
+            // overrides this.
+            //
+            // A belt rather than a promise. The four `--apply` tests that set
+            // no recorder are hermetic only because their verdict refuses
+            // before the runner is reached — and the day a plan reaches the
+            // runner with no recorder set, `git fetch --tags --force --quiet
+            // https://github.com/moralesl/simmer` runs for real from a suite
+            // that calls itself hermetic. That is the leaked-`caffeinate`
+            // lesson one seam over (CONTRACTS.md § The test seam).
+            "SIMMER_FAKE_APPLY": applyRecord.path,
         ]
         for (key, value) in overrides { environment[key] = value }
         return environment
