@@ -808,9 +808,10 @@ import Testing
     /// trim, and a caller that forgets answers about `$(TEST_FLAGS)\r`. Two
     /// spellings of "split a text file into lines" in one suite is the seam
     /// the drift comes through — `split(separator: "\n")` is a third and
-    /// cannot do it at all, because `"\r\n"` is ONE Character in Swift
-    /// (measured: 3 lines, 3 lines, 1 line). `isNewline` also covers a
-    /// `\r`-only file, which no hand-rolled trim did.
+    /// cannot do it at all, because `"\r\n"` is ONE Character in Swift.
+    /// Measured on one CRLF string: `components(separatedBy:)` 3 lines,
+    /// `split(separator:)` 1 line, `isNewline` 3 lines. `isNewline` also
+    /// covers a `\r`-only file, which no hand-rolled trim did.
     ///
     /// A recipe line continued with a trailing `\` is ONE command to `make`,
     /// so it is one command here too — counting the physical lines would
@@ -843,6 +844,26 @@ import Testing
             $0.replacingOccurrences(of: "\\", with: " ")
                 .components(separatedBy: " ").filter { !$0.isEmpty }.joined(separator: " ")
         }
+    }
+
+    /// Every target named on every `.PHONY:` line.
+    ///
+    /// All of the lines, because more than one `.PHONY:` is legal and a reader
+    /// that took the first would refuse a target listed on the second. And
+    /// through `scriptLines` for the same reason `makeRecipe` is: this read
+    /// sat seven lines below that one, still on `components(separatedBy:)`,
+    /// inside the commit whose whole point was one reader of line endings
+    /// (R7 nit 1). Under a CR-only `Makefile` — where `.PHONY:` is line 71,
+    /// not line 1 — it found no `.PHONY:` line at all and the gate failed
+    /// saying the file has none: a true refusal for a false reason, which is
+    /// the worst kind to debug. With `.PHONY:` on the first line instead it
+    /// returned one garbage name and the gate said the target is not listed
+    /// while it plainly was. Both shapes are fixtures below.
+    static func phonyTargets(in makefile: String) -> [String] {
+        scriptLines(of: makefile)
+            .filter { $0.hasPrefix(".PHONY:") }
+            .flatMap { $0.components(separatedBy: .whitespaces) }
+            .filter { !$0.isEmpty && $0 != ".PHONY:" }
     }
 
     /// `test` and `print-test-flags` pass the same flags because they name the
@@ -895,11 +916,7 @@ import Testing
                 "the two recipes name different variables: \(variables(lane)) vs \(variables(printer))")
 
         // And a file of that name in the checkout must not shadow the target.
-        // Every `.PHONY:` line, because more than one is legal and a reader
-        // that took the first would refuse a target listed on the second.
-        let phony = makefile.components(separatedBy: "\n")
-            .filter { $0.hasPrefix(".PHONY:") }
-            .flatMap { $0.components(separatedBy: .whitespaces) }
+        let phony = Self.phonyTargets(in: makefile)
         #expect(!phony.isEmpty, "the Makefile has no .PHONY line")
         #expect(phony.contains("print-test-flags"), ".PHONY does not list print-test-flags")
 
@@ -949,6 +966,24 @@ import Testing
 
         // A target whose name is a prefix of another must not answer for it.
         #expect(Self.makeRecipe(of: "test", in: "test-release:\n\t@echo release\n") == nil)
+
+        // `.PHONY:` is read by the same rules, over every such line, and the
+        // marker itself is not a target name.
+        #expect(Self.phonyTargets(in: ".PHONY: build test\n") == ["build", "test"])
+        #expect(Self.phonyTargets(in: ".PHONY: build\n.PHONY: test\n") == ["build", "test"])
+        // CRLF: the LAST name on the line carried a trailing `\r`. It passed
+        // by luck — `print-test-flags` is not last in this Makefile's list.
+        #expect(Self.phonyTargets(in: ".PHONY: build test\r\n") == ["build", "test"])
+        // CR alone, both ways round, because the old reader failed differently
+        // in each and only one of them looked like a line-ending bug. With
+        // `.PHONY:` first it returned ONE garbage name (`build<CR>all:<CR>`),
+        // so the gate said the target is not listed while it plainly is; with
+        // `.PHONY:` anywhere else — which is where this Makefile has it, line
+        // 71 — it returned nothing and the gate said the file has no `.PHONY`
+        // line at all. Measured, not reasoned.
+        #expect(Self.phonyTargets(in: ".PHONY: build\rall:\r") == ["build"])
+        #expect(Self.phonyTargets(in: "all:\r.PHONY: build\r") == ["build"])
+        #expect(Self.phonyTargets(in: "all:\n\t@echo hi\n") == [])
     }
 
     /// Every `-o` argument of a `ray build` in a shell command line, in each
