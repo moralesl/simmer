@@ -50,9 +50,42 @@ public enum BundleNotifier {
         return status
     }
 
+    /// Why a banner did not reach UN, when it did not.
+    ///
+    /// Three answers rather than a `Bool`, because the two failures are not
+    /// the same event: being unbundled is a steady state of the process (the
+    /// CLI, a unit test) and says nothing about the banner, while a request
+    /// with no informative text is a defect in whatever composed it and is
+    /// worth a line in the log. One `false` for both would hand the caller a
+    /// fallback and make the second invisible again.
+    public enum PostResult: Sendable, Equatable {
+        case posted
+        /// Not running from inside a bundle, so posting would throw.
+        case unbundled
+        /// Neither subtitle nor body — accepted by `add`, never presented.
+        case noInformativeText
+    }
+
     /// Fire-and-forget from the app's main flow; UN handles delivery.
-    public static func post(_ request: NotificationRequest) {
-        guard available else { return }
+    ///
+    /// The text refusal is checked BEFORE `available`, deliberately. A
+    /// request with no informative text is a defect in whatever composed it —
+    /// a fact about the request, true whether or not this process happens to
+    /// be running from a bundle — and answering `.unbundled` about it would
+    /// hide it behind a property of the process. It also means this decision
+    /// is reachable the moment any test target can see this type: `available`
+    /// is `Bundle.main.bundleIdentifier != nil`, which is nil in a `swift
+    /// test` binary, so a refusal ordered after it could never be driven.
+    @discardableResult
+    public static func post(_ request: NotificationRequest) -> PostResult {
+        // The last gate before UN, and the reason it is a gate: `add` accepts
+        // a title-only content, reports no error, and never presents it. The
+        // spool drops these already and says so in the log
+        // (Ledger.drainNotifications); this is the app's own direct posts,
+        // which do not pass through it — and the caller writes the line,
+        // because this module has no ledger and should not grow one.
+        guard request.hasInformativeText else { return .noInformativeText }
+        guard available else { return .unbundled }
         let content = UNMutableNotificationContent()
         content.title = request.title
         if !request.subtitle.isEmpty { content.subtitle = request.subtitle }
@@ -62,5 +95,6 @@ public enum BundleNotifier {
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: UUID().uuidString,
                                   content: content, trigger: nil))
+        return .posted
     }
 }

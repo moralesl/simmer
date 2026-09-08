@@ -137,9 +137,17 @@ struct UpdateCLI: ParsableCommand {
             // second enqueue path that ignored it would be the one banner
             // `SIMMER_NOTIFY=none` cannot silence.
             if env.notifyTransport != "none" {
-                ledger.enqueueNotification(
+                // An enqueue that FAILED is not the same event as an enqueue
+                // that was refused: `SIMMER_NOTIFY=none` never gets here, and
+                // a line calling a person's own setting a failure would be a
+                // false alarm once every apply.
+                let queued = ledger.enqueueNotification(
                     UpdateCommand.startingNotification(plan, installed: report.installed),
                     now: env.now())
+                if !queued {
+                    ledger.log(UpdateCommand.applyLogSentence(bannerNotQueued: plan),
+                               now: env.now())
+                }
             }
 
             if !common.json {

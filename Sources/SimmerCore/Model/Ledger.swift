@@ -350,7 +350,9 @@ public struct Ledger: Sendable {
     // MARK: log + events
 
     public func log(_ message: String, now: Int) {
-        append("\(Formats.logStamp(now))  \(message)\n", to: logFile)
+        // Discarded on purpose: the log is where a failure elsewhere is
+        // reported, so there is nowhere left for a failure OF the log to go.
+        _ = append("\(Formats.logStamp(now))  \(message)\n", to: logFile)
     }
 
     /// One JSON object per transition, append-only (CONTRACTS.md § State).
@@ -364,7 +366,7 @@ public struct Ledger: Sendable {
             ("event", .string(name)),
         ]
         pairs.append(contentsOf: fields)
-        append(JSONValue.object(pairs).serialized() + "\n", to: eventsFile)
+        _ = append(JSONValue.object(pairs).serialized() + "\n", to: eventsFile)
     }
 
     // MARK: the notification spool — the CLI's channel TO the app
@@ -405,7 +407,11 @@ public struct Ledger: Sendable {
     /// this feature.
     public var updateAttemptedFile: URL { stateDir.appendingPathComponent("update-attempted") }
 
-    public func enqueueNotification(_ request: NotificationRequest, now: Int) {
+    /// Returns whether the banner is now somebody else's to post. False is a
+    /// banner that will never arrive, and the only caller that can still say
+    /// something about it is the one that asked (`UpdateCLI`, R2 finding 8).
+    @discardableResult
+    public func enqueueNotification(_ request: NotificationRequest, now: Int) -> Bool {
         let json = JSONValue.object([
             ("v", .int(1)),
             ("ts", .int(now)),
@@ -415,7 +421,7 @@ public struct Ledger: Sendable {
             ("sound", .bool(request.sound)),
             ("actionable", .bool(request.actionable)),
         ])
-        append(json.serialized() + "\n", to: spoolFile)
+        return append(json.serialized() + "\n", to: spoolFile)
     }
 
     /// Claims the whole spool atomically (rename), so a racing append lands
@@ -466,12 +472,25 @@ public struct Ledger: Sendable {
                     now: now)
                 continue
             }
-            requests.append(NotificationRequest(
+            let request = NotificationRequest(
                 title: object["title"] as? String ?? "",
                 subtitle: object["subtitle"] as? String ?? "",
                 body: object["body"] as? String ?? "",
                 sound: object["sound"] as? Bool ?? true,
-                actionable: object["actionable"] as? Bool ?? false))
+                actionable: object["actionable"] as? Bool ?? false)
+            // The one construction in this codebase whose text a reader
+            // cannot decide: these three fields come out of a file. A banner
+            // with no informative text is accepted by `add` and never
+            // presented, so posting it is a no-op that looks like a delivery
+            // — and the whole 0.3.1 diagnosis is that nobody could tell the
+            // difference. Dropped here, out loud, the way a stale one is:
+            // whatever went wrong upstream leaves a line a person can find.
+            guard request.hasInformativeText else {
+                log("dropped a banner with no informative text (macOS never presents one): "
+                        + "\(object["title"] as? String ?? "?")", now: now)
+                continue
+            }
+            requests.append(request)
         }
         return requests
     }
@@ -695,7 +714,19 @@ public struct Ledger: Sendable {
         guard let startedText = fields["started_at"], let startedAt = Int(startedText),
               startedAt > 0, let installed = fields["installed"], installed == version
         else { return nil }
-        guard now - startedAt < InstallInProgress.maxAge else { return nil }
+        // Two-sided, and that is the whole of it: `now - startedAt < maxAge`
+        // is also true of every timestamp in the future, so a `started_at` of
+        // now + 86400 claimed to be installing forever — the immortal record
+        // the refusal to default an ABSENT `started_at` was there to prevent,
+        // left open on the other side (R2 finding 6).
+        //
+        // A future stamp reads as no record, which sends the row back to
+        // `Update available` — true whether or not something is installing,
+        // and the same direction every other unreadable shape here takes. It
+        // does make the row clickable again, but that is the 15-minute
+        // backstop's behaviour too, and both are backstops: the child clears
+        // this record on every ending it reaches.
+        guard (0..<InstallInProgress.maxAge).contains(now - startedAt) else { return nil }
         // `target` absent and `target=` empty are the same answer on purpose:
         // an install whose target this reader cannot name is still an install.
         return InstallInProgress(target: fields["target"] ?? "",
@@ -1051,16 +1082,22 @@ public struct Ledger: Sendable {
     /// POSIX O_APPEND, not seek-then-write: the app's event tick and the
     /// LaunchAgent tick may append concurrently, and only kernel-level append
     /// keeps their lines whole.
-    private func append(_ text: String, to url: URL) {
+    ///
+    /// Returns whether the line actually landed. It used to return void, and
+    /// the diff that made this the SOLE channel for the starting banner made
+    /// that a defect: an `O_NOFOLLOW` refusal or a full disk lost the banner
+    /// and wrote nothing about it anywhere (R2 finding 8). A short write
+    /// counts as a failure too — a half-written JSONL line is not a banner.
+    private func append(_ text: String, to url: URL) -> Bool {
         // O_NOFOLLOW: these are append-only records inside a directory the
         // user owns, and a symlink dropped in their place would redirect every
-        // future line somewhere else entirely — silently, since the failure
-        // path here is deliberately quiet.
+        // future line somewhere else entirely.
         let fd = open(url.path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0o600)
-        guard fd >= 0 else { return }
+        guard fd >= 0 else { return false }
         defer { close(fd) }
         let data = Array(text.utf8)
-        _ = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+        let written = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+        return written == data.count
     }
 }
 

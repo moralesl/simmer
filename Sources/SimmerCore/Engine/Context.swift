@@ -106,4 +106,21 @@ public struct NotificationRequest: Sendable, Equatable {
         self.sound = sound
         self.actionable = actionable
     }
+
+    /// Whether macOS will present this at all.
+    ///
+    /// `UNMutableNotificationContent` with a title and no informative text is
+    /// accepted by `add`, reports no error, and is never shown — which is
+    /// indistinguishable from a banner that worked. That is the whole of the
+    /// 0.3.1 "Install it now" silence, and it shipped twice: at the start
+    /// banner (T1) and, in the same click, at the ending banner (R2 finding
+    /// 1). So it is a property of the type now rather than a thing to
+    /// remember at 26 construction sites.
+    ///
+    /// Whitespace is not text: `body: " "` passes any `isEmpty` check and is
+    /// presented as nothing.
+    public var hasInformativeText: Bool {
+        !subtitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }

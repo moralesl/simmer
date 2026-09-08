@@ -42,6 +42,17 @@ Every attempt below was actually run:
 | AppleScript applet with own bundle | ❌ | Script Editor | applets do **not** own their notifications — attributed to the OSA host |
 | **Our own ad-hoc-signed bundle** | ✅ | **our own icon and name** | THE answer — see the verified recipe below. Earlier failures were a cached per-bundle-id denial from a first run in `/tmp`, not a platform refusal |
 
+**A banner is offered, never delivered.** Two facts, both verified on this Mac, and together they are why no design here may *depend* on a banner:
+
+| What simmer cannot know | Why | Verified |
+|---|---|---|
+| whether a Focus mode is on | `~/Library/DoNotDisturb/DB/` is TCC-blocked — `Operation not permitted`, to simmer and to an agent alike | 2026-09-08 (T1) |
+| whether a banner was delivered or shown | the Notification Center store `~/Library/Group Containers/group.com.apple.usernoted/db2/` is TCC-blocked the same way | 2026-09-08 (T1) |
+| whether a posted banner had any effect | `UNUserNotificationCenter.add` accepts a content with a title and **no informative text**, reports no error, and never presents it | 2026-09-07 (0.3.1's silent "Install it now") |
+
+Cited from `AppState.swift` and `MenuModel.swift`, which is why the two paths are written out here rather than described.
+The third row is now a property of the type: `NotificationRequest.hasInformativeText`, gated over every construction under `Sources/` by `BannerTextTests`.
+
 **Constraint from the maintainer: no paid signature — everything self-built.** And that constraint is satisfiable, verified end to end on 2026-08-22:
 
 ### The verified recipe: own-icon notifications, zero dollars
@@ -93,7 +104,7 @@ A `.dmg` or a zip downloaded in a browser would hit "unidentified developer" —
 
 The one-time permission banner *is* the onboarding: the installer's last act should be launching the app so the banner (with the pot icon) is on screen at the moment the instructions say "click Allow".
 
-The menu bar remains the channel that cannot be suppressed and is identical across surfaces by construction; notifications are now its equal rather than its apology.
+The menu bar remains the channel that cannot be suppressed and is identical across surfaces by construction; a banner is offered; nothing simmer may read says it was delivered or shown.
 
 ## What none of this removes
 

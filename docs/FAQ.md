@@ -43,10 +43,12 @@ Your state is not part of it: the sudo rule, the claims under `claims/` and the 
 So it never starts while a claim is live — that is exactly the walked-away window simmer exists to protect, and an update is the one thing that would end it.
 A release skipped for that reason is retried at the next daily check; nothing is lost by waiting.
 
-**What you see after pressing Install it now.** Within a second the update row in the menu changes to **Installing 0.3.2…** and stops being clickable, and a banner says the same thing with what to expect ("a minute or two").
+**What you see after pressing Install it now.** The next time you open the menu the update row reads **Installing 0.3.2…** and is no longer clickable, and a banner is offered saying the same thing with what to expect ("a minute or two").
+The click closes the menu, and the row is rebuilt on every open — so the row is right at the *next* open, not within a second of the click.
 The row is the channel that matters: a banner can be held back by a Focus mode, it cannot be re-read once it has faded, and nothing simmer can see says whether it was shown — so the menu carries the message and the banner is the courtesy.
 Then `Simmer.app` disappears from the menu bar while its bundle is replaced, and comes back as the new version.
 `simmer log` has a line for the attempt and a line for how it ended — including a refusal, which is the one ending where nothing is installed and the row goes straight back to what it said before.
+A banner that could not even be queued has a line of its own there too.
 Nothing has to be clicked twice: while an install is under way there is nothing left in that menu to click.
 
 **A release broke something — how do I go back?** One command, and which one depends on how this copy got here.

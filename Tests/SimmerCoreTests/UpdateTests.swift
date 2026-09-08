@@ -1090,11 +1090,16 @@ import Testing
         #expect(banner.body.contains("did not come back"))
     }
 
-    /// And a reopen that worked says exactly what it always said.
-    @Test func aRelaunchThatWorkedIsUnchanged() throws {
+    /// And a reopen that worked says the good ending, out loud.
+    ///
+    /// This assertion used to read `body.isEmpty` — it pinned the defect as
+    /// the contract (R2 finding 1). The empty body was never "what it always
+    /// said": it was the reason nobody ever saw the click finish.
+    @Test func aRelaunchThatWorkedSaysTheGoodEnding() throws {
         let outcome = UpdateCommand.applied(plan(), reopened: true)
         #expect(outcome.stdout == ["✅ simmer 0.9.0 installed · Simmer.app relaunched"])
-        #expect(try #require(outcome.notifications.first).body.isEmpty)
+        let banner = try #require(outcome.notifications.first)
+        #expect(banner.body == "You are on 0.9.0 now.")
     }
 }
 

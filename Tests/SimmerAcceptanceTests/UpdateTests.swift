@@ -916,8 +916,15 @@ import Testing
         #expect(starting == "Installing simmer 9.9.9 or newer…")
         // The one banner nobody has ever seen was the only one posted with an
         // empty body; on macOS that content is accepted and never presented.
-        let entry = try #require(sim.spoolEntries().first)
-        #expect((entry["body"] as? String)?.isEmpty == false)
+        //
+        // EVERY entry, not `.first`: this test counts two and used to read
+        // one, so the ending banner — the last word of the click, and the
+        // 0.3.1 shape exactly — sat here unread for a whole release (R2
+        // finding 5).
+        let entries = sim.spoolEntries()
+        #expect(entries.allSatisfy { ($0["body"] as? String)?.isEmpty == false },
+                "a banner with an empty body is one macOS never presents: \(entries)")
+        let entry = try #require(entries.first)
         #expect(entry["sound"] as? Bool == false)
         // One per phase: the start, then the ending. Never two for one event.
         #expect(titles.count == 2, "\(titles)")
@@ -976,6 +983,44 @@ import Testing
         #expect(log(sim).contains("failed while installing"), "\(log(sim))")
     }
 
+    /// Case 12, and R2 finding 8: the spool cannot be written, and the log
+    /// says so.
+    ///
+    /// `append` is `O_NOFOLLOW`, so a symlink where `notify-spool.jsonl`
+    /// belongs is refused rather than followed — right, and until now silent:
+    /// `append` discarded the result, and this diff had made it the SOLE
+    /// channel for the starting banner. `simmer.log` is a different file, so
+    /// it survives exactly the case that loses the banners.
+    @Test func aSpoolThatCannotBeWrittenIsNamedInTheLog() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        try FileManager.default.createDirectory(at: sim.stateDir,
+                                                withIntermediateDirectories: true)
+        // Case 1: the link target must come back untouched — a write through
+        // a symlink lands in whatever it points at.
+        let victim = sim.root.appendingPathComponent("VICTIM.txt")
+        try "do not write here\n".write(to: victim, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(
+            at: sim.stateDir.appendingPathComponent("notify-spool.jsonl"),
+            withDestinationURL: victim)
+
+        let result = sim.run(["update", "--apply", "--owner", "menubar"], env: applying(sim))
+
+        // The apply itself is unaffected: a banner is a courtesy, not the act.
+        #expect(result.code == 0, "\(result.combined)")
+        let text = log(sim)
+        // The attempt is still named — the whole point of a second channel.
+        #expect(text.contains("update: installing 9.9.9 or newer for menubar"), "\(text)")
+        #expect(text.contains("update: installed 9.9.9 or newer"), "\(text)")
+        // And so is each banner that will never arrive: the starting one by
+        // name, and the ending one through `Runtime.emit`.
+        #expect(text.contains("could not queue the installing banner for 9.9.9 or newer"),
+                "\(text)")
+        #expect(text.contains("could not queue a banner (simmer 9.9.9 or newer installed)"),
+                "\(text)")
+        #expect(try String(contentsOf: victim, encoding: .utf8) == "do not write here\n",
+                "the link target was written through")
+    }
+
     /// A person who has turned banners off has turned this one off too. The
     /// start banner takes its own enqueue path, so it needs its own gate.
     @Test func silencedNotificationsSilenceTheStartingBannerToo() {
@@ -987,6 +1032,11 @@ import Testing
         #expect(sim.spoolEntries().isEmpty)
         // The log is not a notification: it is still written.
         #expect(log(sim).contains("update: installing"))
+        // …and a person's own setting is not a failure. The failed-enqueue
+        // line (R2 finding 8) must not fire on a refusal to enqueue, or every
+        // apply under `SIMMER_NOTIFY=none` reports a defect that is a
+        // preference (adversarial case 12).
+        #expect(!log(sim).contains("could not queue"), "\(log(sim))")
     }
 
     /// Being current is the good outcome, and it was the other ending a click

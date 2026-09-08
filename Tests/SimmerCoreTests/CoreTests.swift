@@ -1005,6 +1005,16 @@ import Testing
         return (Ledger(stateDir: dir), dir)
     }
 
+    /// A spool fixture with informative text in it, because a drain now drops
+    /// an entry without any — macOS never presents one, so posting it was a
+    /// no-op indistinguishable from a delivery. These tests are about the
+    /// mechanics of draining, and a title-only fixture would be a shape the
+    /// tool no longer produces keeping its reader looking healthy
+    /// (adversarial case 6).
+    func banner(_ title: String) -> NotificationRequest {
+        NotificationRequest(title: title, body: "what happened, in a sentence")
+    }
+
     /// A drain that dies between the rename and the sweep strands
     /// `notify-spool.jsonl.draining` — and `moveItem` refuses an existing
     /// destination, so one stranded sentinel used to be every future banner,
@@ -1015,19 +1025,19 @@ import Testing
         defer { try? FileManager.default.removeItem(at: dir) }
         let sentinel = ledger.spoolFile.appendingPathExtension("draining")
         // The stranded half: a request a crashed drain read but never posted.
-        ledger.enqueueNotification(NotificationRequest(title: "stranded"), now: 1000)
+        ledger.enqueueNotification(banner("stranded"), now: 1000)
         try? FileManager.default.moveItem(at: ledger.spoolFile, to: sentinel)
         // The fresh half, queued after the crash.
-        ledger.enqueueNotification(NotificationRequest(title: "fresh"), now: 1010)
+        ledger.enqueueNotification(banner("fresh"), now: 1010)
 
         let drained = ledger.drainNotifications(now: 1020)
         #expect(drained.map(\.title).sorted() == ["fresh", "stranded"])
         #expect(!FileManager.default.fileExists(atPath: sentinel.path))
         // And the NEXT drain still works — the sentinel is gone, not immortal.
-        ledger.enqueueNotification(NotificationRequest(title: "later"), now: 1030)
+        ledger.enqueueNotification(banner("later"), now: 1030)
         #expect(ledger.drainNotifications(now: 1040).map(\.title) == ["later"])
         // The crash does not extend a banner's life: age still decides.
-        ledger.enqueueNotification(NotificationRequest(title: "old"), now: 1050)
+        ledger.enqueueNotification(banner("old"), now: 1050)
         try? FileManager.default.moveItem(at: ledger.spoolFile, to: sentinel)
         #expect(ledger.drainNotifications(now: 5000).isEmpty)
     }
@@ -1049,7 +1059,7 @@ import Testing
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         #expect((try? Data().write(to: sentinel)) != nil)
 
-        ledger.enqueueNotification(NotificationRequest(title: "after the crash"), now: 1000)
+        ledger.enqueueNotification(banner("after the crash"), now: 1000)
         #expect(ledger.drainNotifications(now: 1010).map(\.title) == ["after the crash"])
         #expect(!FileManager.default.fileExists(atPath: sentinel.path))
 
@@ -1059,14 +1069,14 @@ import Testing
         try? FileManager.default.createSymbolicLink(
             atPath: sentinel.path, withDestinationPath: dir.appendingPathComponent("gone").path)
         #expect(!FileManager.default.fileExists(atPath: sentinel.path), "the link dangles")
-        ledger.enqueueNotification(NotificationRequest(title: "after the link"), now: 1020)
+        ledger.enqueueNotification(banner("after the link"), now: 1020)
         #expect(ledger.drainNotifications(now: 1030).map(\.title) == ["after the link"])
 
         // A directory wearing the name is the same destination `moveItem`
         // refuses, and `removeItem` clears it — so the drain recovers rather
         // than going quiet for good.
         try? FileManager.default.createDirectory(at: sentinel, withIntermediateDirectories: true)
-        ledger.enqueueNotification(NotificationRequest(title: "after the dir"), now: 1040)
+        ledger.enqueueNotification(banner("after the dir"), now: 1040)
         #expect(ledger.drainNotifications(now: 1050).map(\.title) == ["after the dir"])
         #expect(!FileManager.default.fileExists(atPath: sentinel.path))
     }
@@ -1080,7 +1090,7 @@ import Testing
         let (ledger, dir) = makeLedger()
         defer { try? FileManager.default.removeItem(at: dir) }
         let sentinel = ledger.spoolFile.appendingPathExtension("draining")
-        ledger.enqueueNotification(NotificationRequest(title: "torn"), now: 1000)
+        ledger.enqueueNotification(banner("torn"), now: 1000)
         // What a `write` cut in half leaves: a record with no newline, and in
         // this case no closing brace either.
         let whole = (try? String(contentsOf: ledger.spoolFile, encoding: .utf8)) ?? ""
@@ -1088,11 +1098,48 @@ import Testing
         try? String(whole.dropLast(4)).write(to: sentinel, atomically: true, encoding: .utf8)
         try? FileManager.default.removeItem(at: ledger.spoolFile)
 
-        ledger.enqueueNotification(NotificationRequest(title: "whole"), now: 1010)
+        ledger.enqueueNotification(banner("whole"), now: 1010)
         // The torn record is unreadable and goes; the whole one behind it must
         // not go with it.
         #expect(ledger.drainNotifications(now: 1020).map(\.title) == ["whole"])
         #expect(!FileManager.default.fileExists(atPath: sentinel.path))
+    }
+
+    /// The one construction whose text no source reader can decide — the
+    /// spool deserialiser reads three fields out of a file — so the property
+    /// is checked on the values instead.
+    ///
+    /// A banner with neither subtitle nor body is accepted by
+    /// `UNUserNotificationCenter.add`, reports no error and is never
+    /// presented, which is the whole of the 0.3.1 silence. Dropped here, out
+    /// loud, the way a stale one is: whatever went wrong upstream leaves a
+    /// line a person can find.
+    @Test func aBannerWithNoInformativeTextIsDroppedAndSaidSo() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        ledger.enqueueNotification(NotificationRequest(title: "title only"), now: 1000)
+        // Case 10: whitespace passes an `isEmpty` check and is presented as
+        // nothing, so it is the same banner.
+        ledger.enqueueNotification(
+            NotificationRequest(title: "blank", subtitle: " ", body: "\n"), now: 1000)
+        ledger.enqueueNotification(banner("real"), now: 1000)
+
+        #expect(ledger.drainNotifications(now: 1010).map(\.title) == ["real"])
+        let log = (try? String(contentsOf: ledger.logFile, encoding: .utf8)) ?? ""
+        #expect(log.contains("dropped a banner with no informative text"), "\(log)")
+        #expect(log.contains("title only"), "the line names which one: \(log)")
+        #expect(log.contains("blank"), "\(log)")
+        // A drop is not a refusal to drain: the spool is still claimed whole.
+        #expect(ledger.drainNotifications(now: 1010).isEmpty)
+    }
+
+    /// The property at the type, over the pairs that decide it.
+    @Test func whitespaceIsNotInformativeText() {
+        #expect(!NotificationRequest(title: "t").hasInformativeText)
+        #expect(!NotificationRequest(title: "t", subtitle: " ", body: "\t").hasInformativeText)
+        #expect(!NotificationRequest(title: "t", body: "\n ").hasInformativeText)
+        #expect(NotificationRequest(title: "t", body: ".").hasInformativeText)
+        #expect(NotificationRequest(title: "t", subtitle: "s").hasInformativeText)
     }
 
     /// Two ticks can coincide, and both used to record the same ending:

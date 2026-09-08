@@ -34,7 +34,22 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     func post(_ notifications: [NotificationRequest]) {
         guard AppState.shared.environment.notifyTransport != "none" else { return }
-        for request in notifications { BundleNotifier.post(request) }
+        for request in notifications {
+            guard BundleNotifier.post(request) == .noInformativeText else { continue }
+            // The app's half of the same line the spool's drain writes. A
+            // refusal here is silent by construction — nothing appears, and
+            // `add` would not have complained either — so without this the
+            // one shape this whole ticket is about could come back in a
+            // direct post and leave no trace anywhere a person looks.
+            //
+            // The ledger rather than `context()`: this needs one file, not a
+            // power system and two migrations.
+            let env = AppState.shared.environment
+            Ledger(stateDir: env.stateDir).log(
+                "did not post a banner with no informative text "
+                    + "(macOS never presents one): \(request.title)",
+                now: env.now())
+        }
     }
 
     func drainSpool() {
