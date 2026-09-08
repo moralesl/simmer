@@ -17,10 +17,17 @@ struct CommonOptions: ParsableArguments {
     @Flag(name: .customLong("json"), help: "One JSON object instead of prose.")
     var json = false
 
-    /// For the two commands that have no machine answer. Accepting `--json`
-    /// and then ignoring it is the worst of the three options: the caller
-    /// cannot tell it from a flag that worked, which is how `--help` came to
-    /// promise a surface that four commands did not have.
+    /// For the verbs that have no machine answer — `notify-test`, `render`,
+    /// `run`, `guard`, `uninstall`. Accepting `--json` and then ignoring it
+    /// is the worst of the three options: the caller cannot tell it from a
+    /// flag that worked, which is how `--help` came to promise a surface that
+    /// four commands did not have.
+    ///
+    /// The list is spelled out rather than counted. "the two commands" was
+    /// written when there were two, `guard` joined in 0.3.2, and a count in a
+    /// comment is a fact with no reader to keep it honest — this line is now
+    /// one of the three readers `theThreeListsOfWhichVerbsRefuseJSONNameTheSameVerbs`
+    /// holds in step.
     func refuseJSON(_ command: String, insteadUse alternative: String) {
         guard json else { return }
         Runtime.deliver(.failure(

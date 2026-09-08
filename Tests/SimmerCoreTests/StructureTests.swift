@@ -105,6 +105,91 @@ import Testing
                 "sugar knows \(sugarOnly) with nothing behind it; the parser has \(parserOnly) that sugar swallows")
     }
 
+    /// Which verbs refuse `--json` is answered in three places, and they must
+    /// answer the same.
+    ///
+    /// Two of the three were already gated against each other:
+    /// `everyVerbHonoursJSON` walks the whole verb list and
+    /// `theVerbsWithoutAMachineAnswerSaySo` enumerates the refusers, and T4's
+    /// brief said in as many words that two lists of one question are two
+    /// lists that can come to disagree. It stopped one reader short. The third
+    /// is the law — `docs/CONTRACTS.md` — and it named two verbs for a release
+    /// while the code refused five, so an implementation written to the law
+    /// accepts `guard --json`, prints nothing and exits 0: the exact defect
+    /// 0.3.2 fixed, reintroduced by the document that is supposed to prevent
+    /// it. `CLI.swift`'s doc comment, the fourth, said "the two commands".
+    ///
+    /// Gated in BOTH directions, by set equality rather than containment. A
+    /// missing word is the drift that happened; a surplus one is a verb the
+    /// law promises has no machine answer while the code answers happily, and
+    /// a caller who believes the law then never asks. Neither is the safe
+    /// direction, so neither is allowed.
+    ///
+    /// The enumeration in the acceptance suite is the source: it is the one of
+    /// the three that a wrong answer makes red on its own.
+    @Test func theThreeListsOfWhichVerbsRefuseJSONNameTheSameVerbs() throws {
+        let acceptance = try Self.read("Tests/SimmerAcceptanceTests/MachineOutputTests.swift")
+        guard let rows = acceptance
+            .components(separatedBy: "func theVerbsWithoutAMachineAnswerSaySo").dropFirst().first?
+            .components(separatedBy: "for invocation in [").dropFirst().first?
+            .components(separatedBy: "]] {").first else {
+            #expect(Bool(false), "theVerbsWithoutAMachineAnswerSaySo no longer enumerates invocations")
+            return
+        }
+        // Each row is a whole invocation; the verb is its first literal.
+        let refused = Set(rows.components(separatedBy: "[").dropFirst()
+            .compactMap { Self.quoted(in: $0).first })
+        #expect(refused.count > 1, "the enumeration did not parse: \(refused)")
+
+        // The law. Fences skipped, and exactly one prose line may carry it —
+        // two would mean the gate is holding one of them in step and letting
+        // the other drift.
+        let sentences = Self.unfencedLines(of: try Self.read("docs/CONTRACTS.md"))
+            .filter { $0.contains("have none and **refuse** the flag") }
+        #expect(sentences.count == 1,
+                "docs/CONTRACTS.md states which verbs refuse --json on \(sentences.count) prose lines")
+        let law = Set(sentences.flatMap { Self.backticked(in: $0) })
+        #expect(law == refused,
+                "docs/CONTRACTS.md names \(law.subtracting(refused)) that nothing refuses, and omits \(refused.subtracting(law))")
+
+        // And `refuseJSON`'s own doc comment, the reader that said "the two
+        // commands" through 0.3.2.
+        let comment = Self.scriptLines(of: try Self.read("Sources/SimmerCLI/CLI.swift"))
+            .filter { $0.contains("///") && $0.contains("no machine answer") }
+        #expect(comment.count == 1,
+                "refuseJSON's doc comment names its verbs on \(comment.count) lines")
+        // The list may wrap, so read from the anchor line to the end of that
+        // sentence rather than from the anchor line alone.
+        let documented = Set(Self.backticked(in: Self.docCommentSentence(
+            startingAt: "no machine answer",
+            in: try Self.read("Sources/SimmerCLI/CLI.swift"))))
+        #expect(documented == refused,
+                "refuseJSON's comment names \(documented.subtracting(refused)) that nothing refuses, and omits \(refused.subtracting(documented))")
+    }
+
+    /// One sentence of a doc comment, from the line holding `anchor` to the
+    /// first `.` that ends it — because a list of five verbs wraps, and a
+    /// reader of the anchor line alone answers about half of it. Adversarial
+    /// case 3: a wrapped item read one line at a time is an item silently
+    /// truncated.
+    static func docCommentSentence(startingAt anchor: String, in source: String) -> String {
+        let lines = scriptLines(of: source)
+        guard let start = lines.firstIndex(where: { $0.contains("///") && $0.contains(anchor) })
+        else { return "" }
+        var sentence = ""
+        for line in lines[start...] {
+            guard let marker = line.range(of: "///") else { break }
+            let text = line[marker.upperBound...].trimmingCharacters(in: .whitespaces)
+            sentence += (sentence.isEmpty ? "" : " ") + text
+            if text.contains(".") { break }
+        }
+        // The sentence ends at its full stop; what follows on that line is the
+        // next one, and reading it in is how `--json` — the flag, not a verb —
+        // joined the list this gate compares.
+        if let stop = sentence.firstIndex(of: ".") { sentence = String(sentence[..<stop]) }
+        return sentence
+    }
+
     /// The setup window's two update captions are one line each.
     ///
     /// They were paragraphs — eight sentences and an environment variable under
@@ -189,6 +274,36 @@ import Testing
         guard let index = lines.lastIndex(where: { !$0.isEmpty && !$0.hasPrefix("#") })
         else { return nil }
         return (index, lines[index])
+    }
+
+    /// The `` `token` `` spellings on one line of markdown or of a doc
+    /// comment. Odd-numbered fragments of a split on the backtick are what
+    /// sat between a pair of them.
+    static func backticked(in line: String) -> [String] {
+        line.components(separatedBy: "`").enumerated()
+            .filter { $0.offset % 2 == 1 }
+            .map(\.element)
+            .filter { !$0.isEmpty }
+    }
+
+    /// A markdown document's PROSE lines, fenced blocks dropped.
+    ///
+    /// A gate that reads a document's own examples as the thing it documents
+    /// has been written three times in three weeks here: `docs/CONTRACTS.md`
+    /// quotes JSON objects and shell transcripts that hold the same words its
+    /// law does, and a reader that counts them is answering about the
+    /// examples.
+    static func unfencedLines(of markdown: String) -> [String] {
+        var prose: [String] = []
+        var inFence = false
+        for line in scriptLines(of: markdown) {
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                inFence.toggle()
+                continue
+            }
+            if !inFence { prose.append(line) }
+        }
+        return prose
     }
 
     /// A shell script split into its lines — CRLF included.

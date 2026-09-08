@@ -325,8 +325,9 @@ All additive to the surface above:
 - **`--json` on every command that has a machine answer**: `claim`, `extend`, `release`, `cap`, `status`, `budget`, `log`, `doctor`, `update`.
   A mutating command returns one object: what changed plus the resulting aggregate — `{"action":"claimed|extended|released|cap_set|cap_lifted|refused", "claim": {…}, "clipped_by_cap":bool, "state", "until", "left", "claim_count", "cap", "capped", "cap_expires"}`, where `cap_expires` says when the ceiling lifts itself (0 = no cap).
   Bare `cap --json` spells the same field `expires`, because every field in that object is already about the cap.
-  `notify-test` and `render` have none and **refuse** the flag rather than accepting and ignoring it: a flag that is silently dropped is indistinguishable, to the caller, from one that worked.
-  (`render`'s surfaces *are* its machine output; `--json` there would be a fourth surface nobody asked for.)
+  `notify-test`, `render`, `run`, `guard` and `uninstall` have none and **refuse** the flag rather than accepting and ignoring it: a flag that is silently dropped is indistinguishable, to the caller, from one that worked.
+  (`render`'s surfaces *are* its machine output, so a `--json` there would be a fourth surface nobody asked for; `run` passes its command's own output and exit code through, and the flag would have to sit before the `--` terminator to be read at all; `guard` and `uninstall` answer with what they DID, which goes to the log and to `events.jsonl`.)
+  `theThreeListsOfWhichVerbsRefuseJSONNameTheSameVerbs` gates this sentence against the suites that assert it, in both directions — a verb named here and not refused, or refused and not named here, is red.
   `everyVerbHonoursJSON` is the gate — it walks the whole verb list, so a new command cannot join the surface without answering this question one way or the other.
   A refusal with `--json` prints `{"action":"refused","error":"…"}` and still exits 1.
 - **The exit-code table is complete and published** (in `--help` and here): budget 0/1/3 · run passes through · claim/extend/release/cap 0 ok, 1 refused · doctor 0/1.
