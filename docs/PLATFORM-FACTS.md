@@ -37,10 +37,26 @@ Every attempt below was actually run:
 | `osascript` | ✅ | Script Editor | works; quill icon; alert style must be Banners |
 | SwiftBar URL scheme | ✅ | SwiftBar | honours title, subtitle and body |
 | Shortcuts (`/usr/bin/shortcuts run`) | ✅ | Shortcuts | **title is the shortcut's name**; body via Shortcut Input |
-| `terminal-notifier` (own identity) | ❌ | — | 2017 binary; registers in the legacy DB, never shown |
-| **`terminal-notifier -sender <id>`** | ✅ | **the named app** | posts AS another installed app — Safari's icon displayed, verified by screenshot. The one mechanism that changes an icon without a paid signature |
+| `terminal-notifier` (own identity) | ⚠️ unproven | **its own** (`fr.julienxx.oss.terminal-notifier`) | 3.1.0 accepts the post and lists it as delivered, title "Terminal"; whether a banner reached the screen is not knowable here (see the TCC table below). The 2017 1.x binary registered in the legacy DB and was never shown |
+| **`terminal-notifier -sender <id>`** | ❌ | **still its own** | **the flag is gone.** 3.1.0 ignores it and says so |
 | AppleScript applet with own bundle | ❌ | Script Editor | applets do **not** own their notifications — attributed to the OSA host |
 | **Our own ad-hoc-signed bundle** | ✅ | **our own icon and name** | THE answer — see the verified recipe below. Earlier failures were a cached per-bundle-id denial from a first run in `/tmp`, not a platform refusal |
+
+**`-sender` was retired by the tool, and it fails quietly.** Measured 2026-09-08 against the installed 3.1.0 (`terminal-notifier -version` → `terminal-notifier 3.1.0.`, `/opt/homebrew/Cellar/terminal-notifier/3.1.0`) with `timeout 10 terminal-notifier -sender com.apple.Safari -message x`.
+It prints one line, on **stderr only**:
+
+```
+[!] -sender is no longer supported and will be ignored. It relied on overriding
+this tool's bundle identifier, which the UserNotifications framework does not allow.
+```
+
+Then it **exits 0** and posts anyway: `terminal-notifier -list ALL` shows that message delivered under `fr.julienxx.oss.terminal-notifier`, title "Terminal".
+So a caller that reads the exit code learns nothing, and a caller that trusts `-sender` posts under the notifier's name while believing it posted under the app's.
+Notes elsewhere in this project say it "exits 3, posts nothing" — wrong in both halves; this row is the measurement.
+Measure it with a `timeout`: from a non-interactive shell the process has been seen sitting for two minutes without exiting, and every run of it is a real banner on the machine you are testing from.
+
+**The fallback changes the icon to Script Editor's, never to ours.** With no bundle of our own the working transport is the `osascript` row above — `osascript -e 'display notification "…"'` — and its banner carries Script Editor's quill and name, which is the same platform fact stated at the top of this section from the other side: no flag on any of these tools puts our name on another process's post.
+That leaves exactly one identity that is simmer's, the ad-hoc bundle of the recipe below, and it is the `.dev4` bundle probe that answers for it — not a flag.
 
 **A banner is offered, never delivered.** Two facts, both verified on this Mac, and together they are why no design here may *depend* on a banner:
 
@@ -87,7 +103,7 @@ LaunchServices.framework/Support/lsregister
 - `UNErrorDomain Code=1` while the permission banner is pending means "not YET authorized".
   Checking the API state races against the human clicking Allow.
 - The permission request only fires when launched via LaunchServices, not when the binary is executed directly.
-- The community never found this because their tools (terminal-notifier, alerter) are bare binaries, not installed app bundles — alerter borrows `com.apple.Terminal`'s identity instead.
+- The community never found this because their tools (terminal-notifier, alerter) are bare binaries, not installed app bundles — alerter's banners are attributed to `com.apple.Terminal`, the bundle hosting it, and terminal-notifier's flag for naming a different one, `-sender`, was withdrawn in 3.x for the reason the table above quotes: the framework does not let a process claim another bundle's identifier.
   An installed, registered, ad-hoc bundle is the missing move.
 
 ### Distribution — for colleagues and for OSS

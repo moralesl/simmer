@@ -938,6 +938,102 @@ import Testing
                 "CONTRIBUTING never tells anyone the filtered run exists")
     }
 
+    /// CONTRIBUTING says *when* a change first shows, both halves, each with
+    /// the reason beside it.
+    ///
+    /// The two halves contradict a reader's intuition — a menu-bar change
+    /// shows in the version that carries it, a fix to the installer's own
+    /// feedback one update later — so a paragraph that states them without
+    /// saying who runs the code is memorised and misapplied, which is how
+    /// 0.3.2's map convention reached nobody. Hence the reason is pinned in
+    /// the same sentence as its half, not merely somewhere in the document.
+    ///
+    /// The phrases are the ones that carry the claim and appear nowhere else
+    /// in the file (both were absent before this paragraph landed), so this
+    /// is not a grep for a word that would pass on its own; prose only, or
+    /// the next fenced example of a CHANGELOG entry could satisfy it.
+    ///
+    /// Each half is pinned to its own reason clause rather than to the word
+    /// `running`: a line long enough to state a half is long enough to say
+    /// `running` about something else, and then the reason can be cut with
+    /// the gate green.
+    @Test func contributingSaysWhenAChangeFirstShowsAndWhy() throws {
+        let prose = Self.unfencedLines(of: try Self.read("CONTRIBUTING.md"))
+        for (half, reason) in [("the version that carries it", "it is your code running"),
+                               ("the version being replaced", "running the plan")] {
+            let carriers = prose.filter { $0.contains(half) }
+            try #require(!carriers.isEmpty,
+                         "CONTRIBUTING no longer says \"\(half)\" — half the first-shows convention is gone")
+            for sentence in carriers {
+                #expect(sentence.contains(reason),
+                        "\"\(half)\" is stated without its reason \"\(reason)\" beside it: \(sentence)")
+            }
+        }
+    }
+
+    /// PLATFORM-FACTS no longer offers `terminal-notifier -sender` as a way
+    /// to post under another app's identity.
+    ///
+    /// The row read "✅ … verified by screenshot" until 3.1.0 was measured:
+    /// the flag is gone, the tool warns on stderr, exits 0 and posts under
+    /// its own bundle anyway. An absence proof, because the failure mode is
+    /// the old claim coming back — but the row also has to still be *there*,
+    /// so `#require` stops if nothing in the table mentions the flag.
+    ///
+    /// Read as one row rather than as the whole document: `✅` appears in four
+    /// other rows of the same table, so `!document.contains("✅")` would be a
+    /// gate that can only pass by deleting the table — but inside the row the
+    /// tick is refused wherever it stands, not only in `Displays?`: a tick in
+    /// the notes cell sells the flag just as well. Prose only — the section
+    /// quotes the tool's own warning inside a fence. A row wrapped across
+    /// two lines fails the cell count rather than passing on the first line,
+    /// and two rows claiming the flag fail the count: the last is a guess.
+    @Test func platformFactsNoLongerSellsSenderAsAWorkingIdentityFlag() throws {
+        let facts = try Self.read("docs/PLATFORM-FACTS.md")
+        let prose = Self.unfencedLines(of: facts)
+        let rows = prose.filter {
+            let line = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            return line.hasPrefix("|") && line.contains("-sender")
+        }
+        try #require(rows.count == 1,
+                     "the transport table has \(rows.count) rows naming -sender, not one: \(rows)")
+        let cells = rows[0].split(separator: "|", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        // Four cells between five pipes split into six components, the first
+        // and the last empty; `>= 4` is what a row wrapped after the second
+        // cell also clears, which is how it used to pass on its first line.
+        try #require(cells.count >= 6, "the -sender row is not four cells wide: \(rows[0])")
+        let displays = cells[2]
+        #expect(!rows[0].contains("✅"),
+                "PLATFORM-FACTS presents -sender as a working transport again: \(rows[0])")
+        #expect(displays.contains("❌"), "the -sender row says neither yes nor no: \(rows[0])")
+        #expect(!rows[0].contains("verified by screenshot"),
+                "the -sender row still claims a screenshot verified it: \(rows[0])")
+
+        // The recipe below the table was written when the flag worked, and a
+        // corrected table over an uncorrected recipe is the doubled input.
+        #expect(prose.contains { $0.contains("was retired by the tool") },
+                "the measurement paragraph under the table is gone")
+        #expect(prose.contains { $0.contains("was withdrawn in 3.x") },
+                "the recipe's own sentence about -sender no longer says it was withdrawn")
+        #expect(prose.contains { $0.contains("changes the icon to Script Editor's") },
+                "nothing names the osascript fallback and the identity it posts under")
+
+        // Three sentences saying the flag is dead prove nothing about a fourth
+        // saying it works, so pin the population too: outside the fences the
+        // flag is named on four lines — the table row, the measurement
+        // paragraph, the caller sentence under it, the TCC checklist line —
+        // and five times, because the measurement paragraph names it twice.
+        // Counted as mentions and not only as lines, because a claim can be
+        // reinstated in front of a line that already carries one.
+        let carriers = prose.filter { $0.contains("-sender") }
+        let mentions = carriers.reduce(0) { $0 + $1.components(separatedBy: "-sender").count - 1 }
+        #expect(carriers.count == 4,
+                "PLATFORM-FACTS names -sender on \(carriers.count) unfenced lines, not the four that all say it is dead: \(carriers)")
+        #expect(mentions == 5,
+                "PLATFORM-FACTS names -sender \(mentions) times outside the fences, not five — a sentence about the flag was added or removed: \(carriers)")
+    }
+
     /// The reader above, held to the four Makefile shapes that have each
     /// defeated a text gate in this repository's history — asserted over
     /// synthetic text, because the only way to drive them against the real
@@ -1716,6 +1812,81 @@ import Testing
                           "refs/remotes/simmer-release/main"])
             == Self.git(["-C", release.path, "rev-parse", "main"]),
                 "the namespace the branch arm reads is not what $REPO holds")
+    }
+
+    /// A branch deleted at `$REPO` leaves no ref behind in the namespace the
+    /// branch arm reads.
+    ///
+    /// Nothing pruned `refs/remotes/simmer-release/*`, so a branch deleted
+    /// upstream stayed there at the commit it was last seen at — and it is the
+    /// ref, not the branch, that the arm at `bootstrap.sh:188` tests:
+    /// `SIMMER_REF=<that branch>` took the BRANCH arm, fast-forwarded onto the
+    /// stale commit and printed "updated the existing checkout" for a branch
+    /// `$REPO` no longer has (R1 finding 4). Red before `--prune`: the ref was
+    /// still there, and `for-each-ref` listed two.
+    ///
+    /// The two arms after it are why the word is safe in this command, each
+    /// otherwise taken on trust. The refspec is explicit, so `--prune` prunes
+    /// only what that refspec covers and leaves `origin/*` — which keeps
+    /// meaning "where this directory came from" — untouched; and `--prune`
+    /// without `--prune-tags` deletes no tag, so a tag dropped upstream and a
+    /// tag that exists only in this checkout both survive. Both measured here
+    /// rather than assumed, because a prune that reached either would be a
+    /// deletion in a reader's own repository.
+    @Test func aBranchDeletedUpstreamLeavesNoStaleRefBehind() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-bootstrap-prune-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let library = root.appendingPathComponent("lib.sh")
+        try Self.library(at: library)
+
+        // What GitHub holds: main and a tag, plus a branch that is about to be
+        // deleted there — a release branch merged and tidied up is the shape.
+        let release = root.appendingPathComponent("release")
+        Self.git(["init", "--quiet", "--initial-branch=main", release.path])
+        try "one".write(to: release.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", release.path, "add", "f"])
+        Self.git(["-C", release.path, "commit", "--quiet", "-m", "one"])
+        Self.git(["-C", release.path, "tag", "v9.9.9"])
+        Self.git(["-C", release.path, "checkout", "--quiet", "-b", "topic"])
+        try "topic".write(to: release.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", release.path, "commit", "--quiet", "-am", "topic"])
+        Self.git(["-C", release.path, "checkout", "--quiet", "main"])
+
+        let checkout = root.appendingPathComponent("co")
+        Self.git(["clone", "--quiet", release.path, checkout.path])
+        // A tag of this checkout's own, which exists in no repository the
+        // fetch talks to.
+        Self.git(["-C", checkout.path, "tag", "local-only"])
+
+        // The reader installs the branch once, which is what puts the ref in
+        // the namespace at all.
+        let first = Self.fetch(ref: "topic", into: checkout, from: release, library: library)
+        #expect(first.code == 0, "\(first.out)")
+        #expect(!Self.git(["-C", checkout.path, "rev-parse",
+                           "refs/remotes/simmer-release/topic"]).isEmpty,
+                "the fixture never saw the branch it is supposed to lose")
+
+        // Deleted at `$REPO`, and the reader comes back for something else.
+        Self.git(["-C", release.path, "branch", "-D", "topic"])
+        Self.git(["-C", release.path, "tag", "-d", "v9.9.9"])
+        Self.git(["-C", checkout.path, "checkout", "--quiet", "main"])
+        let second = Self.fetch(ref: "main", into: checkout, from: release, library: library)
+        #expect(second.code == 0, "\(second.out)")
+
+        // Read as the whole namespace rather than as one ref: a second stale
+        // branch would pass a `rev-parse` of the first one's absence.
+        #expect(Self.git(["-C", checkout.path, "for-each-ref", "--format=%(refname)",
+                          "refs/remotes/simmer-release"])
+            == "refs/remotes/simmer-release/main",
+                "a branch deleted at $REPO left a ref the branch arm fast-forwards onto")
+
+        #expect(!Self.git(["-C", checkout.path, "rev-parse",
+                           "refs/remotes/origin/topic"]).isEmpty,
+                "the prune reached origin/*, which is not this script's namespace to delete")
+        #expect(Self.git(["-C", checkout.path, "tag"]) == "local-only\nv9.9.9",
+                "the prune deleted a tag in the reader's own checkout")
     }
 
     /// A checkout that cannot switch says why, and does not invent a reason.

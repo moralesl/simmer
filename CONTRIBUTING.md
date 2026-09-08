@@ -86,6 +86,11 @@ Where you put them decides the next version number: an entry under `### Machine 
 Nothing reads your prose for hints; the heading is what says so.
 To decide the number outright, put one line under `## Unreleased` in the same pull request — `<!-- release: patch -->`, `minor` or `major` — and it is reviewed along with your notes; a maintainer can still overrule it with a matching label on the release pull request, which then says both the number and what the rule had read.
 
+**Say when your change first shows, because it is not always the version that ships it.** A change to what the app or the CLI does — a menu-bar row, a new flag, a different exit code — first shows in **the version that carries it**: the reader installs that version, and from then on it is your code running.
+A change to the installer's own feedback — the plan `update --apply` prints, the banners at either end of an "Install it now" click, the line it writes to `simmer.log` — first shows on the update **after** the release that ships it, because **the version being replaced** is the one running the plan and composing those banners; your new wording ships inert and gets its first run one update later.
+0.3.3's entry is the worked example, and says both halves in one sentence: "0.3.3 is the first version that answers Check for Updates…; the update *after* 0.3.3 is the first whose completion banner carries a body".
+Put that in the note rather than leaving it to be discovered: "the completion banner now carries a body", filed plainly under the release that adds the body, is a promise that release cannot keep, and the reader who clicks Install, sees the old wordless banner and files a bug is reading the notes correctly.
+
 Every push to `main` then keeps one pull request open titled `release: X.Y.Z`, carrying the version bump and the notes GitHub would publish.
 Merging it is the release.
 
