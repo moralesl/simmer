@@ -1184,7 +1184,16 @@ import Testing
                 continue
             }
             if inString {
-                if character == "\\" { index += 2; continue }
+                // A single-line literal ends at the newline whatever else is
+                // on the line: the compiler rejects one that does not, so a
+                // scanner that carries it on is reading a file no compiler
+                // would accept — and it reads the whole rest of it as string.
+                // One stray quote, and the gate is green about nothing.
+                if character.isNewline { inString = false; code.append("\n"); index += 1; continue }
+                // The escape skip stops at the same edge, for the same reason:
+                // a trailing backslash must not step the scanner over the
+                // newline and take the line below into the literal with it.
+                if character == "\\" && !next.isNewline { index += 2; continue }
                 if character == "\"" { inString = false }
                 index += 1
                 continue
@@ -1316,6 +1325,29 @@ import Testing
                 \"\"\")
             }
         """)) == [])
+
+        // A literal nobody closed — one stray quote, which the compiler
+        // catches and a text scanner does not. The literal has to end at the
+        // newline, or every line below it is inside a string and the gate is
+        // green about a file it never read.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            func log() {
+                print("removeAllItems)
+            }
+            func applyUpdateGroup() {
+                menu.removeAllItems()
+            }
+        """)) == ["applyUpdateGroup"])
+
+        // And a literal whose last character is a backslash: the escape skip
+        // must not step over the newline either, or the line below is read as
+        // more of the string and the call on it is never seen.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            func applyUpdateGroup() {
+                print("a literal ending in a backslash \\
+                menu.removeAllItems()
+            }
+        """)) == ["applyUpdateGroup"])
 
         // CRLF and CR alone: the same answer, not a name with a carriage
         // return glued to it and not one long line whose braces never close.
