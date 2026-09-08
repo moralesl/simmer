@@ -1061,6 +1061,38 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: sentinel.path), "the link dangles")
         ledger.enqueueNotification(NotificationRequest(title: "after the link"), now: 1020)
         #expect(ledger.drainNotifications(now: 1030).map(\.title) == ["after the link"])
+
+        // A directory wearing the name is the same destination `moveItem`
+        // refuses, and `removeItem` clears it — so the drain recovers rather
+        // than going quiet for good.
+        try? FileManager.default.createDirectory(at: sentinel, withIntermediateDirectories: true)
+        ledger.enqueueNotification(NotificationRequest(title: "after the dir"), now: 1040)
+        #expect(ledger.drainNotifications(now: 1050).map(\.title) == ["after the dir"])
+        #expect(!FileManager.default.fileExists(atPath: sentinel.path))
+    }
+
+    /// The crash can land mid-`write`, so the stranded half can end without a
+    /// newline. The spool is line-delimited and the boundary between two reads
+    /// of it has to be one too: a partial record glued to the first whole one
+    /// parses as neither, and dropping the fresh record as collateral is the
+    /// recovery costing a banner it was written to save.
+    @Test func aTruncatedStrandedHalfDoesNotSwallowTheFreshOne() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sentinel = ledger.spoolFile.appendingPathExtension("draining")
+        ledger.enqueueNotification(NotificationRequest(title: "torn"), now: 1000)
+        // What a `write` cut in half leaves: a record with no newline, and in
+        // this case no closing brace either.
+        let whole = (try? String(contentsOf: ledger.spoolFile, encoding: .utf8)) ?? ""
+        #expect(!whole.isEmpty)
+        try? String(whole.dropLast(4)).write(to: sentinel, atomically: true, encoding: .utf8)
+        try? FileManager.default.removeItem(at: ledger.spoolFile)
+
+        ledger.enqueueNotification(NotificationRequest(title: "whole"), now: 1010)
+        // The torn record is unreadable and goes; the whole one behind it must
+        // not go with it.
+        #expect(ledger.drainNotifications(now: 1020).map(\.title) == ["whole"])
+        #expect(!FileManager.default.fileExists(atPath: sentinel.path))
     }
 
     /// Two ticks can coincide, and both used to record the same ending:

@@ -441,6 +441,13 @@ public struct Ledger: Sendable {
         // destination), a permission that denies the read but not the unlink.
         // `try?` swallows the not-there case, which is the common one.
         try? FileManager.default.removeItem(at: draining)
+        // Terminate the recovered half before the fresh one is appended. Every
+        // record `enqueueNotification` writes ends in a newline, but the crash
+        // that stranded this file can have landed mid-`write` — and a partial
+        // record glued to the first whole one is a single line that parses as
+        // neither, so BOTH are dropped. The spool is line-delimited; the
+        // boundary between two reads of it has to be one too.
+        if !text.isEmpty, !text.hasSuffix("\n") { text += "\n" }
         if (try? FileManager.default.moveItem(at: spoolFile, to: draining)) != nil {
             // Armed the moment the sentinel exists, not after the read.
             // Registered below the read, its own failure path stranded the
