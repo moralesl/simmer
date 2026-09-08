@@ -1062,4 +1062,63 @@ import Testing
         ledger.enqueueNotification(NotificationRequest(title: "after the link"), now: 1020)
         #expect(ledger.drainNotifications(now: 1030).map(\.title) == ["after the link"])
     }
+
+    /// Two ticks can coincide, and both used to record the same ending:
+    /// `removeClaim` answered true for a file that was already gone, and
+    /// `retire` emits its contracted event on every true.
+    @Test func aCoincidingRetireRecordsOneEnding() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let claim = Claim(owner: "agent:eval", until: 2000, started: 900)
+        #expect(ledger.write(claim))
+        let snapshot = ledger.claims()[0]
+        #expect(ledger.retire(snapshot, why: "time is up", now: 2001))
+        // The tick that lost the race, acting on the same snapshot.
+        #expect(ledger.retire(snapshot, why: "time is up", now: 2001) == false)
+        let events = (try? String(contentsOf: ledger.eventsFile, encoding: .utf8)) ?? ""
+        #expect(events.components(separatedBy: "\"retire\"").count == 2,
+                "one ending, one event: \(events)")
+        // And no ERROR about it either — the outcome is correct, and a log
+        // line for every lost race teaches the reader to skim.
+        let log = (try? String(contentsOf: ledger.logFile, encoding: .utf8)) ?? ""
+        #expect(!log.contains("ERROR"), "\(log)")
+    }
+
+    /// `removingAClaimThatIsAlreadyGoneSucceeds` above is `down`'s truth.
+    /// With a snapshot in hand the answer flips: gone is not "still matching",
+    /// same as `write(_:ifStillMatching:)` from the other side.
+    @Test func aVanishedClaimIsNotStillMatching() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let claim = Claim(owner: "agent:x", until: 2000, started: 900)
+        #expect(ledger.removeClaim(id: claim.id, ifStillMatching: claim) == false)
+        #expect(ledger.removeClaim(id: claim.id) == true)
+    }
+
+    /// Re-derived against the addressing the claim-id fix left behind, because
+    /// "gone" is a statement about a FILENAME and that fix changed which
+    /// filename an owner gets.
+    ///
+    /// `Terminal` used to pass through as its own id, which on APFS is
+    /// `terminal`'s file; it now folds and fingerprints to
+    /// `terminal-<fingerprint>`, a name of its own that nothing has written.
+    /// So the snapshot form has to answer false for it — and, more to the
+    /// point, must not answer about the neighbour it used to collide with. A
+    /// true here would be `retire` recording an ending for a claim that is
+    /// still holding the machine awake, under a name that never took one.
+    @Test func aFoldedOwnerIsGoneOnItsOwnNameNotTheNeighboursFile() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let human = Claim(owner: "terminal", until: 4000, started: 900)
+        #expect(ledger.write(human))
+        let folded = Claim(owner: "Terminal", until: 4000, started: 900)
+        #expect(folded.id != human.id, "the claim-id fix folds and fingerprints: \(folded.id)")
+
+        #expect(ledger.removeClaim(id: folded.id, ifStillMatching: folded) == false)
+        #expect(ledger.retire(folded, why: "time is up", now: 4001) == false)
+        // The human's claim is untouched, and its ending was never recorded.
+        #expect(ledger.claims().map(\.id) == [human.id])
+        let events = (try? String(contentsOf: ledger.eventsFile, encoding: .utf8)) ?? ""
+        #expect(!events.contains("\"retire\""), "\(events)")
+    }
 }

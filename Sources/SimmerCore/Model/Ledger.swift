@@ -170,8 +170,15 @@ public struct Ledger: Sendable {
     /// a newer version had added a field to, which is the opposite failure.
     public func removeClaim(id: String, ifStillMatching expected: Claim? = nil) -> Bool {
         let url = claimsDir.appendingPathComponent(id)
-        if let expected,
-           let text = try? String(contentsOf: url, encoding: .utf8) {
+        if let expected {
+            // Gone since the snapshot is NOT "still matching" — same answer
+            // `write(_:ifStillMatching:)` gives from the other side. Two ticks
+            // can coincide, and the one that lost the race used to fall
+            // through to the unconditional path below, answer true, and have
+            // `retire` record the same ending twice on the event stream.
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                return false
+            }
             let current = Claim.parse(text, fallbackId: id)
             guard current.until == expected.until, current.started == expected.started else {
                 return false
@@ -197,8 +204,13 @@ public struct Ledger: Sendable {
         // Retire what was actually read: if it moved under us, the decision
         // to end it was taken about a claim that no longer exists.
         guard removeClaim(id: claim.id, ifStillMatching: claim) else {
-            log("ERROR: could not retire \(claim.owner) · \(why) — it changed under us, or \(claimsDir.appendingPathComponent(claim.id).path) is still there",
-                now: now)
+            // Quiet when the file is simply gone: a coinciding tick already
+            // retired it and recorded the ending — a second ERROR line about
+            // an outcome that is correct would teach the log's reader to skim.
+            if FileManager.default.fileExists(atPath: claimsDir.appendingPathComponent(claim.id).path) {
+                log("ERROR: could not retire \(claim.owner) · \(why) — it changed under us, or \(claimsDir.appendingPathComponent(claim.id).path) is still there",
+                    now: now)
+            }
             return false
         }
         let reasonPart = claim.reason.isEmpty ? "" : " (\(claim.reason))"
