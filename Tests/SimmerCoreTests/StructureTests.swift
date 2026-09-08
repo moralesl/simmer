@@ -792,6 +792,153 @@ import Testing
         #expect(cli.contains("simmer down --all"))
     }
 
+    /// The command lines of one target, and nothing else.
+    ///
+    /// A recipe is the tab-indented run of lines after `<target>:`, which is
+    /// what `make` itself reads — and the distinction matters here: the
+    /// `print-test-flags` block has `$(TEST_FLAGS)` in its own COMMENT
+    /// explaining what it must never become, and a reader that took the whole
+    /// region between two targets would be satisfied by that comment while the
+    /// recipe echoed something else entirely. Comments and blank lines inside
+    /// the run are dropped for the same reason. `\r` is trimmed so a CRLF
+    /// checkout answers the same question.
+    ///
+    /// A recipe line continued with a trailing `\` is ONE command to `make`,
+    /// so it is one command here too — counting the physical lines would
+    /// refuse a wrapped command that is perfectly correct.
+    ///
+    /// Absent is not empty and doubled is not "the one I picked": a target
+    /// that is gone, and a target defined twice, both return nil. `make`
+    /// keeps the LAST of two recipes for one target and warns; a reader that
+    /// silently took either one would be guessing which of two answers the
+    /// build uses, so the caller records an issue instead.
+    static func makeRecipe(of target: String, in makefile: String) -> [String]? {
+        let lines = makefile.components(separatedBy: "\n")
+            .map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
+        let headers = lines.indices.filter { lines[$0].hasPrefix(target + ":") }
+        guard headers.count == 1, let start = headers.first else { return nil }
+
+        var commands: [String] = []
+        var continued = false
+        for line in lines[(start + 1)...] {
+            guard line.hasPrefix("\t") else { break }
+            let command = String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
+            if command.isEmpty || (!continued && command.hasPrefix("#")) { continue }
+            if continued {
+                commands[commands.endIndex - 1] += " " + command
+            } else {
+                commands.append(command)
+            }
+            continued = command.hasSuffix("\\")
+        }
+        return commands.map {
+            $0.replacingOccurrences(of: "\\", with: " ")
+                .components(separatedBy: " ").filter { !$0.isEmpty }.joined(separator: " ")
+        }
+    }
+
+    /// `test` and `print-test-flags` pass the same flags because they name the
+    /// same variable, and this is the only thing keeping that true.
+    ///
+    /// On a CLT-only Mac `swift test` finds no `Testing.framework` and fails to
+    /// compile every suite — and has been seen exiting 0 while doing it, a
+    /// green gate over nothing. `TEST_FLAGS` is what fixes that, and
+    /// `print-test-flags` exists so a FILTERED run can be spelled by hand
+    /// (`swift test $(make -s print-test-flags) --filter X`) instead of every
+    /// contributor reading the flags out of the Makefile again.
+    ///
+    /// Which makes it a second place the flags are named. The failure with no
+    /// symptom is a refactor moving `test` to a new variable and leaving this
+    /// one echoing the old: both targets keep working, `make test` is green,
+    /// and the filtered run silently builds with different flags than the lane
+    /// it claims to narrow — or with none, and reports its compile failure as
+    /// a test failure.
+    ///
+    /// So the assertion is on the variable NAME in both recipes, never on the
+    /// flag values: the flags are derived from `xcode-select -p` and are
+    /// legitimately empty under a selected Xcode, and CI runs both.
+    @Test func theFilteredRunPrintsTheFlagsTheTestLaneUses() throws {
+        let makefile = try Self.read("Makefile")
+
+        guard let lane = Self.makeRecipe(of: "test", in: makefile),
+              let printer = Self.makeRecipe(of: "print-test-flags", in: makefile) else {
+            Issue.record("the Makefile has no single `test` or `print-test-flags` recipe")
+            return
+        }
+
+        // One command each, so "and nothing else" is a property and not a
+        // reading of the current text.
+        #expect(lane.count == 1, "the test lane is no longer one command: \(lane)")
+        #expect(printer.count == 1, "print-test-flags prints more than one thing: \(printer)")
+        #expect(lane.first?.hasPrefix("swift test ") == true,
+                "the test lane is no longer a `swift test` invocation: \(lane)")
+        #expect(printer.first?.hasPrefix("@echo ") == true,
+                "print-test-flags must be a bare @echo — anything else it emits becomes an argument to `swift test`: \(printer)")
+
+        // The pair, stated as the pair: whatever the variable is called, both
+        // recipes call it THAT. Names, never values — the flags are derived
+        // from `xcode-select -p` and are legitimately empty under an Xcode.
+        let variables = { (recipe: [String]) in
+            recipe.joined(separator: " ").components(separatedBy: "$(")
+                .dropFirst().compactMap { $0.components(separatedBy: ")").first }
+        }
+        #expect(!variables(lane).isEmpty, "the test lane passes no flags variable at all: \(lane)")
+        #expect(variables(lane) == variables(printer),
+                "the two recipes name different variables: \(variables(lane)) vs \(variables(printer))")
+
+        // And a file of that name in the checkout must not shadow the target.
+        // Every `.PHONY:` line, because more than one is legal and a reader
+        // that took the first would refuse a target listed on the second.
+        let phony = makefile.components(separatedBy: "\n")
+            .filter { $0.hasPrefix(".PHONY:") }
+            .flatMap { $0.components(separatedBy: .whitespaces) }
+        #expect(!phony.isEmpty, "the Makefile has no .PHONY line")
+        #expect(phony.contains("print-test-flags"), ".PHONY does not list print-test-flags")
+
+        // CONTRIBUTING has to carry the spelling, or the target is a secret.
+        let contributing = try Self.read("CONTRIBUTING.md")
+        #expect(contributing.contains("make -s print-test-flags"),
+                "CONTRIBUTING never tells anyone the filtered run exists")
+    }
+
+    /// The reader above, held to the four Makefile shapes that have each
+    /// defeated a text gate in this repository's history — asserted over
+    /// synthetic text, because the only way to drive them against the real
+    /// `Makefile` is to edit it, and evidence that has to be produced by hand
+    /// is evidence nobody reproduces.
+    @Test func theRecipeReaderIsNotFooledByTheShapesThatFoolTextGates() {
+        // Plain.
+        #expect(Self.makeRecipe(of: "test", in: "test:\n\tswift test $(TEST_FLAGS)\n")
+                == ["swift test $(TEST_FLAGS)"])
+
+        // CRLF — the same answer, not a trailing \r glued to the variable.
+        #expect(Self.makeRecipe(of: "test", in: "test:\r\n\tswift test $(TEST_FLAGS)\r\n")
+                == ["swift test $(TEST_FLAGS)"])
+
+        // A comment inside the block, holding the very variable the gate looks
+        // for. One command, and it is the recipe's, not the comment's.
+        #expect(Self.makeRecipe(of: "p", in: """
+        # echoes $(TEST_FLAGS) and must never become a second definition
+        p:
+        \t@echo -Xswiftc -F
+        """) == ["@echo -Xswiftc -F"])
+
+        // Wrapped: one logical command over three physical lines.
+        #expect(Self.makeRecipe(of: "test", in: "test:\n\tswift test \\\n\t  $(TEST_FLAGS) \\\n\t  --parallel\n")
+                == ["swift test $(TEST_FLAGS) --parallel"])
+
+        // Doubled: make keeps the LAST and warns, so neither is "the" answer.
+        #expect(Self.makeRecipe(of: "p", in: "p:\n\t@echo FIRST\n\np:\n\t@echo LAST\n") == nil)
+
+        // Absent is nil, not [] — the caller must be able to tell the target
+        // being gone from a target with an empty recipe.
+        #expect(Self.makeRecipe(of: "print-test-flags", in: "test:\n\tswift test\n") == nil)
+        #expect(Self.makeRecipe(of: "p", in: "p:\n\nq:\n\t@echo q\n") == [])
+
+        // A target whose name is a prefix of another must not answer for it.
+        #expect(Self.makeRecipe(of: "test", in: "test-release:\n\t@echo release\n") == nil)
+    }
+
     /// Every `-o` argument of a `ray build` in a shell command line, in each
     /// spelling oclif accepts: `-o dist`, `-o=dist`, `-odist`,
     /// `--output dist`, `--output=dist`.
