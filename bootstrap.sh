@@ -155,7 +155,14 @@ fetch() {
     # tags could pass also swallowed a diverged BRANCH, and then printed
     # "updated" over the stale tree it was about to install.
     if git -C "$DIR" rev-parse --verify --quiet "refs/remotes/origin/$REF" >/dev/null; then
-      git -C "$DIR" merge --ff-only --quiet "origin/$REF" ||
+      # `2>/dev/null` on the MERGE only, never on the branch test above it:
+      # dropping it is what made the divergence visible, and it also put
+      # git's nine-line "hint: Diverging branches can't be fast-forwarded"
+      # block above simmer's own refusal — two competing fixes in one
+      # refusal, on the surface whose rule is that a refusal names its fix in
+      # simmer's voice. `die` already names `git -C $DIR status`, and the
+      # exit code is what the `||` reads.
+      git -C "$DIR" merge --ff-only --quiet "origin/$REF" 2>/dev/null ||
         die "the checkout in $DIR has local commits origin/$REF does not — \
 look with 'git -C $DIR status', or move the directory aside and retry"
       echo "  updated the existing checkout"

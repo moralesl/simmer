@@ -507,6 +507,18 @@ public enum UpdateCommand {
         "update: installing \(plan.target) for \(owner)"
     }
 
+    /// The line for a banner that could not even be queued.
+    ///
+    /// `simmer.log` is a DIFFERENT file from `notify-spool.jsonl`, which is
+    /// the point: the case that loses the banner is a symlink or a full disk
+    /// at the spool, and one channel has to survive it (R2 finding 8). It
+    /// names the file, because `append` knows only that the line did not land
+    /// and `ls -l` in the state directory answers why.
+    public static func applyLogSentence(bannerNotQueued plan: ApplyPlan) -> String {
+        "update: could not queue the installing banner for \(plan.target) "
+            + "— check notify-spool.jsonl in this directory"
+    }
+
     public static func applyLogSentence(_ result: ApplyResult) -> String {
         switch result {
         case .nothingToDo(let sentence):
@@ -544,7 +556,15 @@ public enum UpdateCommand {
         outcome.stdout = ["✅ simmer \(plan.target) installed"
             + (reopened ? " · Simmer.app relaunched" : "")]
         var subtitle = reopened ? "Simmer.app was relaunched" : ""
-        var body = ""
+        // The last word of the click, and it has to arrive. Title + subtitle
+        // + `body: ""` is character-for-character the 0.3.1 shape this
+        // command's own diagnosis blames for the silence — and with the app
+        // not running the subtitle is empty too, so the ending was a
+        // title-only banner: no informative text at all, accepted by `add`,
+        // never presented (R2 finding 1). The `relaunchFailure` branch below
+        // overwrites it, because a menu bar that did not come back is the
+        // more important sentence.
+        var body = "You are on \(plan.target) now."
         if let relaunchFailure {
             let sentence = failureSentence(phase: .relaunching, plan: plan,
                                            updateCommand: updateCommand)
@@ -834,6 +854,14 @@ public enum UpdateCommand {
     /// it at most once per new version — which is the difference between
     /// telling someone what they asked, telling them something once, and
     /// interrupting them daily with the same news.
+    ///
+    /// **Every arm carries informative text.** `announcement` only ever
+    /// passes `.available`, so the other three arms looked unreachable and
+    /// two of them were written with `body: ""` — but the app's **Check for
+    /// Updates…** calls this directly (`StatusItemController.swift:193`), and
+    /// "you are up to date" is that item's commonest answer. A banner with no
+    /// informative text is accepted by `add` and never presented, so the
+    /// commonest answer to the menu item Luis used was silence (R2 finding 2).
     public static func notification(_ report: Report) -> NotificationRequest {
         switch report.verdict {
         case .available:
@@ -844,11 +872,15 @@ public enum UpdateCommand {
         case .current:
             return NotificationRequest(
                 title: "simmer \(report.installed) is up to date",
-                subtitle: "", body: "", sound: false)
+                subtitle: "", body: "Nothing to install.", sound: false)
         case .ahead:
+            // The subtitle already carries text, so this arm was presented —
+            // but "ahead" is the one verdict that leaves a person wondering
+            // whether they are meant to do something, and the answer is no.
             return NotificationRequest(
                 title: "simmer \(report.installed) is ahead of the newest release",
-                subtitle: "newest is \(report.latestDisplay)", body: "", sound: false)
+                subtitle: "newest is \(report.latestDisplay)",
+                body: "Nothing to install; a downgrade is not an update.", sound: false)
         case .unknown:
             return NotificationRequest(
                 title: "Could not check for updates",

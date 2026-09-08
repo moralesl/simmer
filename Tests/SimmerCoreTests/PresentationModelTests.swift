@@ -408,6 +408,41 @@ import Testing
         #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: edge) == nil)
     }
 
+    /// Case 14, and R2 finding 6: `now - startedAt < maxAge` is also true of
+    /// every timestamp in the FUTURE, so a clock jump — or a hand-written
+    /// record — claimed to be installing forever. The one-sided comparison
+    /// was the immortal record that refusing to default an ABSENT
+    /// `started_at` was there to prevent, left open on the other side.
+    ///
+    /// Driven through the renderer as well as the reader, because "no record"
+    /// is only the right answer if the row it produces is true: `Update
+    /// available: 0.3.2` is true whether or not something is installing.
+    @Test func aRecordFromTheFutureIsNotAnAnswerEither() throws {
+        let led = ledger()
+        // Written by a clock a day fast, read by one that is right.
+        led.writeInstallInProgress(target: "0.3.2", now: now + 86_400, installed: "0.3.1")
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: now) == nil)
+        // One second ahead is already not an answer: there is no tolerance to
+        // tune, because simmer writes `env.now()` and nothing legitimate is
+        // ever ahead of the reader.
+        led.writeInstallInProgress(target: "0.3.2", now: now + 1, installed: "0.3.1")
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: now) == nil)
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: now + 1) != nil)
+
+        let install = MenuInstall(
+            version: "0.3.1", canHandBackUnattended: true,
+            updateLine: "Update available: 0.3.2",
+            updateCommand: "brew upgrade simmer", canApplyUpdate: true,
+            releaseNotesURL: "https://example.test/v0.3.2",
+            installing: led.readInstallInProgress(writtenBy: "0.3.1", now: now)?.target)
+        let row = try #require(MenuModel.build(
+            aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000,
+                                         sleepDisabled: false),
+            batteryLine: "battery 80%, on AC", install: install).first)
+        #expect(row.title == "Update available: 0.3.2")
+        #expect(!row.children.isEmpty, "the row a person can act on came back")
+    }
+
     @Test func clearingItEndsTheState() {
         let led = ledger()
         led.writeInstallInProgress(target: "0.3.2", now: now, installed: "0.3.1")
@@ -519,6 +554,56 @@ import Testing
     }
 }
 
+/// The banner behind the app's **Check for Updates…** — every arm of it.
+///
+/// `announcement` only ever passes `.available`, so the other three arms read
+/// as unreachable and two of them were written with `body: ""`. The menu item
+/// calls `notification(_:)` directly (`StatusItemController.swift:193`) and
+/// "you are up to date" is its commonest answer, so the commonest answer to
+/// the item Luis clicked at 10:4x was a banner macOS never presents
+/// (R2 finding 2).
+@Suite struct CheckBannerTests {
+    private func report(installed: String, latest: String) -> UpdateCommand.Report {
+        UpdateCommand.check(
+            now: 1_800_000_000, installed: installed,
+            install: Install.detect(executablePath: "/Applications/Simmer.app/Contents/MacOS/simmer",
+                                    home: "/Users/nobody", exists: { _ in false }),
+            appVersion: nil,
+            ledger: Ledger(stateDir: FileManager.default.temporaryDirectory
+                .appendingPathComponent("simmer-check-banner-\(UUID().uuidString)")),
+            source: FakeReleaseSource(value: latest), cached: false)
+    }
+
+    @Test func beingUpToDateIsAnAnswerAndNotSilence() {
+        let banner = UpdateCommand.notification(report(installed: "0.3.2", latest: "v0.3.2"))
+        #expect(banner.title == "simmer 0.3.2 is up to date")
+        #expect(banner.body == "Nothing to install.")
+        #expect(banner.sound == false)
+    }
+
+    /// The property, over all four verdicts at once — the shape the structure
+    /// gate enforces on the source, asserted here on the values. A check that
+    /// cannot answer is the one arm whose text comes from `report.error`, and
+    /// `check` guarantees that is never empty ("no release information").
+    @Test func everyVerdictsBannerHasInformativeText() {
+        for (installed, latest) in [("0.3.1", "v0.3.2"), ("0.3.2", "v0.3.2"),
+                                    ("0.4.0", "v0.3.2"), ("0.3.2", "error")] {
+            let banner = UpdateCommand.notification(report(installed: installed, latest: latest))
+            #expect(banner.hasInformativeText, """
+            a banner with neither subtitle nor body is one macOS never presents: \
+            \(installed) vs \(latest) — \(banner)
+            """)
+        }
+    }
+
+    @Test func beingAheadOfTheNewestReleaseSaysThereIsNothingToDo() {
+        let banner = UpdateCommand.notification(report(installed: "0.4.0", latest: "v0.3.2"))
+        #expect(banner.title.contains("ahead"))
+        #expect(banner.subtitle == "newest is 0.3.2")
+        #expect(banner.body == "Nothing to install; a downgrade is not an update.")
+    }
+}
+
 /// What the child says about an install, in the two channels a click can
 /// reach: the spool and the log.
 @Suite struct ApplyFeedbackTests {
@@ -533,13 +618,55 @@ import Testing
     /// The whole defect of 0.3.1, in one assertion. The banner nobody ever saw
     /// was the only one this tool posts with an empty body, and on macOS a
     /// notification with no informative text is accepted and never presented.
+    /// The three strings are asserted by EQUALITY, not for being non-empty
+    /// (R2 finding 4). T1's report claimed "the exact strings in that table
+    /// are the ones the suite pins" and they were not: rows 1e and 1f were
+    /// pinned as non-empty only. Luis chose each of them from a three-column
+    /// table while the screenshots that would have shown them were deferred,
+    /// so this suite is standing in for the rendering — which it cannot do
+    /// while it only knows that something is there.
     @Test func theStartingBannerCarriesABody() {
         let banner = UpdateCommand.startingNotification(plan(), installed: "0.3.1")
+        // Row 1d.
         #expect(banner.title == "Installing simmer 0.3.2…")
-        #expect(!banner.body.isEmpty, "an empty body is a banner macOS never shows")
-        #expect(!banner.subtitle.isEmpty)
+        // Row 1e.
+        #expect(banner.subtitle == "Simmer.app will quit and come back")
+        // Row 1f. An empty body is a banner macOS never shows, which is why
+        // this row exists at all.
+        #expect(banner.body == "Building 0.3.2 from source — a minute or two. "
+            + "You are on 0.3.1 until it lands.")
         #expect(banner.sound == false, "an update is not worth a sound")
         #expect(banner.actionable == false, "there is no Extend/Release to offer")
+    }
+
+    /// The same defect at the OTHER end of the same click (R2 finding 1). The
+    /// start banner got a body in 0.3.2 and the ending banner did not, so
+    /// every good apply finished with title + subtitle + `body: ""` — and
+    /// when the app was not running to relaunch, the subtitle was empty too:
+    /// a title-only banner, which is no informative text at all.
+    @Test func theEndingBannerCarriesABodyOnBothArms() throws {
+        let good = try #require(UpdateCommand.applied(plan(), reopened: true)
+            .notifications.first)
+        #expect(good.title == "simmer 0.3.2 installed")
+        #expect(good.body == "You are on 0.3.2 now.")
+        #expect(!good.subtitle.isEmpty)
+
+        // Case 11's other half: the app was not running, so there is nothing
+        // to say about a relaunch and the subtitle is legitimately empty. The
+        // body is then the whole message, which is why it may not be.
+        let quiet = try #require(UpdateCommand.applied(plan(), reopened: false)
+            .notifications.first)
+        #expect(quiet.subtitle.isEmpty)
+        #expect(quiet.body == "You are on 0.3.2 now.")
+
+        // Case 11: the relaunch-failed arm still names the failure and is not
+        // the success sentence — the update landed, the menu bar did not.
+        let failed = try #require(UpdateCommand.applied(
+            plan(), reopened: false, relaunchFailure: "LSOpenURLs error -600")
+            .notifications.first)
+        #expect(failed.subtitle == "Simmer.app did not come back")
+        #expect(failed.body.contains("did not come back"))
+        #expect(failed.body != "You are on 0.3.2 now.")
     }
 
     /// Case 13: with notifications denied the menu row is the only channel,
@@ -563,6 +690,8 @@ import Testing
         let outcome = UpdateCommand.applyOutcome(
             .refused(why), report: report(), seamed: false, json: false)
         let banner = try #require(outcome.notifications.first)
+        // Row 1g, which was pinned nowhere at all (R2 finding 4).
+        #expect(banner.title == "simmer did not install the update")
         #expect(banner.body == why, "the sentence names the way that works instead")
         #expect(outcome.exit == 1)
         #expect(UpdateCommand.applyLogSentence(.refused(why)) == "update: refused — \(why)")

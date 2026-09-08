@@ -195,7 +195,16 @@ enum Runtime {
         guard env.notifyTransport != "none" else { return }
         let ledger = Ledger(stateDir: env.stateDir)
         for notification in outcome.notifications {
-            ledger.enqueueNotification(notification, now: env.now())
+            // The other reader of the same question as `UpdateCLI`'s starting
+            // banner (R2 finding 8): every ENDING banner of every command
+            // comes through here, the apply's own among them, and an enqueue
+            // that fails is a banner that will never arrive. `simmer.log` is a
+            // different file from the spool, so it survives the case that
+            // loses them — a symlink or a full disk at `notify-spool.jsonl`.
+            if !ledger.enqueueNotification(notification, now: env.now()) {
+                ledger.log("could not queue a banner (\(notification.title)) "
+                    + "— check notify-spool.jsonl in this directory", now: env.now())
+            }
         }
     }
 }

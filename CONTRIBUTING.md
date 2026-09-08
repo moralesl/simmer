@@ -9,6 +9,9 @@ That is the whole product, so the bar for changes is less "does it work" and mor
 make test          # both Swift suites, hermetic: no sudo, no real power state, fake clock
 make test-release  # the acceptance suite again, against the release binary — see Tests, below
 make test-raycast  # only if you are touching integrations/raycast — see Tests, below
+
+# and while you are fixing one thing, one test rather than all of them:
+LC_ALL=C swift test $(make -s print-test-flags) --filter <TestName>
 ```
 
 If that is not green on a clean checkout, stop and open an issue — nothing else is worth diagnosing first.
@@ -46,6 +49,10 @@ Three lanes, three questions:
 | `Tests/SimmerAcceptanceTests` | `make test` | does the **built binary** honour the contract |
 | `Tests/SimmerAcceptanceTests` | `make test-release` | does the **release** binary honour it too |
 | `integrations/raycast/tests` | `make test-raycast` | does the extension still read the contract the binary emits |
+
+Any of those, filtered to one test or one suite, is `LC_ALL=C swift test $(make -s print-test-flags) --filter <TestName>` — the same build, the flags the `test` target passes, printed by a target that echoes `$(TEST_FLAGS)` and nothing else.
+Never bare `swift test --filter`: a machine with only the Command Line Tools ships `Testing.framework` outside the default search paths, so bare `swift test` compiles nothing (`no such module 'Testing'`) and has been seen exiting **0** while failing to compile — a green gate over nothing.
+Where an Xcode is the selected toolchain the target prints an empty line, the substitution expands to nothing, and the command is plain `swift test --filter <TestName>` — which is correct there: the flags exist only for the CLT.
 
 The acceptance suite honours `SIMMER_BIN`, so it can be pointed at any implementation of `CONTRACTS.md` — that is what makes it the executable form of the contract rather than a description of this code.
 `bridge.test.mts` is the same idea from the other side of the pipe.
