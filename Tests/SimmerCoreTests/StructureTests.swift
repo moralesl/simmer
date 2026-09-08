@@ -1284,6 +1284,68 @@ import Testing
         return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The ref comes from the repository `resolve_ref` asked, not from
+    /// whatever cloned the directory.
+    ///
+    /// `resolve_ref` runs `git ls-remote "$REPO"`, and `fetch` fetched
+    /// `origin` — the same split that made `simmer update --apply` fail while
+    /// switching on 8 Sep 2026, one file over. On a maintainer's Mac `origin`
+    /// is a development checkout, so the installer died with `no such ref:
+    /// v0.3.3` for a release that plainly exists, and the failure banner of
+    /// the app recommended this very script.
+    ///
+    /// Both arms, because they read different refs: a TAG needs
+    /// `--tags --force` from `$REPO`, and a BRANCH needs
+    /// `refs/remotes/origin/$REF` to have come from `$REPO` too — otherwise it
+    /// fast-forwards onto the stale `origin/main` this directory last saw and
+    /// prints "updated the existing checkout" over it.
+    @Test func theRefComesFromTheRepositoryItWasResolvedFromNotFromOrigin() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-bootstrap-lag-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let library = root.appendingPathComponent("lib.sh")
+        try Self.library(at: library)
+
+        // What GitHub holds.
+        let release = root.appendingPathComponent("release")
+        Self.git(["init", "--quiet", "--initial-branch=main", release.path])
+        try "one".write(to: release.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", release.path, "add", "f"])
+        Self.git(["-C", release.path, "commit", "--quiet", "-m", "one"])
+
+        // A development checkout, cloned before the release — the origin that
+        // lags. Cloning HERE, in this order, is what makes the fixture the Mac.
+        let dev = root.appendingPathComponent("dev")
+        Self.git(["clone", "--quiet", release.path, dev.path])
+
+        try "two".write(to: release.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", release.path, "commit", "--quiet", "-am", "two"])
+        Self.git(["-C", release.path, "tag", "v9.9.9"])
+
+        // The install checkout, cloned from the one that lags.
+        let checkout = root.appendingPathComponent("co")
+        Self.git(["clone", "--quiet", dev.path, checkout.path])
+        #expect(Self.git(["-C", checkout.path, "remote", "get-url", "origin"]) == dev.path,
+                "the fixture's origin is not the checkout that lags")
+        #expect(Self.git(["-C", checkout.path, "log", "-1", "--format=%s"]) == "one")
+
+        // The tag: it exists only in `$REPO`, and this is the failure of 8 Sep.
+        let tag = Self.fetch(ref: "v9.9.9", into: checkout, from: release, library: library)
+        #expect(tag.code == 0, "\(tag.out)")
+        #expect(!tag.out.contains("no such ref"), "\(tag.out)")
+        #expect(Self.git(["-C", checkout.path, "describe", "--tags"]) == "v9.9.9",
+                "the tag came from origin, which does not have it")
+
+        // The branch: `origin/main` must have come from `$REPO` as well, or
+        // the fast-forward lands on the stale commit and says it updated.
+        Self.git(["-C", checkout.path, "checkout", "--quiet", "main"])
+        let branch = Self.fetch(ref: "main", into: checkout, from: release, library: library)
+        #expect(branch.code == 0, "\(branch.out)")
+        #expect(Self.git(["-C", checkout.path, "log", "-1", "--format=%s"]) == "two",
+                "said it updated and landed on the stale origin: \(branch.out)")
+    }
+
     @Test func fetchTellsATagFromABranchAndRefusesADivergedCheckout() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("simmer-bootstrap-\(UUID().uuidString)")

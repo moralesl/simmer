@@ -146,8 +146,23 @@ fetch() {
   resolve_ref
   echo "  ref: $REF"
   if [ -d "$DIR/.git" ]; then
-    git -C "$DIR" fetch --quiet origin ||
-      die "could not fetch in $DIR — check the network, or the URL $REPO"
+    # From "$REPO" — the repository `resolve_ref` asked which release exists —
+    # and not from the remote called `origin`, which is whatever cloned this
+    # directory. The two are the same URL for a normal install and are not on a
+    # maintainer's Mac, where origin is a development checkout: the fetch then
+    # succeeded, the tag was not in what it fetched, and the checkout below
+    # died with `no such ref` for a release that plainly exists (8 Sep 2026,
+    # the same hole as `simmer update --apply`).
+    #
+    # The refspec is what makes the branch arm agree with it: fetching a URL
+    # updates no remote-tracking ref, and `refs/remotes/origin/$REF` below is
+    # read for exactly that arm — without it, `SIMMER_REF=main` would
+    # fast-forward onto whatever stale `origin/main` this directory last saw
+    # and print "updated the existing checkout" over it. `--force` and the
+    # leading `+` are for a tag or a branch that legitimately moved.
+    git -C "$DIR" fetch --quiet --tags --force "$REPO" \
+        "+refs/heads/*:refs/remotes/origin/*" ||
+      die "could not fetch $REPO into $DIR — check the network, or the URL $REPO"
     git -C "$DIR" checkout --quiet "$REF" 2>/dev/null ||
       die "no such ref: $REF"
     # A branch needs fast-forwarding; a tag is already exactly what it says.
