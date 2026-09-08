@@ -273,3 +273,363 @@ import Testing
         }
     }
 }
+
+/// The minute or two `make install` takes, in the one channel that is always
+/// there. `MenuInstall` is declared in `MenuModel.swift`, so its rows are
+/// tested here with the rest of the presentation model; `UpdateTests.swift`
+/// keeps the suites about the *release check* that feeds it.
+@Suite struct InstallingRowTests {
+    private func menu(_ install: MenuInstall) -> [MenuItemModel] {
+        MenuModel.build(aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000,
+                                                     sleepDisabled: false),
+                        batteryLine: "battery 80%, on AC", install: install)
+    }
+
+    private func available(installing: String?) -> MenuInstall {
+        MenuInstall(version: "0.3.1", canHandBackUnattended: true,
+                    updateLine: "Update available: 0.3.2",
+                    updateCommand: "brew upgrade simmer",
+                    canApplyUpdate: true,
+                    releaseNotesURL: "https://example.test/v0.3.2",
+                    installing: installing)
+    }
+
+    /// The click closed the menu and nothing on screen changed. The next open
+    /// is the first chance to say what is happening, and it has to take it.
+    @Test func theRowSaysWhatIsBeingInstalled() throws {
+        let row = try #require(menu(available(installing: "0.3.2")).first)
+        #expect(row.title == "Installing 0.3.2…")
+        #expect(row.symbol == "arrow.down.circle.fill")
+    }
+
+    /// Disabled by construction rather than by a flag: a row with no action
+    /// and no children is what the renderer draws as an information row, with
+    /// its ink kept (StatusItemController.render).
+    @Test func theRowCannotBeClickedAtAll() throws {
+        let row = try #require(menu(available(installing: "0.3.2")).first)
+        #expect(row.action == nil)
+        #expect(row.children.isEmpty)
+        #expect(row.isSeparator == false)
+    }
+
+    /// Case 10, answered in the model: a second "Install it now" would spawn a
+    /// second child against the same checkout, two `make install` runs racing
+    /// for one bundle. There is no such item while one is running.
+    @Test func thereIsNothingLeftToClickTwice() {
+        let items = menu(available(installing: "0.3.2"))
+        let all = items + items.flatMap(\.children)
+        #expect(!all.contains { $0.action == .applyUpdate })
+        #expect(!all.contains { $0.title == "Install it now" })
+        // And the group it replaced is gone with it — a row offering release
+        // notes for a version that is already being installed is a stale menu.
+        #expect(!items.contains { $0.title.contains("Update available") })
+    }
+
+    /// Absent and empty are different answers. An install whose target this
+    /// reader cannot name is still an install, and dropping the fact because
+    /// the version string is empty is exactly the fallback-on-unknown trap.
+    @Test func anInstallWithNoNamedTargetStillSaysItIsInstalling() throws {
+        let row = try #require(menu(available(installing: "")).first)
+        #expect(row.title == "Installing simmer…")
+
+        // nil is the other answer, and it restores the whole group.
+        let quiet = try #require(menu(available(installing: nil)).first)
+        #expect(quiet.title == "Update available: 0.3.2")
+        #expect(quiet.children.contains { $0.action == .applyUpdate })
+    }
+
+    /// The record outlives the check that produced it: the app is quit and
+    /// relaunched during an install, and the first thing the new process has
+    /// is a state directory and no fresh report at all.
+    @Test func theRowDoesNotNeedAnUpdateLineToBeThere() throws {
+        let row = try #require(menu(MenuInstall(version: "0.3.1",
+                                                canHandBackUnattended: true,
+                                                installing: "0.3.2")).first)
+        #expect(row.title == "Installing 0.3.2…")
+    }
+
+    /// The state header stays the one bold line, exactly as the update row it
+    /// replaces was made not to compete with it.
+    @Test func theInstallingRowDoesNotCompeteWithTheStateHeader() {
+        let items = menu(available(installing: "0.3.2"))
+        #expect(items.first?.isProminent == false)
+        #expect(items.filter(\.isProminent).count == 1)
+    }
+
+    /// The plan that installs a branch names its target "0.3.2 or newer", and
+    /// the row says what the plan says rather than inventing a tidier version.
+    @Test func theRowRepeatsThePlansOwnTargetVerbatim() throws {
+        let row = try #require(menu(available(installing: "0.3.2 or newer")).first)
+        #expect(row.title == "Installing 0.3.2 or newer…")
+    }
+}
+
+/// The file behind that row: written by the app before the child starts, read
+/// back only by the version that wrote it, and ended three ways.
+@Suite struct InstallingRecordTests {
+    private func ledger() -> Ledger {
+        Ledger(stateDir: FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-installing-\(UUID().uuidString)"))
+    }
+
+    private let now = 1_800_000_000
+
+    @Test func whatWasWrittenIsWhatIsRead() throws {
+        let led = ledger()
+        led.writeInstallingUpdate(target: "0.3.2", now: now, installed: "0.3.1")
+        let record = try #require(led.readInstallingUpdate(writtenBy: "0.3.1", now: now))
+        #expect(record.target == "0.3.2")
+        #expect(record.startedAt == now)
+        #expect(record.installed == "0.3.1")
+    }
+
+    @Test func noRecordAtAllIsNil() {
+        #expect(ledger().readInstallingUpdate(writtenBy: "0.3.1", now: now) == nil)
+    }
+
+    /// Case 12. The app that comes back IS the new version, so the record it
+    /// left behind is invisible to it — the same seam `update-check` uses, and
+    /// the reason nothing has to delete anything on the success path.
+    @Test func aRecordFromTheVersionYouReplacedIsNotAnAnswer() {
+        let led = ledger()
+        led.writeInstallingUpdate(target: "0.3.2", now: now, installed: "0.3.1")
+        #expect(led.readInstallingUpdate(writtenBy: "0.3.2", now: now) == nil)
+        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: now) != nil)
+    }
+
+    /// Case 11's backstop. A row saying "Installing…" forever is a lie, and
+    /// the one hole the other two ends leave — a child killed outright while
+    /// the app was quit — closes on the clock.
+    @Test func anAncientRecordIsNotAnAnswer() {
+        let led = ledger()
+        led.writeInstallingUpdate(target: "0.3.2", now: now, installed: "0.3.1")
+        let edge = now + Ledger.InstallingRecord.maxAge
+        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: edge - 1) != nil)
+        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: edge) == nil)
+    }
+
+    @Test func clearingItEndsTheState() {
+        let led = ledger()
+        led.writeInstallingUpdate(target: "0.3.2", now: now, installed: "0.3.1")
+        led.clearInstallingUpdate()
+        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: now) == nil)
+        // Idempotent: the app's terminationHandler and the child's own ending
+        // both clear it, and either may be second.
+        led.clearInstallingUpdate()
+    }
+
+    /// Case 5, at the file. `target=` empty is "installing, target unnamed" —
+    /// a record, not the absence of one.
+    @Test func anEmptyTargetIsStillARecord() throws {
+        let led = ledger()
+        led.writeInstallingUpdate(target: "", now: now, installed: "0.3.1")
+        let record = try #require(led.readInstallingUpdate(writtenBy: "0.3.1", now: now))
+        #expect(record.target == "")
+    }
+
+    /// Case 3. One logical entry across two lines would leave the second half
+    /// parsed as a key nobody wrote, so the write folds it before it lands.
+    @Test func aTargetWithNewlinesIsFoldedIntoOneLine() throws {
+        let led = ledger()
+        led.writeInstallingUpdate(target: "0.3.2\ninstalled=9.9.9", now: now,
+                                  installed: "0.3.1")
+        let record = try #require(led.readInstallingUpdate(writtenBy: "0.3.1", now: now))
+        #expect(!record.target.contains("\n"))
+        #expect(record.installed == "0.3.1", "the fold must not let a value forge a key")
+    }
+
+    /// Case 2. Nothing simmer writes has CRLF, and a hand-edited file must not
+    /// put a carriage return inside the version the menu renders or inside the
+    /// version it compares against.
+    @Test func aCRLFRecordReadsTheSameAsAUnixOne() throws {
+        let led = ledger()
+        try FileManager.default.createDirectory(at: led.stateDir,
+                                                withIntermediateDirectories: true)
+        try "target=0.3.2\r\nstarted_at=\(now)\r\ninstalled=0.3.1\r\n"
+            .write(to: led.updateInstallingFile, atomically: true, encoding: .utf8)
+        let record = try #require(led.readInstallingUpdate(writtenBy: "0.3.1", now: now))
+        #expect(record.target == "0.3.2")
+        #expect(record.installed == "0.3.1")
+    }
+
+    /// Case 7. Two answers to one question is not an answer, and the safe
+    /// direction is to claim nothing: the row falls back to "Update
+    /// available", which is true whether or not something is installing.
+    @Test func aDoubledKeyMakesTheRecordUnreadable() throws {
+        let led = ledger()
+        try FileManager.default.createDirectory(at: led.stateDir,
+                                                withIntermediateDirectories: true)
+        try "target=0.3.2\ntarget=9.9.9\nstarted_at=\(now)\ninstalled=0.3.1\n"
+            .write(to: led.updateInstallingFile, atomically: true, encoding: .utf8)
+        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: now) == nil)
+    }
+
+    /// A record with no timestamp is unknown, not now: defaulting it would
+    /// make a hand-written file immortal against the age check.
+    @Test func aRecordWithoutAStartIsNotAnAnswer() throws {
+        let led = ledger()
+        try FileManager.default.createDirectory(at: led.stateDir,
+                                                withIntermediateDirectories: true)
+        try "target=0.3.2\ninstalled=0.3.1\n"
+            .write(to: led.updateInstallingFile, atomically: true, encoding: .utf8)
+        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: now) == nil)
+
+        try "target=0.3.2\nstarted_at=\ninstalled=0.3.1\n"
+            .write(to: led.updateInstallingFile, atomically: true, encoding: .utf8)
+        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: now) == nil)
+    }
+
+    /// Case 1. A symlink where the record goes must not be a write into
+    /// whatever it points at. `atomicWrite` replaces the item at the path, so
+    /// the link is what gets replaced and the target is untouched.
+    @Test func aSymlinkedRecordIsReplacedRatherThanWrittenThrough() throws {
+        let led = ledger()
+        try FileManager.default.createDirectory(at: led.stateDir,
+                                                withIntermediateDirectories: true)
+        let elsewhere = led.stateDir.appendingPathComponent("elsewhere")
+        try "untouched".write(to: elsewhere, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: led.updateInstallingFile,
+                                                   withDestinationURL: elsewhere)
+
+        led.writeInstallingUpdate(target: "0.3.2", now: now, installed: "0.3.1")
+
+        #expect(try String(contentsOf: elsewhere, encoding: .utf8) == "untouched")
+        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: now)?.target == "0.3.2")
+        let type = try FileManager.default.attributesOfItem(
+            atPath: led.updateInstallingFile.path)[.type] as? FileAttributeType
+        #expect(type == .typeRegular, "the link is gone, not followed")
+    }
+
+    /// Case 1, the other half: a symlinked state DIRECTORY is the shape a
+    /// throwaway XDG_STATE_HOME on a Mac already has (/var → /private/var), so
+    /// it has to work rather than be refused.
+    @Test func aSymlinkedStateDirectoryWorks() throws {
+        let real = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-real-\(UUID().uuidString)")
+        let link = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-link-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+        let led = Ledger(stateDir: link)
+        led.writeInstallingUpdate(target: "0.3.2", now: now, installed: "0.3.1")
+        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: now)?.target == "0.3.2")
+        #expect(Ledger(stateDir: real)
+            .readInstallingUpdate(writtenBy: "0.3.1", now: now)?.target == "0.3.2")
+    }
+}
+
+/// What the child says about an install, in the two channels a click can
+/// reach: the spool and the log.
+@Suite struct ApplyFeedbackTests {
+    private func plan(target: String = "0.3.2") -> UpdateCommand.ApplyPlan {
+        UpdateCommand.ApplyPlan(
+            steps: [UpdateCommand.ApplyStep(executable: "/usr/bin/make",
+                                            arguments: ["-C", "/tmp/x", "install"],
+                                            phase: .installing)],
+            target: target, reopenBundle: "/Applications/Simmer.app")
+    }
+
+    /// The whole defect of 0.3.1, in one assertion. The banner nobody ever saw
+    /// was the only one this tool posts with an empty body, and on macOS a
+    /// notification with no informative text is accepted and never presented.
+    @Test func theStartingBannerCarriesABody() {
+        let banner = UpdateCommand.startingNotification(plan(), installed: "0.3.1")
+        #expect(banner.title == "Installing simmer 0.3.2…")
+        #expect(!banner.body.isEmpty, "an empty body is a banner macOS never shows")
+        #expect(!banner.subtitle.isEmpty)
+        #expect(banner.sound == false, "an update is not worth a sound")
+        #expect(banner.actionable == false, "there is no Extend/Release to offer")
+    }
+
+    /// Case 13: with notifications denied the menu row is the only channel,
+    /// and it must not be the only one that names the version either.
+    @Test func everyChannelNamesTheVersion() {
+        let banner = UpdateCommand.startingNotification(plan(), installed: "0.3.1")
+        #expect(banner.title.contains("0.3.2"))
+        #expect(UpdateCommand.applyLogSentence(starting: plan(), owner: "menubar")
+            .contains("0.3.2"))
+    }
+
+    @Test func theStartLineNamesWhoAskedForIt() {
+        #expect(UpdateCommand.applyLogSentence(starting: plan(), owner: "menubar")
+            == "update: installing 0.3.2 for menubar")
+    }
+
+    /// Case 9. A refusal from a click reaches a process whose stdout and
+    /// stderr are both /dev/null, so before this it reached nobody at all.
+    @Test func aRefusalIsSaidOutLoudAndWrittenDown() throws {
+        let why = "the checkout at /x has 2 commits that main has not pushed"
+        let outcome = UpdateCommand.applyOutcome(
+            .refused(why), report: report(), seamed: false, json: false)
+        let banner = try #require(outcome.notifications.first)
+        #expect(banner.body == why, "the sentence names the way that works instead")
+        #expect(outcome.exit == 1)
+        #expect(UpdateCommand.applyLogSentence(.refused(why)) == "update: refused — \(why)")
+    }
+
+    /// The same, through `--json`: a machine caller loses no field and a
+    /// person at the same Mac still gets the banner.
+    @Test func aRefusalSaysItInJSONToo() throws {
+        let outcome = UpdateCommand.applyOutcome(
+            .refused("nope"), report: report(), seamed: false, json: true)
+        #expect(try #require(outcome.notifications.first).body == "nope")
+        #expect(outcome.stdout.first?.contains("\"apply_error\"") == true)
+        #expect(outcome.exit == 1)
+    }
+
+    @Test func nothingToDoIsAlsoAnAnswerSomebodyClickedFor() throws {
+        let sentence = "simmer 0.3.2 is already the newest release"
+        let outcome = UpdateCommand.applyOutcome(
+            .nothingToDo(sentence), report: report(), seamed: false, json: false)
+        #expect(try #require(outcome.notifications.first).body == sentence)
+        #expect(outcome.exit == 0)
+    }
+
+    /// Case 11. Which phase stopped is what decides whether anything on this
+    /// Mac changed, so it is the first thing on the line.
+    @Test func aFailureLineNamesThePhaseAndTheCommand() {
+        let step = UpdateCommand.ApplyStep(executable: "/usr/bin/make",
+                                           arguments: ["-C", "/tmp/x", "install"],
+                                           phase: .installing)
+        let line = UpdateCommand.applyLogSentence(
+            .failed(step: step, detail: "error: no such module", plan: plan()))
+        #expect(line.contains("installing"))
+        #expect(line.contains("make -C /tmp/x install"))
+        #expect(line.contains("error: no such module"))
+    }
+
+    @Test func theEndingLineSaysWhetherTheAppCameBack() {
+        #expect(UpdateCommand.applyLogSentence(.installed(plan: plan(), reopened: true))
+            == "update: installed 0.3.2 · Simmer.app relaunched")
+        #expect(UpdateCommand.applyLogSentence(
+            .installed(plan: plan(), reopened: false,
+                       relaunchFailure: "LSOpenURLs error -600"))
+            .contains("did not come back"))
+    }
+
+    /// Case 8. Every number on these lines is a Swift `Int` interpolation and
+    /// not a formatter, so a German locale cannot put a comma in one — and the
+    /// only numbers in the record file go through the same path.
+    @Test func noLineCarriesALocalisedNumber() {
+        let led = Ledger(stateDir: FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-locale-\(UUID().uuidString)"))
+        led.writeInstallingUpdate(target: "0.3.2", now: 1_800_000_000, installed: "0.3.1")
+        let text = (try? String(contentsOf: led.updateInstallingFile, encoding: .utf8)) ?? ""
+        // The whole line, so a separator on either side of the number fails:
+        // `1.800.000.000` and `1,800,000,000` are both wrong, and a German
+        // locale produces the first.
+        #expect(text.split(separator: "\n").contains("started_at=1800000000"))
+    }
+
+    private func report() -> UpdateCommand.Report {
+        UpdateCommand.check(
+            now: 1_800_000_000, installed: "0.3.1",
+            install: Install.detect(executablePath: "/Applications/Simmer.app/Contents/MacOS/simmer",
+                                    home: "/Users/nobody", exists: { _ in false }),
+            appVersion: nil,
+            ledger: Ledger(stateDir: FileManager.default.temporaryDirectory
+                .appendingPathComponent("simmer-report-\(UUID().uuidString)")),
+            source: FakeReleaseSource(value: "v0.3.2"), cached: false)
+    }
+}

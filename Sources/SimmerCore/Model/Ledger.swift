@@ -497,7 +497,8 @@ public struct Ledger: Sendable {
         var checked = 0
         var latest = "", error = "", installed = ""
         var seamed = false
-        for line in text.split(separator: "\n") {
+        // CRLF is one Character in Swift; see `readInstallingUpdate`.
+        for line in text.split(whereSeparator: \.isNewline) {
             let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
             guard parts.count == 2 else { continue }
             let value = String(parts[1])
@@ -554,11 +555,103 @@ public struct Ledger: Sendable {
         try? FileManager.default.removeItem(at: updateAttemptedFile)
     }
 
+    // MARK: the install that is under way
+    //
+    // A fourth fact about the same tag, and therefore a fourth file: what the
+    // last check FOUND, what a person has been TOLD, what this Mac has TRIED
+    // by itself — and now what is happening RIGHT NOW.
+    //
+    // It exists because `make install` takes a minute or two during which the
+    // only visible thing simmer does is disappear from the menu bar. A banner
+    // is the wrong sole channel for that: it can be suppressed by Focus, it
+    // cannot be re-read after it fades, and nothing simmer can read says
+    // whether it was ever shown. The menu is what a person opens when a banner
+    // is missed, so the menu has to know.
+
+    public struct InstallingRecord: Sendable, Equatable {
+        /// What is being installed, as a person reads it (`0.3.2`, or
+        /// `0.3.2 or newer` for the plan that installs a branch). Empty is a
+        /// legitimate value and NOT the same as no record: it means an install
+        /// is under way whose target this reader cannot name, and the row says
+        /// "Installing simmer…" rather than dropping the fact.
+        public var target: String
+        public var startedAt: Int
+        /// The version of the binary that started it. Read back by that
+        /// version only, exactly as `update-check` is — and here it is what
+        /// ends the state: the app that comes back IS the new version, so the
+        /// record it left behind is invisible to it and the row is honest
+        /// again without anything having to delete anything.
+        public var installed: String
+
+        public init(target: String, startedAt: Int, installed: String) {
+            self.target = target
+            self.startedAt = startedAt
+            self.installed = installed
+        }
+
+        /// The backstop, not the mechanism. Three things end this state
+        /// first: the child reports its own refusal or failure and clears it,
+        /// the app sees the child exit and clears it, and coming back as a
+        /// different version makes it unreadable. This closes the one hole
+        /// those leave — a child killed outright while the app was quit — and
+        /// is deliberately longer than a slow cold `make install`.
+        public static let maxAge = 15 * 60
+    }
+
+    public var updateInstallingFile: URL { stateDir.appendingPathComponent("update-installing") }
+
+    public func writeInstallingUpdate(target: String, now: Int, installed: String) {
+        _ = atomicWrite("""
+        target=\(Claim.singleLine(target, limit: 64))
+        started_at=\(now)
+        installed=\(Claim.singleLine(installed, limit: 64))
+
+        """, to: updateInstallingFile)
+    }
+
+    public func clearInstallingUpdate() {
+        try? FileManager.default.removeItem(at: updateInstallingFile)
+    }
+
+    /// The install under way, **only if this binary is the one that started
+    /// it** and it started recently enough to still be plausible.
+    ///
+    /// A key that appears twice makes the record nil rather than picking one:
+    /// two answers to one question is not an answer, and the safe direction
+    /// here is to claim nothing — the row falls back to "Update available",
+    /// which is true whether or not something is installing.
+    public func readInstallingUpdate(writtenBy version: String, now: Int) -> InstallingRecord? {
+        guard let text = try? String(contentsOf: updateInstallingFile, encoding: .utf8)
+        else { return nil }
+        var fields: [String: String] = [:]
+        // `whereSeparator: \.isNewline` and NOT `separator: "\n"`: Swift
+        // grapheme-clusters CRLF into a SINGLE Character, which is not equal
+        // to "\n", so splitting on the literal returns a CRLF file as one
+        // unparseable line — and a reader that answers nil to a whole file is
+        // a menu row that never appears.
+        for line in text.split(whereSeparator: \.isNewline) {
+            let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            let key = String(parts[0])
+            guard fields[key] == nil else { return nil }
+            fields[key] = String(parts[1])
+        }
+        guard let startedText = fields["started_at"], let startedAt = Int(startedText),
+              startedAt > 0, let installed = fields["installed"], installed == version
+        else { return nil }
+        guard now - startedAt < InstallingRecord.maxAge else { return nil }
+        // `target` absent and `target=` empty are the same answer on purpose:
+        // an install whose target this reader cannot name is still an install.
+        return InstallingRecord(target: fields["target"] ?? "",
+                                startedAt: startedAt, installed: installed)
+    }
+
     /// `latest=` out of one of the two tag files. Both hold one fact about one
     /// tag in the same shape, so they are read by the same three lines.
     private func readTag(from file: URL) -> String {
         guard let text = try? String(contentsOf: file, encoding: .utf8) else { return "" }
-        for line in text.split(separator: "\n") {
+        // CRLF is one Character in Swift; see `readInstallingUpdate`.
+        for line in text.split(whereSeparator: \.isNewline) {
             let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
             if parts.count == 2, parts[0] == "latest" { return String(parts[1]) }
         }
@@ -874,6 +967,17 @@ public struct Ledger: Sendable {
     /// leading dot says the same thing to a person reading the directory.
     private func atomicWrite(_ text: String, to url: URL) -> Bool {
         let tmp = stateDir.appendingPathComponent(".\(url.lastPathComponent).tmp.\(getpid())")
+        // A symlink where a record belongs is removed, never followed and
+        // never left in place. `replaceItemAt` against one fails outright, so
+        // the record silently did not get written — the menu simply never said
+        // "Installing…" — and following it instead would put simmer's state
+        // wherever the link points, which is how a write under a bin directory
+        // lands in a repository. `attributesOfItem` does not follow links, so
+        // this asks about the path and not about its target.
+        if let type = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type]
+            as? FileAttributeType, type != .typeRegular {
+            try? FileManager.default.removeItem(at: url)
+        }
         do {
             try text.write(to: tmp, atomically: false, encoding: .utf8)
             // Set on the temp file, so the record is never briefly world-
