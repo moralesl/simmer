@@ -842,6 +842,14 @@ public enum UpdateCommand {
     /// it at most once per new version — which is the difference between
     /// telling someone what they asked, telling them something once, and
     /// interrupting them daily with the same news.
+    ///
+    /// **Every arm carries informative text.** `announcement` only ever
+    /// passes `.available`, so the other three arms looked unreachable and
+    /// two of them were written with `body: ""` — but the app's **Check for
+    /// Updates…** calls this directly (`StatusItemController.swift:193`), and
+    /// "you are up to date" is that item's commonest answer. A banner with no
+    /// informative text is accepted by `add` and never presented, so the
+    /// commonest answer to the menu item Luis used was silence (R2 finding 2).
     public static func notification(_ report: Report) -> NotificationRequest {
         switch report.verdict {
         case .available:
@@ -852,11 +860,15 @@ public enum UpdateCommand {
         case .current:
             return NotificationRequest(
                 title: "simmer \(report.installed) is up to date",
-                subtitle: "", body: "", sound: false)
+                subtitle: "", body: "Nothing to install.", sound: false)
         case .ahead:
+            // The subtitle already carries text, so this arm was presented —
+            // but "ahead" is the one verdict that leaves a person wondering
+            // whether they are meant to do something, and the answer is no.
             return NotificationRequest(
                 title: "simmer \(report.installed) is ahead of the newest release",
-                subtitle: "newest is \(report.latestDisplay)", body: "", sound: false)
+                subtitle: "newest is \(report.latestDisplay)",
+                body: "Nothing to install; a downgrade is not an update.", sound: false)
         case .unknown:
             return NotificationRequest(
                 title: "Could not check for updates",

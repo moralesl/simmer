@@ -519,6 +519,41 @@ import Testing
     }
 }
 
+/// The banner behind the app's **Check for Updates…** — every arm of it.
+///
+/// `announcement` only ever passes `.available`, so the other three arms read
+/// as unreachable and two of them were written with `body: ""`. The menu item
+/// calls `notification(_:)` directly (`StatusItemController.swift:193`) and
+/// "you are up to date" is its commonest answer, so the commonest answer to
+/// the item Luis clicked at 10:4x was a banner macOS never presents
+/// (R2 finding 2).
+@Suite struct CheckBannerTests {
+    private func report(installed: String, latest: String) -> UpdateCommand.Report {
+        UpdateCommand.check(
+            now: 1_800_000_000, installed: installed,
+            install: Install.detect(executablePath: "/Applications/Simmer.app/Contents/MacOS/simmer",
+                                    home: "/Users/nobody", exists: { _ in false }),
+            appVersion: nil,
+            ledger: Ledger(stateDir: FileManager.default.temporaryDirectory
+                .appendingPathComponent("simmer-check-banner-\(UUID().uuidString)")),
+            source: FakeReleaseSource(value: latest), cached: false)
+    }
+
+    @Test func beingUpToDateIsAnAnswerAndNotSilence() {
+        let banner = UpdateCommand.notification(report(installed: "0.3.2", latest: "v0.3.2"))
+        #expect(banner.title == "simmer 0.3.2 is up to date")
+        #expect(banner.body == "Nothing to install.")
+        #expect(banner.sound == false)
+    }
+
+    @Test func beingAheadOfTheNewestReleaseSaysThereIsNothingToDo() {
+        let banner = UpdateCommand.notification(report(installed: "0.4.0", latest: "v0.3.2"))
+        #expect(banner.title.contains("ahead"))
+        #expect(banner.subtitle == "newest is 0.3.2")
+        #expect(banner.body == "Nothing to install; a downgrade is not an update.")
+    }
+}
+
 /// What the child says about an install, in the two channels a click can
 /// reach: the spool and the log.
 @Suite struct ApplyFeedbackTests {
