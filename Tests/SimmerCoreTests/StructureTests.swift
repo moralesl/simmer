@@ -643,7 +643,7 @@ import Testing
     static func expectStaysInsideTheCheckout(_ command: String, run by: String) {
         let outputs = outputArguments(in: command)
         guard !outputs.isEmpty else {
-            Issue.record("\(by) has no -o and overwrites the registered extension: \(command)")
+            Issue.record("\(by) carries no -o; without one, ray build writes into ~/.config/raycast: \(command)")
             return
         }
         for output in outputs {
