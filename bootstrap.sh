@@ -155,13 +155,21 @@ fetch() {
     # the same hole as `simmer update --apply`).
     #
     # The refspec is what makes the branch arm agree with it: fetching a URL
-    # updates no remote-tracking ref, and `refs/remotes/origin/$REF` below is
-    # read for exactly that arm — without it, `SIMMER_REF=main` would
-    # fast-forward onto whatever stale `origin/main` this directory last saw
-    # and print "updated the existing checkout" over it. `--force` and the
-    # leading `+` are for a tag or a branch that legitimately moved.
+    # updates no remote-tracking ref, and the branch arm below has to read one
+    # — without it, `SIMMER_REF=main` would fast-forward onto whatever stale
+    # `origin/main` this directory last saw and print "updated the existing
+    # checkout" over it. `--force` and the leading `+` are for a tag or a
+    # branch that legitimately moved.
+    #
+    # Into `refs/remotes/simmer-release/*`, not `origin/*`: on a fork or mirror
+    # install (`SIMMER_REPO`) the two are different repositories, and writing
+    # one's branches into the other's namespace makes `origin/main` and
+    # `remote get-url origin` name different repositories (R1 finding 3,
+    # measured). `origin` keeps meaning "where this directory came from"; this
+    # namespace means "what $REPO holds", is written and read by this script
+    # alone, and nothing else in simmer looks at it.
     git -C "$DIR" fetch --quiet --tags --force "$REPO" \
-        "+refs/heads/*:refs/remotes/origin/*" ||
+        "+refs/heads/*:refs/remotes/simmer-release/*" ||
       die "could not fetch $REPO into $DIR — check the network, or the URL $REPO"
     # git's own line stands, and simmer's refusal says only what it knows.
     # `2>/dev/null || die "no such ref: $REF"` named a cause this script cannot
@@ -177,7 +185,8 @@ look with 'git -C $DIR status'"
     # The two are told apart explicitly: swallowing every merge failure so
     # tags could pass also swallowed a diverged BRANCH, and then printed
     # "updated" over the stale tree it was about to install.
-    if git -C "$DIR" rev-parse --verify --quiet "refs/remotes/origin/$REF" >/dev/null; then
+    if git -C "$DIR" rev-parse --verify --quiet \
+         "refs/remotes/simmer-release/$REF" >/dev/null; then
       # `2>/dev/null` on the MERGE only, never on the branch test above it:
       # dropping it is what made the divergence visible, and it also put
       # git's nine-line "hint: Diverging branches can't be fast-forwarded"
@@ -185,8 +194,8 @@ look with 'git -C $DIR status'"
       # refusal, on the surface whose rule is that a refusal names its fix in
       # simmer's voice. `die` already names `git -C $DIR status`, and the
       # exit code is what the `||` reads.
-      git -C "$DIR" merge --ff-only --quiet "origin/$REF" 2>/dev/null ||
-        die "the checkout in $DIR has local commits origin/$REF does not — \
+      git -C "$DIR" merge --ff-only --quiet "simmer-release/$REF" 2>/dev/null ||
+        die "the checkout in $DIR has local commits $REPO's $REF does not — \
 look with 'git -C $DIR status', or move the directory aside and retry"
       echo "  updated the existing checkout"
     else

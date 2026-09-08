@@ -1344,6 +1344,24 @@ import Testing
         #expect(branch.code == 0, "\(branch.out)")
         #expect(Self.git(["-C", checkout.path, "log", "-1", "--format=%s"]) == "two",
                 "said it updated and landed on the stale origin: \(branch.out)")
+
+        // And `origin/*` still means "where this directory came from". The
+        // refspec writes what `$REPO` holds into a namespace of this script's
+        // own, because on a fork or mirror install the two are different
+        // repositories and `origin/main` naming one while `remote get-url
+        // origin` names the other is a lie that only shows up there
+        // (R1 finding 3). Red before that: this ref was overwritten with the
+        // release repository's commit.
+        #expect(Self.git(["-C", checkout.path, "rev-parse", "refs/remotes/origin/main"])
+            == Self.git(["-C", dev.path, "rev-parse", "main"]),
+                "the release's branches were written into origin/*")
+        #expect(Self.git(["-C", checkout.path, "rev-parse", "refs/remotes/origin/main"])
+            != Self.git(["-C", release.path, "rev-parse", "main"]),
+                "origin/main and remote get-url origin now name two repositories")
+        #expect(Self.git(["-C", checkout.path, "rev-parse",
+                          "refs/remotes/simmer-release/main"])
+            == Self.git(["-C", release.path, "rev-parse", "main"]),
+                "the namespace the branch arm reads is not what $REPO holds")
     }
 
     /// A checkout that cannot switch says why, and does not invent a reason.
