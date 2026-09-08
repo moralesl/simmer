@@ -945,13 +945,42 @@ import Testing
 /// nothing is installed, and the origin is a `git init` under the test's own
 /// temp directory — no network.
 @Suite struct BootstrapFetchTests {
+    /// Why a script cannot be turned into a sourceable library.
+    ///
+    /// A thrown error and not a failed `#require`, because the STOP is the
+    /// property under test and a recorded expectation cannot state it:
+    /// `#expect(throws:)` catches the throw a `#require` makes, and the issue
+    /// it recorded on the way out still fails the test (measured). The
+    /// alternative, `withKnownIssue`, leaves `make test` reporting a known
+    /// issue forever, which is a red the reader learns to ignore.
+    ///
+    /// It stops just as hard as `#require` did: every caller reaches it
+    /// through `try`, so a `bootstrap.sh` whose tail this helper does not
+    /// recognise fails the suite before anything is written or sourced.
+    enum UnsourceableScript: Error, CustomStringConvertible, Equatable {
+        case noCodeAtAll
+        case tailIsNotTheCall(String)
+        case aSecondCallSurvives
+
+        var description: String {
+            switch self {
+            case .noCodeAtAll:
+                return "bootstrap.sh has no code left in it at all"
+            case .tailIsNotTheCall(let tail):
+                return "bootstrap.sh no longer ends in main \"$@\" — it ends in \(tail)"
+            case .aSecondCallSurvives:
+                return "a second main \"$@\" survived the strip, and sourcing it would install"
+            }
+        }
+    }
+
     /// The script minus its `main "$@"`, which is what makes it sourceable.
     ///
-    /// Every assertion here is `try #require`, not `#expect`, because each one
-    /// IS the safety argument for the next line: `#expect` records a failure
-    /// and lets the removal, the write and the `.` run anyway, which is how a
-    /// tail this helper did not recognise became an installer sourced on the
-    /// tester's Mac (R3 finding 2). Where the assertion is the reason the next
+    /// Every check here throws rather than recording, because each one IS the
+    /// safety argument for the next line: `#expect` records a failure and lets
+    /// the removal, the write and the `.` run anyway, which is how a tail this
+    /// helper did not recognise became an installer sourced on the tester's
+    /// Mac (R3 finding 2). Where the assertion is the reason the next
     /// statement is safe, it has to stop.
     ///
     /// The tail is read through `StructureTests.lastRealLine`, the one reader
@@ -961,16 +990,20 @@ import Testing
         // The same split `lastRealLine` indexes into, or the index it
         // returns names a different line here.
         var lines = StructureTests.scriptLines(of: script)
-        let tail = try #require(StructureTests.lastRealLine(of: script),
-                                "bootstrap.sh has no code left in it at all")
-        try #require(tail.text == "main \"$@\"",
-                     "bootstrap.sh no longer ends in main \"$@\" — it ends in \(tail.text)")
+        guard let tail = StructureTests.lastRealLine(of: script) else {
+            throw UnsourceableScript.noCodeAtAll
+        }
+        guard tail.text == "main \"$@\"" else {
+            throw UnsourceableScript.tailIsNotTheCall(tail.text)
+        }
         lines.remove(at: tail.index)
         // A call in a COMMENT is not a call, which is why the comparison is
         // against the trimmed line rather than a `contains`.
-        try #require(!lines.contains {
+        guard !lines.contains(where: {
             $0.trimmingCharacters(in: .whitespacesAndNewlines) == "main \"$@\""
-        }, "a second call would still install")
+        }) else {
+            throw UnsourceableScript.aSecondCallSurvives
+        }
         return lines.joined(separator: "\n")
     }
 
@@ -999,10 +1032,16 @@ import Testing
             #expect(library.contains("fetch() {"), "\(shape): the library lost its functions")
         }
         // And the stop itself: a tail that is not the call must fail the
-        // helper, not be dropped anyway. `withKnownIssue` is red when the
-        // body records nothing, so this asserts the `#require` fires.
-        withKnownIssue("a tail that is not main \"$@\" must stop the helper") {
+        // helper, not be dropped anyway. Named exactly, so the test states
+        // WHICH refusal it expects rather than "something went wrong".
+        #expect(throws: Self.UnsourceableScript.tailIsNotTheCall("build_and_install")) {
             _ = try Self.libraryText(of: body + "\nbuild_and_install\n")
+        }
+        #expect(throws: Self.UnsourceableScript.aSecondCallSurvives) {
+            _ = try Self.libraryText(of: body + "\nmain \"$@\"\n")
+        }
+        #expect(throws: Self.UnsourceableScript.noCodeAtAll) {
+            _ = try Self.libraryText(of: "# a comment and nothing else\n\n")
         }
     }
 
