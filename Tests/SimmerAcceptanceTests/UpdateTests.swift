@@ -841,3 +841,164 @@ import Testing
                 "--auto ran a plan")
     }
 }
+
+/// What a click leaves behind. The menu spawns `update --apply` with stdout
+/// and stderr both on `/dev/null`, so the spool and `simmer.log` are the whole
+/// of what a person can find afterwards — and on 0.3.1 both were empty.
+@Suite struct ApplyFeedbackAcceptanceTests {
+    private func object(_ text: String) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] ?? [:]
+    }
+
+    /// The same fixture the other apply suites use: a bundle that records the
+    /// checkout it was built in, which is how this Mac is installed.
+    private func checkoutBundle(_ sim: Sim, ahead: String = "0",
+                                branch: String = "main") -> [String: String] {
+        let checkout = sim.root.appendingPathComponent("workspace/simmer")
+        try? FileManager.default.createDirectory(
+            at: checkout.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        try? "all:\n".write(to: checkout.appendingPathComponent("Makefile"),
+                            atomically: true, encoding: .utf8)
+        let contents = sim.root.appendingPathComponent("Applications/Simmer.app/Contents")
+        try? FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        try? """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <plist version="1.0">
+        <dict>
+        \t<key>SimmerInstallSource</key>
+        \t<string>\(checkout.path)</string>
+        </dict>
+        </plist>
+
+        """.write(to: contents.appendingPathComponent("Info.plist"),
+                  atomically: true, encoding: .utf8)
+        return [
+            "SIMMER_BIN": contents.appendingPathComponent("MacOS/simmer").path,
+            "SIMMER_FAKE_CHECKOUT": "\(branch):main:clean:\(ahead)",
+        ]
+    }
+
+    private func applying(_ sim: Sim, ahead: String = "0",
+                          latest: String = "v9.9.9") -> [String: String] {
+        let log = sim.root.appendingPathComponent("apply.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        var env = checkoutBundle(sim, ahead: ahead)
+        env["SIMMER_FAKE_LATEST"] = latest
+        env["SIMMER_FAKE_APPLY"] = log.path
+        env["SIMMER_NOTIFY"] = "app"
+        return env
+    }
+
+    private func log(_ sim: Sim) -> String {
+        (try? String(contentsOf: sim.stateDir.appendingPathComponent("simmer.log"),
+                     encoding: .utf8)) ?? ""
+    }
+
+    /// Asked of the binary rather than written down: a version pinned in a
+    /// fixture is a fixture that goes stale at the next release, and "already
+    /// the newest" is a comparison against exactly this build.
+    private func installedVersion(_ sim: Sim) -> String {
+        sim.run(["--version"]).out.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: " ").last.map(String.init) ?? ""
+    }
+
+    /// The banner that was missing. It goes into the spool the moment the plan
+    /// is decided — before the minute or two of `make install` — because the
+    /// spool is a file and therefore the only channel that survives
+    /// `Simmer.app` being quit and replaced halfway through.
+    @Test func anApplyQueuesAnInstallingBannerBeforeItRunsAnything() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["update", "--apply"], env: applying(sim))
+
+        #expect(result.code == 0, "\(result.combined)")
+        let titles = sim.spoolTitles()
+        let starting = try #require(titles.first)
+        #expect(starting == "Installing simmer 9.9.9 or newer…")
+        // The one banner nobody has ever seen was the only one posted with an
+        // empty body; on macOS that content is accepted and never presented.
+        let entry = try #require(sim.spoolEntries().first)
+        #expect((entry["body"] as? String)?.isEmpty == false)
+        #expect(entry["sound"] as? Bool == false)
+        // One per phase: the start, then the ending. Never two for one event.
+        #expect(titles.count == 2, "\(titles)")
+        #expect(titles.last?.contains("installed") == true)
+    }
+
+    /// The log line the 0.3.1 click did not write. `simmer.log` is where a
+    /// person looks tomorrow, and it had nothing at all for that minute.
+    @Test func anApplyWritesTheAttemptAndItsEndingToTheLog() {
+        let sim = Sim(); defer { sim.tearDown() }
+        _ = sim.run(["update", "--apply", "--owner", "menubar"], env: applying(sim))
+
+        let text = log(sim)
+        #expect(text.contains("update: installing 9.9.9 or newer for menubar"), "\(text)")
+        #expect(text.contains("update: installed 9.9.9 or newer"), "\(text)")
+    }
+
+    /// Case 9: the click on a checkout that is ahead of its upstream. Nothing
+    /// installs, so nothing may say it is installing — and the refusal
+    /// sentence, which names the way that works instead, has to reach the one
+    /// channel a click can hear.
+    @Test func aRefusalSaysSoAndLeavesNoInstallingRecord() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["update", "--apply"], env: applying(sim, ahead: "2"))
+
+        #expect(result.code == 1, "\(result.combined)")
+        let entry = try #require(sim.spoolEntries().first)
+        #expect((entry["body"] as? String)?.contains("has not pushed") == true, "\(entry)")
+        #expect(sim.spoolEntries().count == 1, "one banner, and it is the refusal")
+        #expect(log(sim).contains("update: refused —"), "\(log(sim))")
+        #expect(!log(sim).contains("update: installing"), "nothing started")
+        #expect(!FileManager.default.fileExists(
+            atPath: sim.stateDir.appendingPathComponent("update-installing").path))
+    }
+
+    /// Case 11: `make install` fails half-way. The app is never quit, so the
+    /// row would sit there claiming an install that stopped — the child clears
+    /// the record on its way out, whatever the ending.
+    @Test func aFailedApplyClearsTheRecordItDidNotFinish() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        var env = applying(sim)
+        env["SIMMER_FAKE_APPLY_FAIL"] = "installing"
+        // The record as the app writes it before spawning the child.
+        try FileManager.default.createDirectory(at: sim.stateDir,
+                                                withIntermediateDirectories: true)
+        try "target=9.9.9 or newer\nstarted_at=\(Sim.epoch)\ninstalled=\(installedVersion(sim))\n"
+            .write(to: sim.stateDir.appendingPathComponent("update-installing"),
+                   atomically: true, encoding: .utf8)
+
+        let result = sim.run(["update", "--apply"], env: env)
+
+        #expect(result.code == 1, "\(result.combined)")
+        #expect(!FileManager.default.fileExists(
+            atPath: sim.stateDir.appendingPathComponent("update-installing").path),
+                "a row saying Installing… forever is a lie")
+        #expect(log(sim).contains("failed while installing"), "\(log(sim))")
+    }
+
+    /// A person who has turned banners off has turned this one off too. The
+    /// start banner takes its own enqueue path, so it needs its own gate.
+    @Test func silencedNotificationsSilenceTheStartingBannerToo() {
+        let sim = Sim(); defer { sim.tearDown() }
+        var env = applying(sim)
+        env["SIMMER_NOTIFY"] = "none"
+        _ = sim.run(["update", "--apply"], env: env)
+
+        #expect(sim.spoolEntries().isEmpty)
+        // The log is not a notification: it is still written.
+        #expect(log(sim).contains("update: installing"))
+    }
+
+    /// Being current is the good outcome, and it was the other ending a click
+    /// could not hear: exit 0, nothing installed, and nothing said.
+    @Test func nothingToInstallStillAnswersTheClick() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        let result = sim.run(["update", "--apply"],
+                             env: applying(sim, latest: "v" + installedVersion(sim)))
+
+        #expect(result.code == 0, "\(result.combined)")
+        let entry = try #require(sim.spoolEntries().first)
+        #expect(entry["title"] as? String == "Nothing to install")
+        #expect(log(sim).contains("update: nothing to install —"), "\(log(sim))")
+    }
+}
