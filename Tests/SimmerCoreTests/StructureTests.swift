@@ -952,15 +952,21 @@ import Testing
     /// in the file (both were absent before this paragraph landed), so this
     /// is not a grep for a word that would pass on its own; prose only, or
     /// the next fenced example of a CHANGELOG entry could satisfy it.
+    ///
+    /// Each half is pinned to its own reason clause rather than to the word
+    /// `running`: a line long enough to state a half is long enough to say
+    /// `running` about something else, and then the reason can be cut with
+    /// the gate green.
     @Test func contributingSaysWhenAChangeFirstShowsAndWhy() throws {
         let prose = Self.unfencedLines(of: try Self.read("CONTRIBUTING.md"))
-        for half in ["the version that carries it", "the version being replaced"] {
+        for (half, reason) in [("the version that carries it", "it is your code running"),
+                               ("the version being replaced", "running the plan")] {
             let carriers = prose.filter { $0.contains(half) }
             try #require(!carriers.isEmpty,
                          "CONTRIBUTING no longer says \"\(half)\" — half the first-shows convention is gone")
             for sentence in carriers {
-                #expect(sentence.contains("running") || sentence.contains("runs"),
-                        "\"\(half)\" is stated without the reason beside it — who runs the code: \(sentence)")
+                #expect(sentence.contains(reason),
+                        "\"\(half)\" is stated without its reason \"\(reason)\" beside it: \(sentence)")
             }
         }
     }
