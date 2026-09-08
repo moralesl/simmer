@@ -475,7 +475,10 @@ import Testing
                 "the sentence names something to do: \(result.err)")
         #expect(result.err.contains("SIMMER_FAKE_APPLY_FAIL=\(phase)"),
                 "the failing step's own detail is kept: \(result.err)")
-        // Whatever it points at, it is never the remote that just failed.
+        // And for `switching` — the phase whose failure means the files are
+        // not there — whatever it points at is never the remote that just
+        // failed. `fetching` keeps the retry: nothing was fetched, so running
+        // the installer again is a reasonable thing to do about it.
         if phase == "switching" {
             #expect(lines.first?.contains("curl") != true,
                     "the switching sentence sent them back to the remote that failed: \(result.err)")
