@@ -625,6 +625,28 @@ import Testing
         return found
     }
 
+    /// One `ray build` command line, held to the property.
+    ///
+    /// Every `-o` it carries, not the last one: which occurrence oclif keeps
+    /// is its business, and a gate that picks one is guessing.
+    static func expectStaysInsideTheCheckout(_ command: String, run by: String) {
+        let outputs = outputArguments(in: command)
+        guard !outputs.isEmpty else {
+            Issue.record("\(by) has no -o and overwrites the registered extension: \(command)")
+            return
+        }
+        for output in outputs {
+            #expect(!output.isEmpty,
+                    "\(by) passes -o with no value: \(command)")
+            #expect(!output.hasPrefix("/"),
+                    "\(by) writes to the absolute path \(output): \(command)")
+            #expect(!output.hasPrefix("~"),
+                    "\(by) writes under $HOME, where the registered copy lives: \(command)")
+            #expect(!output.split(separator: "/").contains(".."),
+                    "\(by) climbs out of the checkout via \(output): \(command)")
+        }
+    }
+
     /// `npm run build` cannot write outside the checkout it is run in.
     ///
     /// `ray build`'s output directory *defaults* to
@@ -650,14 +672,28 @@ import Testing
     /// harmless-looking `-o ../dist` would drop build output outside the
     /// `dist/` that `integrations/raycast/.gitignore:2` covers.
     ///
-    /// Reads `package.json` as JSON rather than as text, and never the README:
-    /// `"build"` is not a key only `scripts` may hold, a value may be spelled
-    /// without the space after the colon, and the README's own Development
-    /// block is a fenced example of the very command this looks for. Needs no
-    /// `ray` — CI is Linux and `ray` is macOS-only.
+    /// **Two readers over one file, because one of them is not enough.** The
+    /// parser is the precise one: `"build"` is not a key only `scripts` may
+    /// hold, and a value may be spelled without the space after the colon, so
+    /// a text grep answers about the wrong string. But `JSONSerialization`
+    /// keeps the *first* of two identical keys and npm keeps the *last* — so a
+    /// `package.json` carrying `"build"` twice, safe copy first, hands the
+    /// parser the safe command while `npm run build` runs the unsafe one.
+    /// Verified both ways rather than reasoned: `npm pkg get scripts.build`
+    /// returns the last, this parser returns the first. The sweep over the raw
+    /// text is what closes that — it holds *every* `ray build` in the file to
+    /// the property, whichever key won — and it truncates at the enclosing
+    /// string's closing quote, so a command it cannot read carries no `-o` and
+    /// goes red rather than passing.
+    ///
+    /// Neither reader touches the README, whose own Development block is a
+    /// fenced example of the very command this looks for. Needs no `ray` — CI
+    /// is Linux and `ray` is macOS-only.
     @Test func theRaycastBuildStaysInsideItsOwnCheckout() throws {
         let manifest = "integrations/raycast/package.json"
-        let parsed = try JSONSerialization.jsonObject(with: Data(try Self.read(manifest).utf8))
+        let text = try Self.read(manifest)
+
+        let parsed = try JSONSerialization.jsonObject(with: Data(text.utf8))
         guard let scripts = (parsed as? [String: Any])?["scripts"] as? [String: String] else {
             Issue.record("\(manifest) has no scripts object of strings this can read")
             return
@@ -666,29 +702,18 @@ import Testing
             Issue.record("\(manifest) declares no `build` script for `npm run build` to run")
             return
         }
-
         let building = scripts.filter { $0.value.contains("ray build") }.sorted { $0.key < $1.key }
         guard !building.isEmpty else {
             Issue.record("no script in \(manifest) invokes `ray build`; if it moved, move this gate")
             return
         }
-
         for (name, command) in building {
-            let outputs = Self.outputArguments(in: command)
-            guard !outputs.isEmpty else {
-                Issue.record("`npm run \(name)` has no -o and overwrites the registered extension: \(command)")
-                continue
-            }
-            for output in outputs {
-                #expect(!output.isEmpty,
-                        "`npm run \(name)` passes -o with no value: \(command)")
-                #expect(!output.hasPrefix("/"),
-                        "`npm run \(name)` writes to the absolute path \(output): \(command)")
-                #expect(!output.hasPrefix("~"),
-                        "`npm run \(name)` writes under $HOME, where the registered copy lives: \(command)")
-                #expect(!output.split(separator: "/").contains(".."),
-                        "`npm run \(name)` climbs out of the checkout via \(output): \(command)")
-            }
+            Self.expectStaysInsideTheCheckout(command, run: "`npm run \(name)`")
+        }
+
+        for tail in text.components(separatedBy: "ray build").dropFirst() {
+            let command = "ray build" + (tail.components(separatedBy: "\"").first ?? "")
+            Self.expectStaysInsideTheCheckout(command, run: "a `ray build` in \(manifest)")
         }
     }
 }
