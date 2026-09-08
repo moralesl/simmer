@@ -146,19 +146,38 @@ public enum SudoRule {
             }
             var entry = line.trimmingCharacters(in: .whitespaces)
             guard !entry.isEmpty else { continue }
-            // Read the runas group before dropping it, e.g. "(root) " or
+            // Read the runas spec before dropping it, e.g. "(root) " or
             // "(ALL : ALL) ". A rule that runs as someone else does not grant
             // what simmer asks sudo for: `(operator) NOPASSWD: /usr/bin/pmset
             // …` is a foreign rule whose `sudo -n pmset` is still refused, and
             // counting it as simmer's own made `doctor` vouch for a guard that
-            // cannot move the switch. No group at all defaults to root.
+            // cannot move the switch. No spec at all defaults to root.
+            //
+            // A spec is a USERS list, a colon, then a GROUPS list, and only
+            // the users half says who the command runs as (`sudoers(5)`,
+            // lines 690-705). `omittingEmptySubsequences: false` is what
+            // makes the users half of `(: ALL)` the empty string rather than
+            // the groups list: "If the first Runas_List is empty but the
+            // second is specified, the command may be run as the INVOKING
+            // USER" — so `(: ALL) NOPASSWD: ALL` grants simmer nothing, and
+            // reading it as a blanket root grant is the same wrong-vouch this
+            // whole block exists to prevent, one character away from the case
+            // `theRunasFormsThatStillCount` already pinned.
+            //
+            // `#0` is root: a Runas_Member may be a user-ID prefixed with
+            // `#`, and the man page's own example of matching every name
+            // sharing root's uid is `#0`. Refusing it is a `doctor` that
+            // reports no grant while the guard works — the other direction of
+            // the same defect, and it weighs the same.
             var runsAsRoot = true
             if entry.hasPrefix("("), let close = entry.firstIndex(of: ")") {
-                let group = String(entry[entry.index(after: entry.startIndex)..<close])
-                let users = group.split(separator: ":").first.map(String.init) ?? ""
+                let spec = String(entry[entry.index(after: entry.startIndex)..<close])
+                let users = spec
+                    .split(separator: ":", omittingEmptySubsequences: false)
+                    .first.map(String.init) ?? ""
                 runsAsRoot = users.split(separator: ",")
                     .map { $0.trimmingCharacters(in: .whitespaces) }
-                    .contains { $0 == "root" || $0 == "ALL" }
+                    .contains { $0 == "root" || $0 == "ALL" || $0 == "#0" }
                 entry = String(entry[entry.index(after: close)...])
                     .trimmingCharacters(in: .whitespaces)
             }

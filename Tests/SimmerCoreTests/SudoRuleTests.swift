@@ -285,29 +285,64 @@ import Testing
         #expect(SudoRule.grants(inListing: listing).hasSimmersOwn)
     }
 
-    /// The forms that must keep counting, because refusing one of them is a
-    /// `doctor` that reports no grant while the guard works fine — and the
-    /// human then pastes a second sudoers rule to fix nothing.
+    /// Every runas shape `sudoers(5)` allows, and the sentence of the man page
+    /// that decides it — because refusing one of them is a `doctor` that
+    /// reports no grant while the guard works fine (the human then pastes a
+    /// second sudoers rule to fix nothing), and accepting one is a `doctor`
+    /// that vouches for a guard whose `sudo -n` is refused on every tick.
+    /// A wrong refusal and a wrong pass weigh the same, so both directions
+    /// are rows here.
     ///
-    /// `(ALL : ALL)` is a runas USER list and a runas GROUP list separated by
-    /// a colon; only the users half decides who the command runs as, and
-    /// `ALL` there includes root. No group at all defaults to root, which is
-    /// the shape `sudo -nl` prints for a `Cmnd_Alias` rule.
+    /// The deciding sentences, `sudoers(5)` on this Mac at lines 690–705:
+    ///
+    /// - "The first Runas_List indicates which users the command may be run
+    ///   as via the -u option. The second defines a list of groups…" — only
+    ///   the USERS half decides who the command runs as, and it is the half
+    ///   before the colon.
+    /// - "If the first Runas_List is empty but the second is specified, the
+    ///   command may be run as the **invoking user**" — so `(: ALL)`,
+    ///   `(:ALL)` and `(: wheel)` grant simmer nothing, and `(: ALL)
+    ///   NOPASSWD: ALL` is not a blanket root grant either.
+    /// - "If no Runas_Spec is specified, the command may only be run as the
+    ///   runas_default user (root by default)" — a bare `NOPASSWD:` counts.
+    /// - Runas_Member allows `#user-ID`, and "If you wish to match all user
+    ///   names with the same user-ID … you can use a user-ID instead of a
+    ///   name (#0 in the example given)" — `(#0)` IS root.
+    /// - `%group` in the users half is a group of users who may be the
+    ///   target, which is not root; `(%admin)` therefore does not count, and
+    ///   the direction is a refusal.
     @Test func theRunasFormsThatStillCount() {
         func listing(_ rule: String) -> String {
             "User luis may run the following commands on host:\n    " + rule
         }
         let cmnd = "/usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0"
-        for rule in ["(ALL : ALL) NOPASSWD: " + cmnd,
-                     "(ALL) NOPASSWD: " + cmnd,
-                     "(root) NOPASSWD: " + cmnd,
-                     "(  root  ) NOPASSWD: " + cmnd,
-                     "NOPASSWD: " + cmnd] {
-            #expect(SudoRule.grants(inListing: listing(rule)).hasSimmersOwn,
-                    "refused a rule that does grant it: \(rule)")
+        // spec → does this rule run the command as root?
+        let forms: [(String, Bool)] = [
+            ("(root)", true),
+            ("(  root  )", true),
+            ("(ALL)", true),
+            ("(ALL : ALL)", true),
+            ("(root : wheel)", true),
+            ("(root, operator)", true),
+            ("(#0)", true),
+            ("", true),                 // no Runas_Spec at all → runas_default
+            ("(: ALL)", false),         // empty users half → the invoking user
+            ("(:ALL)", false),
+            ("(: wheel)", false),
+            ("(%admin)", false),        // a group of target USERS, not root
+        ]
+        for (spec, runsAsRoot) in forms {
+            let named = spec.isEmpty ? "<no runas spec>" : spec
+            let prefix = spec.isEmpty ? "" : spec + " "
+            let grants = SudoRule.grants(inListing: listing(prefix + "NOPASSWD: " + cmnd))
+            #expect(grants.hasSimmersOwn == runsAsRoot,
+                    "\(named): hasSimmersOwn was \(grants.hasSimmersOwn), sudoers(5) says \(runsAsRoot)")
+            // The same half of the same spec decides the blanket grant, so a
+            // rule that grants nothing simmer asks for cannot be read as one
+            // that grants everything.
+            let blanket = SudoRule.grants(inListing: listing(prefix + "NOPASSWD: ALL"))
+            #expect(blanket.hasBlanketGrant == runsAsRoot,
+                    "\(named): hasBlanketGrant was \(blanket.hasBlanketGrant), sudoers(5) says \(runsAsRoot)")
         }
-        // And a runas GROUP alone does not make it simmer's: the users half is
-        // empty, so nothing says the command runs as root.
-        #expect(!SudoRule.grants(inListing: listing("(: wheel) NOPASSWD: " + cmnd)).hasSimmersOwn)
     }
 }
