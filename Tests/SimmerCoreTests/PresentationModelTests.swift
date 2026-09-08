@@ -583,11 +583,23 @@ import Testing
     /// The whole defect of 0.3.1, in one assertion. The banner nobody ever saw
     /// was the only one this tool posts with an empty body, and on macOS a
     /// notification with no informative text is accepted and never presented.
+    /// The three strings are asserted by EQUALITY, not for being non-empty
+    /// (R2 finding 4). T1's report claimed "the exact strings in that table
+    /// are the ones the suite pins" and they were not: rows 1e and 1f were
+    /// pinned as non-empty only. Luis chose each of them from a three-column
+    /// table while the screenshots that would have shown them were deferred,
+    /// so this suite is standing in for the rendering — which it cannot do
+    /// while it only knows that something is there.
     @Test func theStartingBannerCarriesABody() {
         let banner = UpdateCommand.startingNotification(plan(), installed: "0.3.1")
+        // Row 1d.
         #expect(banner.title == "Installing simmer 0.3.2…")
-        #expect(!banner.body.isEmpty, "an empty body is a banner macOS never shows")
-        #expect(!banner.subtitle.isEmpty)
+        // Row 1e.
+        #expect(banner.subtitle == "Simmer.app will quit and come back")
+        // Row 1f. An empty body is a banner macOS never shows, which is why
+        // this row exists at all.
+        #expect(banner.body == "Building 0.3.2 from source — a minute or two. "
+            + "You are on 0.3.1 until it lands.")
         #expect(banner.sound == false, "an update is not worth a sound")
         #expect(banner.actionable == false, "there is no Extend/Release to offer")
     }
@@ -643,6 +655,8 @@ import Testing
         let outcome = UpdateCommand.applyOutcome(
             .refused(why), report: report(), seamed: false, json: false)
         let banner = try #require(outcome.notifications.first)
+        // Row 1g, which was pinned nowhere at all (R2 finding 4).
+        #expect(banner.title == "simmer did not install the update")
         #expect(banner.body == why, "the sentence names the way that works instead")
         #expect(outcome.exit == 1)
         #expect(UpdateCommand.applyLogSentence(.refused(why)) == "update: refused — \(why)")
