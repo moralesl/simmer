@@ -1435,6 +1435,81 @@ import Testing
                 "the namespace the branch arm reads is not what $REPO holds")
     }
 
+    /// A branch deleted at `$REPO` leaves no ref behind in the namespace the
+    /// branch arm reads.
+    ///
+    /// Nothing pruned `refs/remotes/simmer-release/*`, so a branch deleted
+    /// upstream stayed there at the commit it was last seen at — and it is the
+    /// ref, not the branch, that the arm at `bootstrap.sh:188` tests:
+    /// `SIMMER_REF=<that branch>` took the BRANCH arm, fast-forwarded onto the
+    /// stale commit and printed "updated the existing checkout" for a branch
+    /// `$REPO` no longer has (R1 finding 4). Red before `--prune`: the ref was
+    /// still there, and `for-each-ref` listed two.
+    ///
+    /// The two arms after it are why the word is safe in this command, each
+    /// otherwise taken on trust. The refspec is explicit, so `--prune` prunes
+    /// only what that refspec covers and leaves `origin/*` — which keeps
+    /// meaning "where this directory came from" — untouched; and `--prune`
+    /// without `--prune-tags` deletes no tag, so a tag dropped upstream and a
+    /// tag that exists only in this checkout both survive. Both measured here
+    /// rather than assumed, because a prune that reached either would be a
+    /// deletion in a reader's own repository.
+    @Test func aBranchDeletedUpstreamLeavesNoStaleRefBehind() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-bootstrap-prune-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let library = root.appendingPathComponent("lib.sh")
+        try Self.library(at: library)
+
+        // What GitHub holds: main and a tag, plus a branch that is about to be
+        // deleted there — a release branch merged and tidied up is the shape.
+        let release = root.appendingPathComponent("release")
+        Self.git(["init", "--quiet", "--initial-branch=main", release.path])
+        try "one".write(to: release.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", release.path, "add", "f"])
+        Self.git(["-C", release.path, "commit", "--quiet", "-m", "one"])
+        Self.git(["-C", release.path, "tag", "v9.9.9"])
+        Self.git(["-C", release.path, "checkout", "--quiet", "-b", "topic"])
+        try "topic".write(to: release.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", release.path, "commit", "--quiet", "-am", "topic"])
+        Self.git(["-C", release.path, "checkout", "--quiet", "main"])
+
+        let checkout = root.appendingPathComponent("co")
+        Self.git(["clone", "--quiet", release.path, checkout.path])
+        // A tag of this checkout's own, which exists in no repository the
+        // fetch talks to.
+        Self.git(["-C", checkout.path, "tag", "local-only"])
+
+        // The reader installs the branch once, which is what puts the ref in
+        // the namespace at all.
+        let first = Self.fetch(ref: "topic", into: checkout, from: release, library: library)
+        #expect(first.code == 0, "\(first.out)")
+        #expect(!Self.git(["-C", checkout.path, "rev-parse",
+                           "refs/remotes/simmer-release/topic"]).isEmpty,
+                "the fixture never saw the branch it is supposed to lose")
+
+        // Deleted at `$REPO`, and the reader comes back for something else.
+        Self.git(["-C", release.path, "branch", "-D", "topic"])
+        Self.git(["-C", release.path, "tag", "-d", "v9.9.9"])
+        Self.git(["-C", checkout.path, "checkout", "--quiet", "main"])
+        let second = Self.fetch(ref: "main", into: checkout, from: release, library: library)
+        #expect(second.code == 0, "\(second.out)")
+
+        // Read as the whole namespace rather than as one ref: a second stale
+        // branch would pass a `rev-parse` of the first one's absence.
+        #expect(Self.git(["-C", checkout.path, "for-each-ref", "--format=%(refname)",
+                          "refs/remotes/simmer-release"])
+            == "refs/remotes/simmer-release/main",
+                "a branch deleted at $REPO left a ref the branch arm fast-forwards onto")
+
+        #expect(!Self.git(["-C", checkout.path, "rev-parse",
+                           "refs/remotes/origin/topic"]).isEmpty,
+                "the prune reached origin/*, which is not this script's namespace to delete")
+        #expect(Self.git(["-C", checkout.path, "tag"]) == "local-only\nv9.9.9",
+                "the prune deleted a tag in the reader's own checkout")
+    }
+
     /// A checkout that cannot switch says why, and does not invent a reason.
     ///
     /// `git checkout --quiet "$REF" 2>/dev/null || die "no such ref: $REF"`

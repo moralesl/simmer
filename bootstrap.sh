@@ -168,7 +168,17 @@ fetch() {
     # measured). `origin` keeps meaning "where this directory came from"; this
     # namespace means "what $REPO holds", is written and read by this script
     # alone, and nothing else in simmer looks at it.
-    git -C "$DIR" fetch --quiet --tags --force "$REPO" \
+    #
+    # `--prune` because that namespace is only ever as true as its last fetch:
+    # nothing else deleted from it, so a branch deleted at $REPO stayed here at
+    # the commit it was last seen at, and it is the ref, not the branch, that
+    # the branch/tag test below reads — the branch arm then fast-forwarded onto
+    # a stale ref and printed "updated the existing checkout" for a branch
+    # $REPO does not have (R1 finding 4). It prunes only what the refspec
+    # covers, so `origin/*` is untouched, and without `--prune-tags` it deletes
+    # no tag of the reader's own (both measured, and both are the arms of
+    # `aBranchDeletedUpstreamLeavesNoStaleRefBehind`).
+    git -C "$DIR" fetch --quiet --prune --tags --force "$REPO" \
         "+refs/heads/*:refs/remotes/simmer-release/*" ||
       die "could not fetch $REPO into $DIR — check the network, or the URL $REPO"
     # git's own line stands, and simmer's refusal says only what it knows.
