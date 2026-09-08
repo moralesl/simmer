@@ -1394,15 +1394,38 @@ import Testing
     }
 
     /// The runtime half, at the type: both readers of the property must keep
-    /// reading it. Source, because neither can be driven from here — one needs
-    /// a bundle with a notification grant, and the other is asserted on values
-    /// in the ledger's own suite.
-    @Test func theTwoLastGatesStillConsultTheProperty() throws {
-        #expect(try StructureTests.read("Sources/SimmerNotifyKit/BundleNotifier.swift")
-            .contains("guard request.hasInformativeText else { return }"),
+    /// reading it, and **both must say so where the result is read**. A gate
+    /// that refuses in silence is the defect it was built to catch wearing a
+    /// different hat — nothing appears either way, and `add` would not have
+    /// complained about the original.
+    ///
+    /// **What this asserts is the wiring, not the drop.** `Package.swift`
+    /// gives `SimmerCoreTests` only `SimmerCore` and `SimmerAcceptanceTests`
+    /// only the `simmer` executable — which by
+    /// `theCLICannotReachTheNotificationCentre` may not link
+    /// `SimmerNotifyKit` at all — so no test target in this package can call
+    /// `BundleNotifier.post` or `Notifier.post`, with or without a seam on
+    /// `available`.
+    ///
+    /// The DECISION is therefore kept one module lower, where it is driven on
+    /// values: `NotificationRequest.hasInformativeText`
+    /// (`whitespaceIsNotInformativeText`, `everyVerdictsBannerHasInformativeText`).
+    /// These two belts only consult it, and consulting is what source text
+    /// can honestly prove.
+    @Test func theTwoLastGatesRefuseOutLoud() throws {
+        let notifier = try StructureTests.read("Sources/SimmerNotifyKit/BundleNotifier.swift")
+        #expect(notifier.contains("guard request.hasInformativeText else { return .noInformativeText }"),
                 "BundleNotifier.post is the last thing between a banner and UN")
-        #expect(try StructureTests.read("Sources/SimmerCore/Model/Ledger.swift")
-            .contains("guard request.hasInformativeText else {"),
+        // …and its caller turns that answer into a line. `PostResult` exists
+        // so the refusal is distinguishable from being unbundled, which is a
+        // steady state and not an event.
+        let app = try StructureTests.read("Sources/SimmerApp/Notifier.swift")
+        #expect(app.contains("== .noInformativeText"))
+        #expect(app.contains("did not post a banner with no informative text"))
+
+        let ledger = try StructureTests.read("Sources/SimmerCore/Model/Ledger.swift")
+        #expect(ledger.contains("guard request.hasInformativeText else {"),
                 "the spool is the channel every CLI banner arrives on")
+        #expect(ledger.contains("dropped a banner with no informative text"))
     }
 }
