@@ -1377,6 +1377,52 @@ import Testing
         #expect(Self.functionsCalling("removeAllItems", in: source(
             "    func menuNeedsUpdate() {\n        item.title = \"x\"\n    }\n")) == [])
     }
+
+    /// Every reader of the update record defends itself against a seamed one.
+    ///
+    /// A seamed check writes a record like any other, and that record then
+    /// answers "checked" for the next 24 hours. `UpdateCommand`'s own reader
+    /// has defended itself against that since the seam existed; `AppState`'s
+    /// daily-check guard did not, so one `SIMMER_FAKE_LATEST=… simmer update`
+    /// bought a day's silence from the menu bar. A trap fixed in one reader of
+    /// a question is a finding in every other reader of the same question.
+    ///
+    /// The gate reads the text between the lookup and the brace that opens
+    /// whatever the lookup guards, which is where a defence has to be — and it
+    /// asserts WHICH files read the record, so a third reader added without a
+    /// defence fails here rather than passing for being unlisted.
+    @Test func everyReaderOfTheUpdateRecordDefendsAgainstASeamedOne() throws {
+        var readers: [(file: String, guarded: String)] = []
+        // The enumerator that `BannerTextTests` already sweeps `Sources` with,
+        // rather than a second one: one reader of "every Swift file we ship".
+        for url in BannerTextTests.swiftFiles(under: "Sources") {
+            let code = Self.codeOnly(of: try String(contentsOf: url, encoding: .utf8))
+            var from = code.startIndex
+            while let call = code.range(of: "readUpdateRecord(", range: from..<code.endIndex) {
+                // The declaration in `Ledger` is not a reader: it is the
+                // question, and it is every caller that has to defend itself.
+                guard !code[..<call.lowerBound].hasSuffix("func ") else {
+                    from = call.upperBound
+                    continue
+                }
+                let brace = code.range(of: "{", range: call.upperBound..<code.endIndex)
+                readers.append((url.lastPathComponent,
+                                String(code[call.upperBound..<(brace?.lowerBound ?? code.endIndex)])))
+                from = call.upperBound
+            }
+        }
+        #expect(readers.map(\.file) == ["AppState.swift", "UpdateCommand.swift"], """
+        The readers of the update record are the list this gate defends. One appeared or \
+        moved: add it here, with the `seamed` defence the others have.
+        """)
+        for reader in readers {
+            #expect(reader.guarded.contains("seamed"), """
+            \(reader.file) reads the update record and never mentions `seamed` before acting \
+            on it. A seamed check writes a record that answers "checked" for 24 hours, so the \
+            reader that believes it suppresses the next real check for a day.
+            """)
+        }
+    }
 }
 
 /// What `bootstrap.sh`'s `fetch()` does to a checkout that is already there.

@@ -142,8 +142,16 @@ final class AppState {
             // version left behind is a day's silence on a Mac that has just
             // been updated, and the first thing the new binary should do is
             // ask the question again under its own version.
+            //
+            // And not a seamed one: a forced check under `SIMMER_FAKE_LATEST`
+            // writes a record like any other, and believing it would let one
+            // test click suppress the next real check for 24 hours. The
+            // defence `UpdateCommand` has had since the seam existed, on the
+            // one reader that lacked it — a seamed process never reaches this
+            // line at all (`seamActive` returned above), so the record's own
+            // flag is the whole question here.
             if let record = ledger.readUpdateRecord(writtenBy: AppState.version),
-               record.isFresh(now: environment.now()) {
+               record.isFresh(now: environment.now()), !record.seamed {
                 return "today's check has already been made"
             }
         }
