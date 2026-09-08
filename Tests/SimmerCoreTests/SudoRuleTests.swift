@@ -147,6 +147,39 @@ import Testing
         #expect(!grants.beyondWhatSimmerNeeds.isEmpty)
     }
 
+    /// Why `hasBlanketGrant` tests `ALL` and nothing else.
+    ///
+    /// It used to accept `") ALL"` as well, for a runas group that had come
+    /// through attached to the command. Nothing can produce that: `grants`
+    /// strips the group at the head of the entry before it splits the command
+    /// list, so no element of `passwordless` carries one. The second arm was a
+    /// branch no fixture could reach and no test could fail — it advertised a
+    /// robustness this parser does not have, which is worse than the gap,
+    /// because the next reader trusts it.
+    ///
+    /// This pins the property the removal rests on, rather than the removal:
+    /// whatever the runas group is, it is gone by the time a grant is listed.
+    @Test func aRunasGroupNeverReachesTheGrantList() {
+        for group in ["(ALL)", "(ALL : ALL)", "(root)", "(root, operator)"] {
+            let listing = """
+            User luis may run the following commands on host:
+                \(group) NOPASSWD: ALL
+            """
+            let grants = SudoRule.grants(inListing: listing)
+            #expect(grants.passwordless == ["ALL"],
+                    "\(group) leaked into the grant list: \(grants.passwordless)")
+            #expect(grants.hasBlanketGrant, "\(group)")
+        }
+        // And the one shape the removed arm claimed to catch cannot arrive:
+        // a command list is never prefixed by a group at this point.
+        let listing = """
+        User luis may run the following commands on host:
+            (ALL : ALL) NOPASSWD: ALL
+        """
+        #expect(!SudoRule.grants(inListing: listing).passwordless
+            .contains { $0.contains(")") })
+    }
+
     /// Simmer's own two, plus somebody else's — which is not simmer's to fix,
     /// but is exactly what "nothing has more grants than it needs" means.
     @Test func anotherToolsPasswordlessRuleShowsUpBesideSimmersOwn() {
@@ -227,5 +260,54 @@ import Testing
     @Test func theRuleNamesTheUserItIsFor() {
         #expect(SudoRule.text(user: "alice").contains("alice ALL=(root) NOPASSWD:"))
         #expect(!SudoRule.text(user: "alice").contains("bob"))
+    }
+
+    /// The runas group is part of what a rule grants. A foreign
+    /// `(operator) NOPASSWD: pmset …` runs pmset as operator — the guard's
+    /// `sudo -n` as root is still refused on every tick — and counting it as
+    /// simmer's own made `doctor` vouch for a capability that is not there.
+    @Test func aForeignRunasIsNotSimmersGrant() {
+        let listing = """
+        User luis may run the following commands on host:
+            (operator) NOPASSWD: /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0
+        """
+        let grants = SudoRule.grants(inListing: listing)
+        #expect(!grants.hasSimmersOwn)
+        #expect(grants.passwordless.isEmpty)
+    }
+
+    /// A runas LIST that includes root still grants what simmer asks for.
+    @Test func aRunasListContainingRootStillCounts() {
+        let listing = """
+        User luis may run the following commands on host:
+            (root, operator) NOPASSWD: /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0
+        """
+        #expect(SudoRule.grants(inListing: listing).hasSimmersOwn)
+    }
+
+    /// The forms that must keep counting, because refusing one of them is a
+    /// `doctor` that reports no grant while the guard works fine — and the
+    /// human then pastes a second sudoers rule to fix nothing.
+    ///
+    /// `(ALL : ALL)` is a runas USER list and a runas GROUP list separated by
+    /// a colon; only the users half decides who the command runs as, and
+    /// `ALL` there includes root. No group at all defaults to root, which is
+    /// the shape `sudo -nl` prints for a `Cmnd_Alias` rule.
+    @Test func theRunasFormsThatStillCount() {
+        func listing(_ rule: String) -> String {
+            "User luis may run the following commands on host:\n    " + rule
+        }
+        let cmnd = "/usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0"
+        for rule in ["(ALL : ALL) NOPASSWD: " + cmnd,
+                     "(ALL) NOPASSWD: " + cmnd,
+                     "(root) NOPASSWD: " + cmnd,
+                     "(  root  ) NOPASSWD: " + cmnd,
+                     "NOPASSWD: " + cmnd] {
+            #expect(SudoRule.grants(inListing: listing(rule)).hasSimmersOwn,
+                    "refused a rule that does grant it: \(rule)")
+        }
+        // And a runas GROUP alone does not make it simmer's: the users half is
+        // empty, so nothing says the command runs as root.
+        #expect(!SudoRule.grants(inListing: listing("(: wheel) NOPASSWD: " + cmnd)).hasSimmersOwn)
     }
 }

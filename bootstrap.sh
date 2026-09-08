@@ -151,8 +151,17 @@ fetch() {
     git -C "$DIR" checkout --quiet "$REF" 2>/dev/null ||
       die "no such ref: $REF"
     # A branch needs fast-forwarding; a tag is already exactly what it says.
-    git -C "$DIR" merge --ff-only --quiet "origin/$REF" 2>/dev/null || true
-    echo "  updated the existing checkout"
+    # The two are told apart explicitly: swallowing every merge failure so
+    # tags could pass also swallowed a diverged BRANCH, and then printed
+    # "updated" over the stale tree it was about to install.
+    if git -C "$DIR" rev-parse --verify --quiet "refs/remotes/origin/$REF" >/dev/null; then
+      git -C "$DIR" merge --ff-only --quiet "origin/$REF" ||
+        die "the checkout in $DIR has local commits origin/$REF does not — \
+look with 'git -C $DIR status', or move the directory aside and retry"
+      echo "  updated the existing checkout"
+    else
+      echo "  at $REF"
+    fi
   else
     [ -e "$DIR" ] && die "$DIR exists but is not a git checkout. Move it aside and retry."
     mkdir -p "$(dirname "$DIR")"

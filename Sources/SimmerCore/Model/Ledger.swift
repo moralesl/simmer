@@ -170,8 +170,15 @@ public struct Ledger: Sendable {
     /// a newer version had added a field to, which is the opposite failure.
     public func removeClaim(id: String, ifStillMatching expected: Claim? = nil) -> Bool {
         let url = claimsDir.appendingPathComponent(id)
-        if let expected,
-           let text = try? String(contentsOf: url, encoding: .utf8) {
+        if let expected {
+            // Gone since the snapshot is NOT "still matching" — same answer
+            // `write(_:ifStillMatching:)` gives from the other side. Two ticks
+            // can coincide, and the one that lost the race used to fall
+            // through to the unconditional path below, answer true, and have
+            // `retire` record the same ending twice on the event stream.
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                return false
+            }
             let current = Claim.parse(text, fallbackId: id)
             guard current.until == expected.until, current.started == expected.started else {
                 return false
@@ -197,8 +204,13 @@ public struct Ledger: Sendable {
         // Retire what was actually read: if it moved under us, the decision
         // to end it was taken about a claim that no longer exists.
         guard removeClaim(id: claim.id, ifStillMatching: claim) else {
-            log("ERROR: could not retire \(claim.owner) · \(why) — it changed under us, or \(claimsDir.appendingPathComponent(claim.id).path) is still there",
-                now: now)
+            // Quiet when the file is simply gone: a coinciding tick already
+            // retired it and recorded the ending — a second ERROR line about
+            // an outcome that is correct would teach the log's reader to skim.
+            if FileManager.default.fileExists(atPath: claimsDir.appendingPathComponent(claim.id).path) {
+                log("ERROR: could not retire \(claim.owner) · \(why) — it changed under us, or \(claimsDir.appendingPathComponent(claim.id).path) is still there",
+                    now: now)
+            }
             return false
         }
         let reasonPart = claim.reason.isEmpty ? "" : " (\(claim.reason))"
@@ -267,6 +279,26 @@ public struct Ledger: Sendable {
             default: break
             }
         }
+        // The same discipline `Claim.init` applies to a claim record, at the
+        // cap's own parser chokepoint: out of range is "this field is not a
+        // value", never clamped. Swift arithmetic traps rather than wrapping,
+        // and both `until` and `expires` feed date math on every surface that
+        // asks about the cap — `Claim` got this check and the cap never did.
+        //
+        // The accepted range is `Claim`'s own, so this cannot refuse a record
+        // `Claim.init` would have taken. The direction differs, and has to:
+        // an unreadable CLAIM becomes `until = 1`, already over, because
+        // damage must not hold the machine awake. An unreadable CEILING
+        // becomes no ceiling, because damage must not refuse a caller awake
+        // time either — a lockout invented out of `Int.max` is the failure
+        // this tool exists to prevent, arriving from the other side.
+        func epoch(_ value: Int) -> Int { (0...Claim.maxEpoch).contains(value) ? value : 0 }
+        until = epoch(until)
+        setAt = epoch(setAt)
+        expires = epoch(expires)
+        // `expires` is contracted strictly after `until`; a value that is not
+        // is damage, and re-deriving it keeps the ceiling real for its night.
+        if expires <= until { expires = 0 }
         guard until != 0 else { return nil }
         // A file written before caps expired carries no `expires`. Deriving it
         // here is what retires those caps on first read rather than stranding
@@ -392,14 +424,38 @@ public struct Ledger: Sendable {
     /// a stale banner is worse than none.
     public func drainNotifications(now: Int, maxAge: Int = 120) -> [NotificationRequest] {
         let draining = spoolFile.appendingPathExtension("draining")
-        guard (try? FileManager.default.moveItem(at: spoolFile, to: draining)) != nil
-        else { return [] }
-        // Armed the moment the sentinel exists, not after the read. Registered
-        // below the read, its own failure path stranded the file it was there
-        // to remove — and a spool that can never be moved into place again is
-        // every banner, silently, forever.
-        defer { try? FileManager.default.removeItem(at: draining) }
-        guard let text = try? String(contentsOf: draining, encoding: .utf8) else { return [] }
+        // A sentinel already present is a drain that never finished: the
+        // `defer` below only runs in-process, so a crash between the rename
+        // and the sweep strands the file — and `moveItem` refuses an existing
+        // destination, so one stranded sentinel was every future banner,
+        // silently, forever. Its lines are requests that were never posted;
+        // they are drained too, and `maxAge` — not the crash — decides which
+        // of them still deserve a banner.
+        var text = (try? String(contentsOf: draining, encoding: .utf8)) ?? ""
+        // Unconditional, and keyed on the sentinel EXISTING rather than on
+        // what it holds. Removing it only when it read as non-empty leaves
+        // exactly the same immortality behind for the shapes that read as
+        // empty: a crash between the rename of an empty spool and the sweep,
+        // a directory or a dangling symlink wearing the name (`fileExists`
+        // answers false for the latter and `moveItem` still refuses it a
+        // destination), a permission that denies the read but not the unlink.
+        // `try?` swallows the not-there case, which is the common one.
+        try? FileManager.default.removeItem(at: draining)
+        // Terminate the recovered half before the fresh one is appended. Every
+        // record `enqueueNotification` writes ends in a newline, but the crash
+        // that stranded this file can have landed mid-`write` — and a partial
+        // record glued to the first whole one is a single line that parses as
+        // neither, so BOTH are dropped. The spool is line-delimited; the
+        // boundary between two reads of it has to be one too.
+        if !text.isEmpty, !text.hasSuffix("\n") { text += "\n" }
+        if (try? FileManager.default.moveItem(at: spoolFile, to: draining)) != nil {
+            // Armed the moment the sentinel exists, not after the read.
+            // Registered below the read, its own failure path stranded the
+            // file it was there to remove.
+            defer { try? FileManager.default.removeItem(at: draining) }
+            text += (try? String(contentsOf: draining, encoding: .utf8)) ?? ""
+        }
+        guard !text.isEmpty else { return [] }
         var requests: [NotificationRequest] = []
         for line in text.split(separator: "\n") {
             guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8))
