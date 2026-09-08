@@ -76,14 +76,16 @@ import Testing
 
     /// The installer must survive being cut off mid-download: everything is
     /// inside functions, invoked by one call on the last line.
+    ///
+    /// Read through `StructureTests.lastRealLine`, which is also how
+    /// `BootstrapFetchTests` derives the library it sources. The two gates had
+    /// their own readers of this one tail and disagreed about whether a
+    /// trailing comment is legal — it is, and that disagreement sourced an
+    /// installer (R3 finding 2).
     @Test func theInstallerIsTruncationSafe() throws {
         let bootstrap = try Self.read("bootstrap.sh")
         #expect(bootstrap.contains("main() {"))
-        let lastRealLine = bootstrap
-            .split(separator: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .last { !$0.isEmpty && !$0.hasPrefix("#") }
-        #expect(lastRealLine == "main \"$@\"")
+        #expect(StructureTests.lastRealLine(of: bootstrap)?.text == "main \"$@\"")
     }
 }
 

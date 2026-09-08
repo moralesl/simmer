@@ -167,6 +167,45 @@ import Testing
     }
 
     /// Every double-quoted string in a fragment of Swift source.
+    /// The tail of `bootstrap.sh` as *both* gates over it need to read it:
+    /// the last line that is neither blank nor a comment, and where it is.
+    ///
+    /// Two gates read that tail and they disagreed. `theInstallerIsTruncationSafe`
+    /// (`SudoRuleTests.swift`) reads the last non-empty, non-`#` line, so a
+    /// trailing comment is legal there — which it is: everything is inside
+    /// functions and a comment after the call cannot run. `BootstrapFetchTests`
+    /// read the last non-empty line and then dropped it, so that same trailing
+    /// comment left `main "$@"` in the "library", and sourcing it ran
+    /// `build_and_install`, `install_sudo_rule` and `launch_app` on the
+    /// tester's Mac (R3 finding 2). One reader answers both now, so a legal
+    /// tail cannot be legal to one gate and an installer to the other.
+    ///
+    /// `.whitespacesAndNewlines`, not `.whitespaces`: under CRLF every line
+    /// carries a trailing `\r`, and a reader that does not trim it answers
+    /// about `main "$@"\r`.
+    static func lastRealLine(of script: String) -> (index: Int, text: String)? {
+        let lines = scriptLines(of: script)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard let index = lines.lastIndex(where: { !$0.isEmpty && !$0.hasPrefix("#") })
+        else { return nil }
+        return (index, lines[index])
+    }
+
+    /// A shell script split into its lines — CRLF included.
+    ///
+    /// `split(separator: "\n")` cannot do this: in Swift `"\r\n"` is ONE
+    /// Character, a grapheme cluster, so it matches neither `"\n"` nor
+    /// `"\r"` and a CRLF script splits into a single line. Every reader of
+    /// its tail then answers about the whole file, which is how the first
+    /// version of `lastRealLine` read `bootstrap.sh` as one line whose text
+    /// was the entire script (caught by the CRLF row of
+    /// `theLibraryDropsTheCallHoweverTheTailIsWritten`). `isNewline` is true
+    /// for the cluster, for a bare `\r` and for `\n` alike.
+    static func scriptLines(of script: String) -> [String] {
+        script.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+            .map(String.init)
+    }
+
     static func quoted(in fragment: String) -> [String] {
         var found: [String] = []
         var current: String?
@@ -749,21 +788,65 @@ import Testing
 /// nothing is installed, and the origin is a `git init` under the test's own
 /// temp directory — no network.
 @Suite struct BootstrapFetchTests {
-    /// The script minus its final `main "$@"`, which is what makes it
-    /// sourceable. The drop is asserted rather than assumed: if that line
-    /// moves, this suite must fail loudly instead of quietly sourcing a
-    /// script that installs simmer over the tester's machine.
+    /// The script minus its `main "$@"`, which is what makes it sourceable.
+    ///
+    /// Every assertion here is `try #require`, not `#expect`, because each one
+    /// IS the safety argument for the next line: `#expect` records a failure
+    /// and lets the removal, the write and the `.` run anyway, which is how a
+    /// tail this helper did not recognise became an installer sourced on the
+    /// tester's Mac (R3 finding 2). Where the assertion is the reason the next
+    /// statement is safe, it has to stop.
+    ///
+    /// The tail is read through `StructureTests.lastRealLine`, the one reader
+    /// `theInstallerIsTruncationSafe` uses too, so a trailing comment is legal
+    /// to both gates or to neither.
+    static func libraryText(of script: String) throws -> String {
+        // The same split `lastRealLine` indexes into, or the index it
+        // returns names a different line here.
+        var lines = StructureTests.scriptLines(of: script)
+        let tail = try #require(StructureTests.lastRealLine(of: script),
+                                "bootstrap.sh has no code left in it at all")
+        try #require(tail.text == "main \"$@\"",
+                     "bootstrap.sh no longer ends in main \"$@\" — it ends in \(tail.text)")
+        lines.remove(at: tail.index)
+        // A call in a COMMENT is not a call, which is why the comparison is
+        // against the trimmed line rather than a `contains`.
+        try #require(!lines.contains {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines) == "main \"$@\""
+        }, "a second call would still install")
+        return lines.joined(separator: "\n")
+    }
+
     static func library(at url: URL) throws {
-        let script = try StructureTests.read("bootstrap.sh")
-        var lines = script.split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-        while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
-            lines.removeLast()
+        try libraryText(of: try StructureTests.read("bootstrap.sh"))
+            .write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    /// The tail shapes `bootstrap.sh` is allowed to have, each yielding a
+    /// library with no call in it — and the shape that must stop the helper
+    /// rather than be silently trimmed into one.
+    @Test func theLibraryDropsTheCallHoweverTheTailIsWritten() throws {
+        let body = "fetch() {\n  :\n}\n\nmain \"$@\""
+        for (shape, script) in [
+            ("bare", body),
+            ("trailing newline", body + "\n"),
+            ("trailing comment", body + "\n# installed by curl | bash\n"),
+            ("trailing blank lines", body + "\n\n\n"),
+            ("CRLF throughout", body.replacingOccurrences(of: "\n", with: "\r\n") + "\r\n"),
+            ("a second call in a comment", body + "\n# main \"$@\" used to live here\n"),
+        ] {
+            let library = try Self.libraryText(of: script)
+            #expect(!library.split(separator: "\n").contains {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines) == "main \"$@\""
+            }, "\(shape): the library still calls main — sourcing it installs simmer")
+            #expect(library.contains("fetch() {"), "\(shape): the library lost its functions")
         }
-        #expect(lines.last == "main \"$@\"", "bootstrap.sh no longer ends in main \"$@\"")
-        lines.removeLast()
-        #expect(!lines.contains { $0 == "main \"$@\"" }, "a second call would still install")
-        try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        // And the stop itself: a tail that is not the call must fail the
+        // helper, not be dropped anyway. `withKnownIssue` is red when the
+        // body records nothing, so this asserts the `#require` fires.
+        withKnownIssue("a tail that is not main \"$@\" must stop the helper") {
+            _ = try Self.libraryText(of: body + "\nbuild_and_install\n")
+        }
     }
 
     struct Result { let out: String, code: Int32 }
