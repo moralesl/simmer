@@ -1222,10 +1222,17 @@ import Testing
                 let name = rest.prefix { $0.isLetter || $0.isNumber || $0 == "_" }
                 if !name.isEmpty { pendingFunction = String(name) }
             }
-            if line.contains(needle) {
-                found.append(open.last?.name ?? "<top level>")
-            }
-            for character in line {
+            // Where on the line the call is, so it is attributed to the
+            // function whose braces are open AT that point — not to whatever
+            // was open before the line, and not to whatever survives it.
+            // `func f(_ m: NSMenu) { m.removeAllItems() }` is legal Swift and
+            // opens and closes `f` on the line that calls: appending before
+            // the walk reads `<top level>`, appending after it reads the same,
+            // and only the offset of the call itself reads `f`.
+            let callOffset = line.range(of: needle)
+                .map { line.distance(from: line.startIndex, to: $0.lowerBound) }
+            for (offset, character) in line.enumerated() {
+                if offset == callOffset { found.append(open.last?.name ?? "<top level>") }
                 if character == "{" {
                     depth += 1
                     if let pendingFunction {
@@ -1302,6 +1309,14 @@ import Testing
         // The plain case, and the one the gate asserts.
         #expect(Self.functionsCalling("removeAllItems", in: source(
             "    func menuNeedsUpdate(_ menu: NSMenu) {\n" + call + "    }\n"))
+            == ["menuNeedsUpdate"])
+
+        // The same function written on one line — legal Swift, and the shape
+        // any rewrite reaches for. The line opens the function, calls, and
+        // closes it, so the attribution has to be taken where the call is and
+        // not before the line's braces are walked or after they all are.
+        #expect(Self.functionsCalling("removeAllItems", in: source(
+            "    func menuNeedsUpdate(_ m: NSMenu) { m.removeAllItems() }\n"))
             == ["menuNeedsUpdate"])
 
         // A comment that names the call — every kind. This is the real file's
