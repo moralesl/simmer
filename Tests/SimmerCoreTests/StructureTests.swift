@@ -800,8 +800,17 @@ import Testing
     /// explaining what it must never become, and a reader that took the whole
     /// region between two targets would be satisfied by that comment while the
     /// recipe echoed something else entirely. Comments and blank lines inside
-    /// the run are dropped for the same reason. `\r` is trimmed so a CRLF
-    /// checkout answers the same question.
+    /// the run are dropped for the same reason.
+    ///
+    /// Lines come from `scriptLines`, the one reader of that question in this
+    /// file: `components(separatedBy: "\n")` does split a CRLF file, but it
+    /// leaves a trailing `\r` on every line for the caller to remember to
+    /// trim, and a caller that forgets answers about `$(TEST_FLAGS)\r`. Two
+    /// spellings of "split a text file into lines" in one suite is the seam
+    /// the drift comes through — `split(separator: "\n")` is a third and
+    /// cannot do it at all, because `"\r\n"` is ONE Character in Swift
+    /// (measured: 3 lines, 3 lines, 1 line). `isNewline` also covers a
+    /// `\r`-only file, which no hand-rolled trim did.
     ///
     /// A recipe line continued with a trailing `\` is ONE command to `make`,
     /// so it is one command here too — counting the physical lines would
@@ -813,8 +822,7 @@ import Testing
     /// silently took either one would be guessing which of two answers the
     /// build uses, so the caller records an issue instead.
     static func makeRecipe(of target: String, in makefile: String) -> [String]? {
-        let lines = makefile.components(separatedBy: "\n")
-            .map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
+        let lines = scriptLines(of: makefile)
         let headers = lines.indices.filter { lines[$0].hasPrefix(target + ":") }
         guard headers.count == 1, let start = headers.first else { return nil }
 
@@ -913,6 +921,10 @@ import Testing
 
         // CRLF — the same answer, not a trailing \r glued to the variable.
         #expect(Self.makeRecipe(of: "test", in: "test:\r\n\tswift test $(TEST_FLAGS)\r\n")
+                == ["swift test $(TEST_FLAGS)"])
+
+        // And CR alone, which `components(separatedBy: "\n")` read as one line.
+        #expect(Self.makeRecipe(of: "test", in: "test:\r\tswift test $(TEST_FLAGS)\r")
                 == ["swift test $(TEST_FLAGS)"])
 
         // A comment inside the block, holding the very variable the gate looks
