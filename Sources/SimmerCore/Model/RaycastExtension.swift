@@ -201,12 +201,16 @@ public enum RaycastExtension {
 
     /// `doctor`'s sentence, and the fix under it.
     ///
-    /// The fix is `npm run dev`, not `npm run build`. `ray build` produces the
-    /// store's artifact and registers nothing; `ray develop` is what hands the
-    /// built extension to Raycast — and it needs a live TTY, so it is a
-    /// command a person runs in a terminal and then interrupts, which is what
-    /// `integrations/raycast/README.md` documents and what this must not
-    /// contradict.
+    /// The fix is `npm run dev`, not `npm run build` — and not because
+    /// `ray build` registers nothing. Its output directory *defaults* to
+    /// `~/.config/raycast/extensions/<name>/`, so `npm run build` as this
+    /// repository spells it (`ray build -e dist`, no `-o`) overwrites the
+    /// registered copy with a one-shot artifact of whichever checkout it was
+    /// run in — a worktree's branch included. `ray develop` is the one that
+    /// registers the checkout and leaves it registered, and it needs a live
+    /// TTY, so it is a command a person runs in a terminal and then
+    /// interrupts, which is what `integrations/raycast/README.md` documents
+    /// and what this must not contradict.
     public static func fixLines(checkout: String) -> [String] {
         ["  cd \(checkout)/\(checkoutSubpath) && npm ci && npm run dev",
          "  it needs a terminal; ⌃C once Raycast has it — integrations/raycast/README.md"]
