@@ -754,10 +754,19 @@ import Testing
     /// One bundle id, in two files that cannot see each other. A quit sent to
     /// the wrong id silently does nothing, which is the failure mode with no
     /// symptom.
+    ///
+    /// Through `scriptLines`, because `split(separator: "\n")` — the spelling
+    /// this used — cannot split a CRLF file at all: `"\r\n"` is ONE Character
+    /// in Swift, so the whole `Makefile` came back as a single line, nothing
+    /// had the `BUNDLE_ID` prefix, and this test recorded "no BUNDLE_ID in the
+    /// Makefile" about a file that has it on line 20. Measured on this exact
+    /// file in both endings: LF finds the line either way, CRLF finds it only
+    /// through `scriptLines`. It never reached the trailing-`\r` hazard,
+    /// because it never found a line at all.
     @Test func theBundleIdIsTheSameInTheMakefileAndTheBinary() throws {
         let makefile = try Self.read("Makefile")
         let runtime = try Self.read("Sources/SimmerCLI/Runtime.swift")
-        guard let line = makefile.split(separator: "\n").first(where: {
+        guard let line = Self.scriptLines(of: makefile).first(where: {
             $0.hasPrefix("BUNDLE_ID")
         }) else {
             Issue.record("no BUNDLE_ID in the Makefile")
