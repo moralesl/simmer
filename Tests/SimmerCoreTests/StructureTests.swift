@@ -974,9 +974,11 @@ import Testing
     /// the old claim coming back — but the row also has to still be *there*,
     /// so `#require` stops if nothing in the table mentions the flag.
     ///
-    /// Read as cells rather than as one string: `✅` appears in four other
-    /// rows of the same table, so `!document.contains("✅")` would be a gate
-    /// that can only pass by deleting the table. Prose only — the section
+    /// Read as one row rather than as the whole document: `✅` appears in four
+    /// other rows of the same table, so `!document.contains("✅")` would be a
+    /// gate that can only pass by deleting the table — but inside the row the
+    /// tick is refused wherever it stands, not only in `Displays?`: a tick in
+    /// the notes cell sells the flag just as well. Prose only — the section
     /// quotes the tool's own warning inside a fence. A row wrapped across
     /// two lines fails the cell count rather than passing on the first line,
     /// and two rows claiming the flag fail the count: the last is a guess.
@@ -993,7 +995,7 @@ import Testing
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         try #require(cells.count >= 4, "the -sender row is not four cells wide: \(rows[0])")
         let displays = cells[2]
-        #expect(!displays.contains("✅"),
+        #expect(!rows[0].contains("✅"),
                 "PLATFORM-FACTS presents -sender as a working transport again: \(rows[0])")
         #expect(displays.contains("❌"), "the -sender row says neither yes nor no: \(rows[0])")
         #expect(!rows[0].contains("verified by screenshot"),
