@@ -59,11 +59,13 @@ One keystroke, once per machine.
 npm test        # pure units + a contract suite against the BUILT simmer binary
 npm run typecheck
 npm run lint    # ray lint: manifest, icons, ESLint, Prettier
-npm run build   # ray build: what the store would check — and it OVERWRITES the registered extension
+npm run build   # ray build: what the store would check — into dist/, inside this checkout
 ```
 
-`npm run build` is not a local-only step: `ray build`'s output directory defaults to `~/.config/raycast/extensions/simmer/`, so running it replaces the registered copy with a build of *this* checkout — in a worktree, that hands Raycast a build of the branch rather than of the one you develop from.
-Pass `-o dist` to keep the build inside the checkout; `npm run dev` is still the command that registers, and running it again from your usual checkout puts the registered copy back.
+`npm run build` writes into `integrations/raycast/dist/`, which `.gitignore` already covers, because the script passes `-o dist`.
+That flag is the whole of it: `ray build`'s output directory *defaults* to `~/.config/raycast/extensions/simmer/`, so a `ray build` without `-o` replaces the copy Raycast has registered with a build of *this* checkout — in a worktree, that hands Raycast a build of the branch rather than of the one you develop from.
+`theRaycastBuildStaysInsideItsOwnCheckout` in `Tests/SimmerCoreTests/StructureTests.swift` fails the day the `-o` leaves the script, so this is a sentence about a gate rather than something to remember.
+`npm run dev` is still the command that registers, and running it again from your usual checkout puts the registered copy back.
 
 `npm test` runs two kinds of test:
 

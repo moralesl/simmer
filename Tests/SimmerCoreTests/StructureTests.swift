@@ -595,6 +595,140 @@ import Testing
         #expect(cli.contains("pmset -a disablesleep 0"))
         #expect(cli.contains("simmer down --all"))
     }
+
+    /// Every `-o` argument of a `ray build` in a shell command line, in each
+    /// spelling oclif accepts: `-o dist`, `-o=dist`, `-odist`,
+    /// `--output dist`, `--output=dist`.
+    ///
+    /// All of them, not the last one: which occurrence oclif keeps is its
+    /// business, and a gate that picks one is guessing. A flag with nothing
+    /// after it comes back as the empty string, because a flag present with no
+    /// value is a different fact from no flag at all and the two must not
+    /// arrive here as the same answer.
+    static func outputArguments(in command: String) -> [String] {
+        let tokens = command.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        var found: [String] = []
+        for (index, token) in tokens.enumerated() {
+            for flag in ["-o", "--output"] where token.hasPrefix(flag) {
+                let rest = token.dropFirst(flag.count)
+                if rest.isEmpty {
+                    found.append(index + 1 < tokens.count ? tokens[index + 1] : "")
+                } else if rest.hasPrefix("=") {
+                    found.append(String(rest.dropFirst()))
+                } else if flag == "-o" {
+                    found.append(String(rest))
+                }
+                // `--outputs` and friends are some other flag, not this one.
+                break
+            }
+        }
+        return found
+    }
+
+    /// One `ray build` command line, held to the property.
+    ///
+    /// Every `-o` it carries, not the last one: which occurrence oclif keeps
+    /// is its business, and a gate that picks one is guessing.
+    ///
+    /// The path is judged as it is *written*, and a written path that expands
+    /// is not judgeable: npm runs every script through `sh`, so
+    /// `-o $HOME/.config/raycast/extensions/simmer` and `-o ${HOME}/x` reach
+    /// the process as absolute paths and carry neither a `/` nor a `~` for
+    /// this to refuse. Measured, not assumed — a probe script through
+    /// `npm run` printed `/Users/luis/.config/raycast/extensions/simmer` from
+    /// the first and `/Users/luis/x` from the second. So a `$` anywhere in the
+    /// argument is refused outright rather than expanded here: substitution is
+    /// the shell's, and a gate that tries to predict it is guessing about
+    /// somebody else's environment. That also covers `$(…)` and `${…}`.
+    static func expectStaysInsideTheCheckout(_ command: String, run by: String) {
+        let outputs = outputArguments(in: command)
+        guard !outputs.isEmpty else {
+            Issue.record("\(by) carries no -o; without one, ray build writes into ~/.config/raycast: \(command)")
+            return
+        }
+        for output in outputs {
+            #expect(!output.isEmpty,
+                    "\(by) passes -o with no value: \(command)")
+            #expect(!output.hasPrefix("/"),
+                    "\(by) writes to the absolute path \(output): \(command)")
+            #expect(!output.hasPrefix("~"),
+                    "\(by) writes under $HOME, where the registered copy lives: \(command)")
+            #expect(!output.contains("$"),
+                    "\(by) has a shell expansion in \(output), which sh resolves before ray sees it")
+            #expect(!output.split(separator: "/").contains(".."),
+                    "\(by) climbs out of the checkout via \(output): \(command)")
+        }
+    }
+
+    /// `npm run build` cannot write outside the checkout it is run in.
+    ///
+    /// `ray build`'s output directory *defaults* to
+    /// `~/.config/raycast/extensions/<name>/` — the copy Raycast has
+    /// registered on this Mac — and `-e dist` names the environment, not a
+    /// path. So `ray build -e dist`, which is how this repository spelled the
+    /// script until 2026-09-08, replaced the registered extension with a
+    /// one-shot artifact of whichever checkout it ran in: it did exactly that
+    /// at 09:31 and 09:32 that day from a worktree, and the registered copy
+    /// had to be put back by hand at 12:07.
+    ///
+    /// R1 finding 4 is why this is a test and not a fourth paragraph of prose.
+    /// The correction was written into the README, into
+    /// `RaycastExtension.fixLines` and into a memory — and nothing anywhere
+    /// went red if the `-o` never reached the script.
+    ///
+    /// The *property*, not the string `-o dist`: a test that greps for the
+    /// literal is green on `-o dist` and blind to a later `-o ~/…`. What has
+    /// to hold is that the path is relative and stays inside the extension
+    /// directory, so a leading `/`, a leading `~` and any `..` component are
+    /// all refused — `-o ../../../../.config/raycast/extensions/simmer`
+    /// reaches the very directory this exists to protect, and even a
+    /// harmless-looking `-o ../dist` would drop build output outside the
+    /// `dist/` that `integrations/raycast/.gitignore:2` covers.
+    ///
+    /// **Two readers over one file, because one of them is not enough.** The
+    /// parser is the precise one: `"build"` is not a key only `scripts` may
+    /// hold, and a value may be spelled without the space after the colon, so
+    /// a text grep answers about the wrong string. But `JSONSerialization`
+    /// keeps the *first* of two identical keys and npm keeps the *last* — so a
+    /// `package.json` carrying `"build"` twice, safe copy first, hands the
+    /// parser the safe command while `npm run build` runs the unsafe one.
+    /// Verified both ways rather than reasoned: `npm pkg get scripts.build`
+    /// returns the last, this parser returns the first. The sweep over the raw
+    /// text is what closes that — it holds *every* `ray build` in the file to
+    /// the property, whichever key won — and it truncates at the enclosing
+    /// string's closing quote, so a command it cannot read carries no `-o` and
+    /// goes red rather than passing.
+    ///
+    /// Neither reader touches the README, whose own Development block is a
+    /// fenced example of the very command this looks for. Needs no `ray` — CI
+    /// is Linux and `ray` is macOS-only.
+    @Test func theRaycastBuildStaysInsideItsOwnCheckout() throws {
+        let manifest = "integrations/raycast/package.json"
+        let text = try Self.read(manifest)
+
+        let parsed = try JSONSerialization.jsonObject(with: Data(text.utf8))
+        guard let scripts = (parsed as? [String: Any])?["scripts"] as? [String: String] else {
+            Issue.record("\(manifest) has no scripts object of strings this can read")
+            return
+        }
+        guard scripts["build"] != nil else {
+            Issue.record("\(manifest) declares no `build` script for `npm run build` to run")
+            return
+        }
+        let building = scripts.filter { $0.value.contains("ray build") }.sorted { $0.key < $1.key }
+        guard !building.isEmpty else {
+            Issue.record("no script in \(manifest) invokes `ray build`; if it moved, move this gate")
+            return
+        }
+        for (name, command) in building {
+            Self.expectStaysInsideTheCheckout(command, run: "`npm run \(name)`")
+        }
+
+        for tail in text.components(separatedBy: "ray build").dropFirst() {
+            let command = "ray build" + (tail.components(separatedBy: "\"").first ?? "")
+            Self.expectStaysInsideTheCheckout(command, run: "a `ray build` in \(manifest)")
+        }
+    }
 }
 
 /// What `bootstrap.sh`'s `fetch()` does to a checkout that is already there.
