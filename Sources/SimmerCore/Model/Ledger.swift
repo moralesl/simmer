@@ -392,14 +392,31 @@ public struct Ledger: Sendable {
     /// a stale banner is worse than none.
     public func drainNotifications(now: Int, maxAge: Int = 120) -> [NotificationRequest] {
         let draining = spoolFile.appendingPathExtension("draining")
-        guard (try? FileManager.default.moveItem(at: spoolFile, to: draining)) != nil
-        else { return [] }
-        // Armed the moment the sentinel exists, not after the read. Registered
-        // below the read, its own failure path stranded the file it was there
-        // to remove — and a spool that can never be moved into place again is
-        // every banner, silently, forever.
-        defer { try? FileManager.default.removeItem(at: draining) }
-        guard let text = try? String(contentsOf: draining, encoding: .utf8) else { return [] }
+        // A sentinel already present is a drain that never finished: the
+        // `defer` below only runs in-process, so a crash between the rename
+        // and the sweep strands the file — and `moveItem` refuses an existing
+        // destination, so one stranded sentinel was every future banner,
+        // silently, forever. Its lines are requests that were never posted;
+        // they are drained too, and `maxAge` — not the crash — decides which
+        // of them still deserve a banner.
+        var text = (try? String(contentsOf: draining, encoding: .utf8)) ?? ""
+        // Unconditional, and keyed on the sentinel EXISTING rather than on
+        // what it holds. Removing it only when it read as non-empty leaves
+        // exactly the same immortality behind for the shapes that read as
+        // empty: a crash between the rename of an empty spool and the sweep,
+        // a directory or a dangling symlink wearing the name (`fileExists`
+        // answers false for the latter and `moveItem` still refuses it a
+        // destination), a permission that denies the read but not the unlink.
+        // `try?` swallows the not-there case, which is the common one.
+        try? FileManager.default.removeItem(at: draining)
+        if (try? FileManager.default.moveItem(at: spoolFile, to: draining)) != nil {
+            // Armed the moment the sentinel exists, not after the read.
+            // Registered below the read, its own failure path stranded the
+            // file it was there to remove.
+            defer { try? FileManager.default.removeItem(at: draining) }
+            text += (try? String(contentsOf: draining, encoding: .utf8)) ?? ""
+        }
+        guard !text.isEmpty else { return [] }
         var requests: [NotificationRequest] = []
         for line in text.split(separator: "\n") {
             guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8))

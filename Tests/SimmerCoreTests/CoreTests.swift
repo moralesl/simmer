@@ -995,3 +995,71 @@ import Testing
         #expect(ledger.claims().isEmpty)
     }
 }
+
+/// The shapes a crash or a coinciding tick leaves behind — each one must
+/// degrade toward "try again", never toward silence or a doubled record.
+@Suite struct CrashAndRaceDebris {
+    func makeLedger() -> (Ledger, URL) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-race-\(UUID().uuidString)")
+        return (Ledger(stateDir: dir), dir)
+    }
+
+    /// A drain that dies between the rename and the sweep strands
+    /// `notify-spool.jsonl.draining` — and `moveItem` refuses an existing
+    /// destination, so one stranded sentinel used to be every future banner,
+    /// silently, forever. The pre-floor warnings ride this spool, and they are
+    /// the stated condition for allowing an open-ended claim.
+    @Test func aStrandedDrainSentinelIsRecoveredNotFatal() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sentinel = ledger.spoolFile.appendingPathExtension("draining")
+        // The stranded half: a request a crashed drain read but never posted.
+        ledger.enqueueNotification(NotificationRequest(title: "stranded"), now: 1000)
+        try? FileManager.default.moveItem(at: ledger.spoolFile, to: sentinel)
+        // The fresh half, queued after the crash.
+        ledger.enqueueNotification(NotificationRequest(title: "fresh"), now: 1010)
+
+        let drained = ledger.drainNotifications(now: 1020)
+        #expect(drained.map(\.title).sorted() == ["fresh", "stranded"])
+        #expect(!FileManager.default.fileExists(atPath: sentinel.path))
+        // And the NEXT drain still works — the sentinel is gone, not immortal.
+        ledger.enqueueNotification(NotificationRequest(title: "later"), now: 1030)
+        #expect(ledger.drainNotifications(now: 1040).map(\.title) == ["later"])
+        // The crash does not extend a banner's life: age still decides.
+        ledger.enqueueNotification(NotificationRequest(title: "old"), now: 1050)
+        try? FileManager.default.moveItem(at: ledger.spoolFile, to: sentinel)
+        #expect(ledger.drainNotifications(now: 5000).isEmpty)
+    }
+
+    /// The recovery is keyed on the sentinel EXISTING, not on what it holds.
+    ///
+    /// Reading it first and removing it only when the read came back non-empty
+    /// leaves the whole defect standing for every shape that reads as empty —
+    /// a crash between the rename of an empty spool and the sweep, a dangling
+    /// symlink wearing the name (`fileExists` says false, `moveItem` still
+    /// refuses it a destination), a mode that denies the read but not the
+    /// unlink. Each one is the same immortal sentinel, and each one costs
+    /// every future banner. The pre-floor warning is the one this tool cannot
+    /// afford to drop: it is the stated condition for an open-ended claim.
+    @Test func anEmptyStrandedSentinelIsNotImmortalEither() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sentinel = ledger.spoolFile.appendingPathExtension("draining")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        #expect((try? Data().write(to: sentinel)) != nil)
+
+        ledger.enqueueNotification(NotificationRequest(title: "after the crash"), now: 1000)
+        #expect(ledger.drainNotifications(now: 1010).map(\.title) == ["after the crash"])
+        #expect(!FileManager.default.fileExists(atPath: sentinel.path))
+
+        // A dangling symlink is the same story from the other side: nothing to
+        // read, nothing `fileExists` will admit to, and still a destination
+        // `moveItem` refuses.
+        try? FileManager.default.createSymbolicLink(
+            atPath: sentinel.path, withDestinationPath: dir.appendingPathComponent("gone").path)
+        #expect(!FileManager.default.fileExists(atPath: sentinel.path), "the link dangles")
+        ledger.enqueueNotification(NotificationRequest(title: "after the link"), now: 1020)
+        #expect(ledger.drainNotifications(now: 1030).map(\.title) == ["after the link"])
+    }
+}
