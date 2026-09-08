@@ -1121,4 +1121,58 @@ import Testing
         let events = (try? String(contentsOf: ledger.eventsFile, encoding: .utf8)) ?? ""
         #expect(!events.contains("\"retire\""), "\(events)")
     }
+
+    /// `Claim` got its range check at the parser chokepoint (a corrupt field
+    /// traps whichever surface does arithmetic on it first, at exit 133); the
+    /// cap record never did, and `until` and `expires` feed the same math.
+    @Test func aCorruptCapRecordCannotTrapArithmetic() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let overflow = "format=2\nuntil=9223372036854775807\nset_by=x\nset_at=1000\nexpires=9223372036854775807\n"
+        try? overflow.write(to: ledger.capFile, atomically: true, encoding: .utf8)
+        #expect(ledger.storedCap() == nil)
+        #expect(ledger.readCap(now: 1000) == nil)
+
+        // `expires` is contracted strictly after `until`; a value that is not
+        // is damage, and it is re-derived so the ceiling stays real for its
+        // own night rather than lapsing early.
+        let inverted = "format=2\nuntil=3000\nset_by=x\nset_at=1000\nexpires=2000\n"
+        try? inverted.write(to: ledger.capFile, atomically: true, encoding: .utf8)
+        #expect(ledger.storedCap()?.expires == Cap.rollover(after: 3000))
+    }
+
+    /// The range check must not become a wrong REFUSAL: it accepts exactly
+    /// what `Claim.init` accepts, so no record a claim would have been built
+    /// from is thrown away here. `maxEpoch` itself is the boundary both sides
+    /// take, and the second-to-last epoch is an ordinary value.
+    ///
+    /// The two directions differ deliberately. An unreadable claim becomes
+    /// `until = 1` — already over, so damage cannot hold the machine awake.
+    /// An unreadable ceiling becomes NO ceiling, because the other direction
+    /// is a lockout invented out of `Int.max` that refuses every claim, and
+    /// costing a caller awake time is the failure this tool exists to prevent
+    /// (AGENTS.md).
+    @Test func theCapAcceptsEveryEpochAClaimWouldAccept() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // The boundary, which `Claim.init` takes as a value.
+        #expect(Claim(owner: "x", until: Claim.maxEpoch, started: 0).until == Claim.maxEpoch)
+        let atTheEdge = "format=2\nuntil=\(Claim.maxEpoch)\nset_by=x\nset_at=1000\n"
+            + "expires=\(Claim.maxEpoch)\n"
+        try? atTheEdge.write(to: ledger.capFile, atomically: true, encoding: .utf8)
+        // `expires == until` is not "strictly after", so it is re-derived —
+        // but the ceiling itself survives, which is what must not be refused.
+        #expect(ledger.storedCap()?.until == Claim.maxEpoch)
+
+        // And one past it is damage on both sides.
+        #expect(Claim(owner: "x", until: Claim.maxEpoch + 1, started: 0).until == 1)
+        let pastTheEdge = "format=2\nuntil=\(Claim.maxEpoch + 1)\nset_by=x\nset_at=1000\n"
+        try? pastTheEdge.write(to: ledger.capFile, atomically: true, encoding: .utf8)
+        #expect(ledger.storedCap() == nil)
+
+        // A negative epoch is out of range at both ends of the same interval.
+        let negative = "format=2\nuntil=-1\nset_by=x\nset_at=1000\nexpires=-1\n"
+        try? negative.write(to: ledger.capFile, atomically: true, encoding: .utf8)
+        #expect(ledger.storedCap() == nil)
+    }
 }

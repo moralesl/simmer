@@ -279,6 +279,26 @@ public struct Ledger: Sendable {
             default: break
             }
         }
+        // The same discipline `Claim.init` applies to a claim record, at the
+        // cap's own parser chokepoint: out of range is "this field is not a
+        // value", never clamped. Swift arithmetic traps rather than wrapping,
+        // and both `until` and `expires` feed date math on every surface that
+        // asks about the cap — `Claim` got this check and the cap never did.
+        //
+        // The accepted range is `Claim`'s own, so this cannot refuse a record
+        // `Claim.init` would have taken. The direction differs, and has to:
+        // an unreadable CLAIM becomes `until = 1`, already over, because
+        // damage must not hold the machine awake. An unreadable CEILING
+        // becomes no ceiling, because damage must not refuse a caller awake
+        // time either — a lockout invented out of `Int.max` is the failure
+        // this tool exists to prevent, arriving from the other side.
+        func epoch(_ value: Int) -> Int { (0...Claim.maxEpoch).contains(value) ? value : 0 }
+        until = epoch(until)
+        setAt = epoch(setAt)
+        expires = epoch(expires)
+        // `expires` is contracted strictly after `until`; a value that is not
+        // is damage, and re-deriving it keeps the ceiling real for its night.
+        if expires <= until { expires = 0 }
         guard until != 0 else { return nil }
         // A file written before caps expired carries no `expires`. Deriving it
         // here is what retires those caps on first read rather than stranding
