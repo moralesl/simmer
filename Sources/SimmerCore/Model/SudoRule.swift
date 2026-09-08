@@ -114,8 +114,16 @@ public enum SudoRule {
             passwordless.filter { !SudoRule.commands.contains($0) }
         }
 
+        /// `ALL`, and only `ALL`. There was a second arm here —
+        /// `$0.hasSuffix(") ALL")` — for a runas group that had come through
+        /// attached, and no input can produce that: `grants` strips the group
+        /// before it builds `passwordless`, so nothing in this array can
+        /// carry one. A reader for a shape nothing emits is a branch that
+        /// cannot fail a test and cannot be right, and it advertised a
+        /// robustness this parser does not have.
+        /// `aRunasGroupNeverReachesTheGrantList` is why it stays gone.
         public var hasBlanketGrant: Bool {
-            passwordless.contains { $0 == "ALL" || $0.hasSuffix(") ALL") }
+            passwordless.contains { $0 == "ALL" }
         }
     }
 

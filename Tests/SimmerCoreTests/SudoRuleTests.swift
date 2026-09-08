@@ -147,6 +147,39 @@ import Testing
         #expect(!grants.beyondWhatSimmerNeeds.isEmpty)
     }
 
+    /// Why `hasBlanketGrant` tests `ALL` and nothing else.
+    ///
+    /// It used to accept `") ALL"` as well, for a runas group that had come
+    /// through attached to the command. Nothing can produce that: `grants`
+    /// strips the group at the head of the entry before it splits the command
+    /// list, so no element of `passwordless` carries one. The second arm was a
+    /// branch no fixture could reach and no test could fail — it advertised a
+    /// robustness this parser does not have, which is worse than the gap,
+    /// because the next reader trusts it.
+    ///
+    /// This pins the property the removal rests on, rather than the removal:
+    /// whatever the runas group is, it is gone by the time a grant is listed.
+    @Test func aRunasGroupNeverReachesTheGrantList() {
+        for group in ["(ALL)", "(ALL : ALL)", "(root)", "(root, operator)"] {
+            let listing = """
+            User luis may run the following commands on host:
+                \(group) NOPASSWD: ALL
+            """
+            let grants = SudoRule.grants(inListing: listing)
+            #expect(grants.passwordless == ["ALL"],
+                    "\(group) leaked into the grant list: \(grants.passwordless)")
+            #expect(grants.hasBlanketGrant, "\(group)")
+        }
+        // And the one shape the removed arm claimed to catch cannot arrive:
+        // a command list is never prefixed by a group at this point.
+        let listing = """
+        User luis may run the following commands on host:
+            (ALL : ALL) NOPASSWD: ALL
+        """
+        #expect(!SudoRule.grants(inListing: listing).passwordless
+            .contains { $0.contains(")") })
+    }
+
     /// Simmer's own two, plus somebody else's — which is not simmer's to fix,
     /// but is exactly what "nothing has more grants than it needs" means.
     @Test func anotherToolsPasswordlessRuleShowsUpBesideSimmersOwn() {
