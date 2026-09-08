@@ -1083,9 +1083,22 @@ import Testing
         let diverged = Self.fetch(ref: "main", into: checkout, from: origin, library: library)
         #expect(diverged.code != 0, "a diverged checkout passed: \(diverged.out)")
         #expect(!diverged.out.contains("updated the existing checkout"), "\(diverged.out)")
-        // A refusal that names no fix is the one thing the surface forbids.
+        // A refusal that names no fix is the one thing the surface forbids —
+        // and a refusal that names TWO is the same failure from the other
+        // side. Dropping `2>/dev/null` from the merge is what made this
+        // divergence visible at all, and it also printed git's nine-line
+        // "hint: Diverging branches can't be fast-forwarded, need to specify
+        // how to reconcile them" above simmer's one line, telling the reader
+        // to set `pull.rebase` when the fix is `git -C $DIR status`.
         #expect(diverged.out.contains("local commits"), "\(diverged.out)")
         #expect(diverged.out.contains("git -C \(checkout.path) status"), "\(diverged.out)")
+        #expect(!diverged.out.contains("hint:"),
+                "git's own hint block competes with simmer's refusal: \(diverged.out)")
+        // One line, in simmer's voice: the refusal is what `die` printed and
+        // nothing else. `step`'s own progress lines are the rest of it, so
+        // only stderr-shaped git chatter is counted out.
+        #expect(!diverged.out.contains("Diverging branches"), "\(diverged.out)")
+        #expect(!diverged.out.lowercased().contains("pull.rebase"), "\(diverged.out)")
         #expect(Self.git(["-C", checkout.path, "log", "-1", "--format=%s"]) == "local work",
                 "the checkout was moved under a refusal")
 
