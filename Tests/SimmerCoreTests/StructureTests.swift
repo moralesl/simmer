@@ -1348,8 +1348,14 @@ import Testing
         "Ledger.swift:drainNotifications",
         // `body: command`, the thing that was copied.
         "MenuModel.swift:copied",
-        // `subtitle: why`, a required parameter; all eight callers of
-        // `Engine.settle` pass a non-empty literal.
+        // `subtitle: why`, a required parameter. `grep -rn 'Engine.settle('
+        // Sources/` finds SEVEN callers: six pass a non-empty literal (one of
+        // them an interpolation with a non-empty prefix, `CapCommand.swift:152`)
+        // and the seventh, `ReleaseCommand.swift:13`, passes a local `why`
+        // whose three feeders are the literals "reverted by hand" and
+        // "released by hand". So no caller can make it empty — but none of
+        // that is visible at the construction, which is why it is listed here
+        // rather than counted as text.
         "Settle.swift:settle",
         // `subtitle: step.described` and `body: sentence`, the latter out of
         // `failureSentence`, which has no arm that returns an empty string.
