@@ -1309,3 +1309,293 @@ import Testing
         #expect(UpdateCommand.reopenStep(bundle: "/Applications/Simmer.app").phase == .relaunching)
     }
 }
+
+
+/// The plan's own steps, run by real `git`, against repositories this test
+/// makes — the case that got through every other test in this file.
+///
+/// Everything above asserts what the plan SAYS. On 8 Sep 2026 the plan said
+/// something correct-looking and did nothing useful: `git fetch --tags --force`
+/// in the install checkout, then `git checkout v0.3.3`, with the fetch reading
+/// the checkout's `origin` and the release read from GitHub. Both steps were
+/// right about themselves and wrong together, and no assertion over an
+/// argument list could see it. So the fixture is the shape of Luis's Mac —
+/// a "release" repository that has the tag, a "dev" clone that lags it, and an
+/// installer checkout cloned from dev — and the steps are executed.
+///
+/// Hermetic by construction, not by promise: `runStep` refuses any step whose
+/// arguments name a remote with a scheme, so a test that forgot to point the
+/// plan at its fixture cannot quietly reach github.com. The suite proves that
+/// guard by feeding it the real plan's own fetch step
+/// (`theGuardRefusesTheRealPlansOwnRemote`), which it must refuse.
+@Suite struct ApplyPlanAgainstRealGitTests {
+    /// A step naming a remote this suite may not reach. A thrown error rather
+    /// than a recorded expectation, because the check IS the reason the next
+    /// line is safe to run — `#expect` would record the issue and then spawn
+    /// the process anyway.
+    enum StepWouldLeaveTheFixture: Error, CustomStringConvertible, Equatable {
+        case remoteWithAScheme(String)
+
+        var description: String {
+            switch self {
+            case .remoteWithAScheme(let argument):
+                return "a step in this suite names \(argument) — the fixtures are plain paths, "
+                    + "and a suite that calls itself hermetic does not spawn git at a URL"
+            }
+        }
+    }
+
+    /// git with none of the tester's identity or configuration, which is the
+    /// one hermetic git this target has: `BootstrapFetchTests` established it
+    /// and a second spelling of it would be a second thing to keep in step.
+    @discardableResult
+    static func git(_ args: [String]) -> String { BootstrapFetchTests.git(args) }
+
+    static let hermeticEnvironment = [
+        "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+        "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+        "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+    ]
+
+    /// One of the plan's steps, verbatim, under that environment.
+    static func runStep(_ step: UpdateCommand.ApplyStep) throws -> (out: String, code: Int32) {
+        for argument in step.arguments
+        where argument.contains("://") || argument.hasPrefix("git@") {
+            throw StepWouldLeaveTheFixture.remoteWithAScheme(argument)
+        }
+        let result = Shell.run("/usr/bin/env",
+                               hermeticEnvironment + [step.executable] + step.arguments)
+        return (result.stdout + result.stderr, result.status)
+    }
+
+    /// The three repositories of 8 Sep, in a temporary directory.
+    ///
+    /// `release` is what GitHub holds: the commit the tag names. `dev` is a
+    /// clone taken before that tag existed — a maintainer's checkout between
+    /// pulls. `checkout` is the install checkout, cloned from `dev`, so its
+    /// `origin` is the one that lags. `home` is what `Install.detect` is given,
+    /// with symlinks resolved because `/var/folders` is one.
+    struct Fixture {
+        let root: URL, release: URL, dev: URL, checkout: URL, home: String
+
+        static func make(tagged: Bool = true) throws -> Fixture {
+            let root = URL(fileURLWithPath: FileManager.default.temporaryDirectory
+                .appendingPathComponent("simmer-origin-\(UUID().uuidString)").path)
+                .resolvingSymlinksInPath()
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+            let release = root.appendingPathComponent("release")
+            git(["init", "--quiet", "--initial-branch=main", release.path])
+            // A Makefile, because `applyPlan` refuses a checkout that has no
+            // `.git` and no `Makefile` to build from — the clone needs it.
+            try "install:\n\t@true\n".write(to: release.appendingPathComponent("Makefile"),
+                                            atomically: true, encoding: .utf8)
+            git(["-C", release.path, "add", "Makefile"])
+            git(["-C", release.path, "commit", "--quiet", "-m", "the release before the release"])
+
+            // The clone is taken HERE, before the tag: that is what "origin
+            // lags" means, and doing it in this order is what makes the
+            // fixture the Mac rather than a description of it.
+            let dev = root.appendingPathComponent("dev")
+            git(["clone", "--quiet", release.path, dev.path])
+
+            try "0.9.0".write(to: release.appendingPathComponent("VERSION"),
+                              atomically: true, encoding: .utf8)
+            git(["-C", release.path, "add", "VERSION"])
+            git(["-C", release.path, "commit", "--quiet", "-m", "release 9.9.9"])
+            if tagged { git(["-C", release.path, "tag", "v9.9.9"]) }
+
+            let checkout = root.appendingPathComponent(".local/share/simmer")
+            try FileManager.default.createDirectory(
+                at: checkout.deletingLastPathComponent(), withIntermediateDirectories: true)
+            git(["clone", "--quiet", dev.path, checkout.path])
+            return Fixture(root: root, release: release, dev: dev, checkout: checkout,
+                           home: root.path)
+        }
+
+        /// What the install checkout's `origin` actually is — printed by the
+        /// test rather than assumed, because the whole defect was a wrong
+        /// assumption about this one value.
+        var checkoutOrigin: String {
+            ApplyPlanAgainstRealGitTests.git(["-C", checkout.path, "remote", "get-url", "origin"])
+        }
+
+        var checkoutHead: String {
+            ApplyPlanAgainstRealGitTests.git(["-C", checkout.path, "rev-parse", "HEAD"])
+        }
+
+        func releaseCommit(_ ref: String) -> String {
+            ApplyPlanAgainstRealGitTests.git(["-C", release.path, "rev-parse", ref])
+        }
+
+        func tearDown() { try? FileManager.default.removeItem(at: root) }
+    }
+
+    /// A bundle install whose installer checkout is the fixture's, and a plan
+    /// that fetches the release from the fixture's release repository.
+    private func makePlan(_ fixture: Fixture, releaseRemote: String? = nil,
+                      latest: String = "v9.9.9") -> UpdateCommand.ApplyPlan? {
+        let install = Install.detect(
+            executablePath: "\(fixture.home)/Applications/Simmer.app/Contents/MacOS/simmer",
+            home: fixture.home)
+        #expect(install.source == .installer(fixture.checkout.path),
+                "the fixture is not placed as an installer checkout: \(install.source)")
+        let report = UpdateCommand.check(
+            now: 1_800_000_000, installed: "0.2.0", install: install, appVersion: nil,
+            ledger: Ledger(stateDir: fixture.root.appendingPathComponent("state")),
+            source: FakeReleaseSource(value: latest), cached: false, seamed: false)
+        let decision = UpdateCommand.applyPlan(
+            for: report, exists: { FileManager.default.fileExists(atPath: $0) },
+            releaseRemote: releaseRemote ?? fixture.release.path)
+        guard case .run(let plan) = decision else {
+            #expect(Bool(false), "no plan: \(decision)")
+            return nil
+        }
+        return plan
+    }
+
+    /// First, the defect — on real `git`, in this fixture, so that the test
+    /// below is measured against a failure rather than against nothing.
+    ///
+    /// This is the 0.3.2 plan, spelled out: fetch tags from `origin`, then
+    /// check out the tag. It is Luis's 16:20, twice, including git's own words.
+    @Test func fetchingOriginInThisFixtureFailsExactlyAsItDidOnHisMac() throws {
+        let fixture = try Fixture.make(); defer { fixture.tearDown() }
+        #expect(fixture.checkoutOrigin == fixture.dev.path,
+                "the install checkout's origin is the one that lags")
+
+        let old = UpdateCommand.ApplyStep(
+            executable: "/usr/bin/git",
+            arguments: ["-C", fixture.checkout.path, "fetch", "--tags", "--force", "--quiet"],
+            phase: .fetching)
+        let fetched = try Self.runStep(old)
+        #expect(fetched.code == 0, "the fetch itself succeeded — that was never the failure")
+
+        let switched = try Self.runStep(UpdateCommand.ApplyStep(
+            executable: "/usr/bin/git",
+            arguments: ["-C", fixture.checkout.path, "checkout", "--quiet", "v9.9.9"],
+            phase: .switching))
+        #expect(switched.code != 0, "origin lags and the tag was found anyway")
+        #expect(switched.out.contains("pathspec 'v9.9.9' did not match"),
+                "git's own words, and the line in simmer.log that made this readable: \(switched.out)")
+    }
+
+    /// And the fix: the same checkout, the same two steps, the remote the
+    /// release was read from. The tag arrives and the checkout ends on it.
+    @Test func theReleasesRemoteInstallsTheReleaseThroughACheckoutWhoseOriginLags() throws {
+        let fixture = try Fixture.make(); defer { fixture.tearDown() }
+        let plan = try #require(makePlan(fixture))
+
+        // The plan is the real one: three steps, and `make install` is not run
+        // here — this suite is about the two git steps.
+        #expect(plan.steps.count == 3)
+        #expect(plan.releaseFetch == .init(tag: "v9.9.9", checkout: fixture.checkout.path,
+                                           remote: fixture.release.path))
+
+        let fetched = try Self.runStep(plan.steps[0])
+        #expect(fetched.code == 0, "\(fetched.out)")
+        let switched = try Self.runStep(plan.steps[1])
+        #expect(switched.code == 0, "\(switched.out)")
+
+        #expect(fixture.checkoutHead == fixture.releaseCommit("v9.9.9"),
+                "the checkout is not on the release's commit")
+        #expect(Self.git(["-C", fixture.checkout.path, "describe", "--tags"]) == "v9.9.9")
+        // And `origin` is untouched by all of it: fetching a URL updates no
+        // remote-tracking branch, which is exactly right for a checkout that
+        // only ever sits on tags.
+        #expect(fixture.checkoutOrigin == fixture.dev.path)
+    }
+
+    /// The inversion: the release's own remote does not have the tag either.
+    /// Nothing is installed, and the sentence names all three of the things
+    /// that decide what a person does next.
+    @Test func aTagMissingEverywhereIsRefusedWithTheCheckoutTheRemoteAndTheTag() throws {
+        let fixture = try Fixture.make(tagged: false); defer { fixture.tearDown() }
+        let plan = try #require(makePlan(fixture))
+        let before = fixture.checkoutHead
+
+        #expect(try Self.runStep(plan.steps[0]).code == 0, "the fetch has nothing to fail on")
+        let switched = try Self.runStep(plan.steps[1])
+        #expect(switched.code != 0, "a tag that exists nowhere was switched to")
+        #expect(fixture.checkoutHead == before, "the checkout was moved under a failure")
+
+        let sentence = UpdateCommand.failureSentence(
+            phase: .switching, plan: plan,
+            updateCommand: "curl -fsSL https://github.com/moralesl/simmer/raw/main/bootstrap.sh | bash")
+        #expect(sentence.contains(fixture.checkout.path), "\(sentence)")
+        #expect(sentence.contains(fixture.release.path), "\(sentence)")
+        #expect(sentence.contains("v9.9.9"), "\(sentence)")
+        #expect(!sentence.contains("curl"), "\(sentence)")
+    }
+
+    /// A tag that moved. `--force` is in the plan for exactly this, and this
+    /// is what pins it: the local `v9.9.9` points somewhere else, and the
+    /// release's is what gets installed.
+    ///
+    /// Without `--force` the fetch REFUSES the tag update and exits non-zero,
+    /// so the ending is a wrong install either way — silently the stale one
+    /// before `--force`, and a failed update without it.
+    @Test func aLocalTagThatMovedIsReplacedRatherThanInstalled() throws {
+        let fixture = try Fixture.make(); defer { fixture.tearDown() }
+        let stale = fixture.checkoutHead
+        Self.git(["-C", fixture.checkout.path, "tag", "v9.9.9", stale])
+        #expect(Self.git(["-C", fixture.checkout.path, "rev-parse", "v9.9.9"]) == stale)
+
+        let plan = try #require(makePlan(fixture))
+        #expect(try Self.runStep(plan.steps[0]).code == 0)
+        #expect(try Self.runStep(plan.steps[1]).code == 0)
+
+        #expect(fixture.checkoutHead == fixture.releaseCommit("v9.9.9"),
+                "the stale local tag was installed instead of the release")
+        #expect(fixture.checkoutHead != stale)
+    }
+
+    /// The release's remote is unreachable while `origin` is perfectly fine —
+    /// an offline maintainer, or GitHub down. The fetch fails, nothing is
+    /// changed, and the `.fetching` sentence names the remote it tried; a plan
+    /// that fetched `origin` never had this case at all.
+    @Test func anUnreachableReleaseRemoteFailsFetchingAndNamesIt() throws {
+        let fixture = try Fixture.make(); defer { fixture.tearDown() }
+        let gone = fixture.root.appendingPathComponent("not-a-repository").path
+        let plan = try #require(makePlan(fixture, releaseRemote: gone))
+        let before = fixture.checkoutHead
+
+        let fetched = try Self.runStep(plan.steps[0])
+        #expect(fetched.code != 0, "a fetch from nowhere succeeded: \(fetched.out)")
+        #expect(fixture.checkoutHead == before, "nothing on this Mac was changed")
+
+        let sentence = UpdateCommand.failureSentence(phase: .fetching, plan: plan,
+                                                     updateCommand: "")
+        #expect(sentence.contains(gone), "the sentence names the remote it tried: \(sentence)")
+        #expect(sentence.contains("Nothing on this Mac was changed"), "\(sentence)")
+    }
+
+    /// And the reverse: `origin` is gone while the release's remote answers.
+    /// The old plan could not install here at all; this one does not consult
+    /// `origin`, so it installs the release.
+    @Test func anOriginThatVanishedDoesNotStopTheInstall() throws {
+        let fixture = try Fixture.make(); defer { fixture.tearDown() }
+        try FileManager.default.removeItem(at: fixture.dev)
+        let plan = try #require(makePlan(fixture))
+
+        #expect(try Self.runStep(plan.steps[0]).code == 0,
+                "the plan consulted the origin it does not need")
+        #expect(try Self.runStep(plan.steps[1]).code == 0)
+        #expect(fixture.checkoutHead == fixture.releaseCommit("v9.9.9"))
+    }
+
+    /// The hermetic guard, inverted: the real plan's own fetch step names
+    /// `https://github.com/moralesl/simmer`, and this suite must refuse to run
+    /// it. Without this the guard is decoration — every step above happens to
+    /// carry a plain path, so nothing would have exercised it.
+    @Test func theGuardRefusesTheRealPlansOwnRemote() throws {
+        let fixture = try Fixture.make(); defer { fixture.tearDown() }
+        let plan = try #require(makePlan(fixture, releaseRemote: Install.repositoryURL))
+        #expect(throws: StepWouldLeaveTheFixture.remoteWithAScheme(Install.repositoryURL)) {
+            _ = try Self.runStep(plan.steps[0])
+        }
+        // The steps that name no remote stay runnable, or the guard would have
+        // made the suite green by refusing everything.
+        #expect(throws: Never.self) { _ = try Self.runStep(plan.steps[1]) }
+    }
+}
