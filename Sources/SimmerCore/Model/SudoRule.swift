@@ -166,9 +166,23 @@ public enum SudoRule {
             //
             // `#0` is root: a Runas_Member may be a user-ID prefixed with
             // `#`, and the man page's own example of matching every name
-            // sharing root's uid is `#0`. Refusing it is a `doctor` that
-            // reports no grant while the guard works — the other direction of
-            // the same defect, and it weighs the same.
+            // sharing root's uid is `#0`.
+            //
+            // **What is measured and what is not.** `sudoers(5)` on this Mac
+            // is the source, and it describes the FILE. This parser reads
+            // `sudo -nl` OUTPUT, and whether sudo ever prints a uid form
+            // there rather than normalising it to a name is NOT measured —
+            // every listing anyone has captured on this machine prints
+            // `(ALL)` or `(root)`. Measuring it needs a rule installed in
+            // `/etc/sudoers.d`, which is Luis's file on his machine, so this
+            // arm is argued from the grammar and not from a transcript.
+            //
+            // It stays because the direction is safe either way: a uid-0
+            // runas spec IS root by definition, so accepting it cannot vouch
+            // for a guard that does not work, and refusing it was a `doctor`
+            // reporting no grant on a machine where the guard works. If sudo
+            // never emits the form, the arm is unreachable and costs one
+            // string comparison.
             var runsAsRoot = true
             if entry.hasPrefix("("), let close = entry.firstIndex(of: ")") {
                 let spec = String(entry[entry.index(after: entry.startIndex)..<close])

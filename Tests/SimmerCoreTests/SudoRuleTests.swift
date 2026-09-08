@@ -309,7 +309,13 @@ import Testing
     ///   runas_default user (root by default)" — a bare `NOPASSWD:` counts.
     /// - Runas_Member allows `#user-ID`, and "If you wish to match all user
     ///   names with the same user-ID … you can use a user-ID instead of a
-    ///   name (#0 in the example given)" — `(#0)` IS root.
+    ///   name (#0 in the example given)" — `(#0)` IS root. This row is
+    ///   argued from the grammar, not from a transcript: the man page
+    ///   describes the sudoers FILE, and whether `sudo -nl` ever prints a uid
+    ///   form rather than normalising it to a name is unmeasured — every
+    ///   listing captured on this machine prints `(ALL)` or `(root)`. The
+    ///   direction is safe either way, because a uid-0 spec is root by
+    ///   definition.
     /// - `%group` in the users half is a group of users who may be the
     ///   target, which is not root; `(%admin)` therefore does not count, and
     ///   the direction is a refusal.
