@@ -489,6 +489,49 @@ import Testing
         #expect(plan.reopenBundle == "/Users/x/Applications/Simmer.app")
     }
 
+    /// The release's files come from the remote the release was read from, not
+    /// from whatever cloned this checkout.
+    ///
+    /// The two were the same remote by coincidence, and on a maintainer's Mac
+    /// they are not: `origin` there is a dev checkout whose `main` lags the
+    /// release, so the fetch succeeded, the tag was not in it, and the switch
+    /// failed with `pathspec 'v0.3.3' did not match any file(s) known to git`
+    /// (8 Sep 2026, twice). The remote is asserted as an ARGUMENT of the
+    /// fetch, because a fetch with no remote argument is the defect.
+    @Test func theInstallerFetchNamesTheReleasesOwnRemote() {
+        let decision = UpdateCommand.applyPlan(
+            for: report(installed: "0.2.0", latest: "v0.3.0", kind: .bundle),
+            exists: all)
+        guard case .run(let plan) = decision else { #expect(Bool(false), "\(decision)"); return }
+
+        let fetch = plan.steps[0]
+        #expect(fetch.arguments.last == Install.repositoryURL, "\(fetch.arguments)")
+        // `--force`, kept and pinned: a tag can legitimately have moved on the
+        // remote, and a stale local one installs the wrong thing in silence.
+        #expect(fetch.arguments.contains("--force"), "\(fetch.arguments)")
+
+        // And the plan carries it as data, with the tag as published and the
+        // checkout — the three things the failure sentence names, so that
+        // nothing downstream re-derives them from an argument list.
+        #expect(plan.releaseFetch == UpdateCommand.ReleaseFetch(
+            tag: "v0.3.0", checkout: "/Users/x/.local/share/simmer",
+            remote: Install.repositoryURL))
+    }
+
+    /// Somebody's own checkout keeps fetching its own `origin`, and carries no
+    /// `releaseFetch`: what that plan installs is what its default branch
+    /// holds, so its upstream is the only remote that answers the question.
+    @Test func aCheckoutsOwnPlanStillFetchesItsOwnOrigin() {
+        let decision = UpdateCommand.applyPlan(
+            for: checkoutBundle(), exists: all,
+            checkoutState: { _ in .init(branch: "main", defaultBranch: "main", clean: true) })
+        guard case .run(let plan) = decision else { #expect(Bool(false), "\(decision)"); return }
+
+        #expect(plan.releaseFetch == nil)
+        #expect(plan.steps[0].described == "git -C \(mine) fetch --quiet")
+        #expect(!plan.steps[0].described.contains(Install.repositoryURL))
+    }
+
     /// The honesty property, asserted rather than promised: the printed command
     /// for a bundle install pipes a script from the internet into bash, and an
     /// app doing THAT on someone's behalf is a different kind of thing. The
