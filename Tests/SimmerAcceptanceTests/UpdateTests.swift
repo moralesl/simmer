@@ -559,6 +559,42 @@ import Testing
                 "the reopen is not one of the plan's steps: \(steps)")
     }
 
+    /// The fetch line names the remote, on both surfaces a caller reads it
+    /// from — and `update --json` grew no field for it.
+    ///
+    /// The remote is `Install.repositoryURL`, a constant every reader of this
+    /// object already holds (`release_notes_url` is composed from it), so a
+    /// permanent contracted field for it would be a field with no reader. It
+    /// is in `steps`, which is documented as the plan; the key set is
+    /// asserted here so that "nothing existing moves" is a measurement rather
+    /// than a claim.
+    @Test func theFetchLineNamesTheRemoteAndNoFieldWasAdded() throws {
+        let sim = Sim(); defer { sim.tearDown() }
+        var env = bundleInstall(sim)
+        env["SIMMER_FAKE_LATEST"] = "v9.9.9"
+
+        let machine = sim.run(["update", "--apply", "--json"], env: env)
+        #expect(machine.code == 0, "\(machine.combined)")
+        let json = object(machine.out)
+        let steps = (json["steps"] as? [String]) ?? []
+        #expect(steps.first?.hasSuffix("fetch --tags --force --quiet "
+            + "https://github.com/moralesl/simmer") == true, "\(steps)")
+
+        // Every field `docs/CONTRACTS.md` names for this surface, and no
+        // other. `apply_error` is absent because nothing failed.
+        #expect(Set(json.keys) == Set([
+            "action", "verdict", "installed", "latest", "update_available", "provenance",
+            "update_command", "app_version", "app_drift", "checked_at", "cached", "error",
+            "seamed", "release_notes_url", "auto_update", "install_source",
+            "install_source_kind", "applied", "steps",
+        ]), "\(Set(json.keys).sorted())")
+
+        // And the plan a person reads before it runs.
+        let human = sim.run(["update", "--apply"], env: env).combined
+        #expect(human.contains("fetch --tags --force --quiet "
+            + "https://github.com/moralesl/simmer"), "\(human)")
+    }
+
     /// The plan comes before the failure, in a redirect as well as on a tty.
     ///
     /// `simmer update --apply > log 2>&1` is how anybody reports this going
