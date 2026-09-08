@@ -364,6 +364,225 @@ import Testing
     }
 }
 
+/// The one to three seconds between clicking **Check for Updates…** and the
+/// answer, in the row that asked — and the four answers themselves.
+///
+/// Beside `InstallingRowTests` and shaped like it, because they are the two
+/// facts about this Mac that take over the same row and the model is what
+/// decides which of them wins.
+@Suite struct CheckingRowTests {
+    private func menu(_ install: MenuInstall) -> [MenuItemModel] {
+        MenuModel.build(aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000,
+                                                     sleepDisabled: false),
+                        batteryLine: "battery 80%, on AC", install: install)
+    }
+
+    /// The fixture of T8's frames: 0.3.2 installed, 0.3.3 published.
+    private func install(checking: Bool = false, checked: MenuCheckAnswer? = nil,
+                         installing: String? = nil, updateLine: String? = nil) -> MenuInstall {
+        MenuInstall(version: "0.3.2", canHandBackUnattended: true,
+                    updateLine: updateLine,
+                    updateCommand: "cd ~/.local/share/simmer && git pull && make install",
+                    canApplyUpdate: true,
+                    releaseNotesURL: "https://example.test/v0.3.3",
+                    installing: installing, checking: checking, checked: checked)
+    }
+
+    private func check(_ install: MenuInstall) -> MenuItemModel? {
+        menu(install).first { $0.role == .checkForUpdates }
+    }
+
+    // MARK: while the check runs
+
+    @Test func theTopRowSaysACheckIsRunning() throws {
+        let items = menu(install(checking: true))
+        let row = try #require(items.first)
+        #expect(row.title == "Checking for updates…")
+        #expect(row.role == .updateGroup)
+        // The spinner is the app's to draw, so the model asks for one and names
+        // no symbol: a still glyph on a row that waits is what reads as stuck.
+        #expect(row.showsSpinner)
+        #expect(row.symbol == nil)
+        // First, above the state header, where "Update available" and
+        // "Installing…" already live — and followed by their separator.
+        #expect(items.count > 1 && items[1].isSeparator)
+    }
+
+    /// An information row: no action, no children. It cannot be clicked, and it
+    /// keeps its ink — `isUnavailable` is the other row, below.
+    @Test func theCheckingRowIsInformationAndNotDimmed() throws {
+        let row = try #require(menu(install(checking: true)).first)
+        #expect(row.action == nil)
+        #expect(row.children.isEmpty)
+        #expect(row.isUnavailable == false)
+    }
+
+    /// Case 10, answered in the model: a second click during the check cannot
+    /// reach an action, because the row has none while the check runs.
+    @Test func theCheckRowHasNoActionWhileACheckIsRunning() throws {
+        let row = try #require(check(install(checking: true)))
+        #expect(row.action == nil)
+        #expect(row.isUnavailable)
+        #expect(row.title == "Check for Updates…")
+
+        // And it comes straight back afterwards, or the menu item is spent
+        // after one use.
+        let idle = try #require(check(install()))
+        #expect(idle.action == .checkForUpdates)
+        #expect(idle.isUnavailable == false)
+    }
+
+    /// `isUnavailable` and an action are contradictory instructions to the
+    /// renderer — one says "draw it dead", the other "route the click". The
+    /// model composes both in one place so they cannot disagree; this is the
+    /// assertion that says so for every row of every menu the fixtures reach.
+    @Test func noRowIsBothUnavailableAndClickable() {
+        for checking in [true, false] {
+            for checked in [nil, MenuCheckAnswer(verdict: .available, latest: "0.3.3"),
+                            MenuCheckAnswer(verdict: .current),
+                            MenuCheckAnswer(verdict: .unknown, error: "offline")] {
+                let items = menu(install(checking: checking, checked: checked))
+                let all = items + items.flatMap(\.children)
+                #expect(!all.contains { $0.isUnavailable && $0.action != nil })
+                // And a spinner is only ever asked for on a row that waits.
+                #expect(!all.contains { $0.showsSpinner && $0.action != nil })
+            }
+        }
+    }
+
+    // MARK: the four answers
+
+    @Test func availableIsTodaysUpdateRowWithTheFramesWording() throws {
+        let items = menu(install(checked: MenuCheckAnswer(verdict: .available,
+                                                          latest: "0.3.3")))
+        let row = try #require(items.first)
+        #expect(row.title == "Update available: 0.3.3 — you have 0.3.2")
+        #expect(row.role == .updateGroup)
+        #expect(row.symbol == "arrow.down.circle.fill")
+        // The same submenu the standing update row has, in the same order: the
+        // answer to the question IS that row, not a second thing that looks
+        // like it.
+        #expect(row.children.map(\.title) == ["Install it now", "Release notes…", "",
+                                              "cd ~/.local/share/simmer && git pull && make install"])
+        #expect(row.children.contains { $0.action == .applyUpdate })
+    }
+
+    @Test func currentSaysSoAndNamesTheVersion() throws {
+        let row = try #require(menu(install(checked: MenuCheckAnswer(verdict: .current,
+                                                                     latest: "0.3.2"))).first)
+        #expect(row.title == "simmer 0.3.2 is already the newest release")
+        #expect(row.action == nil)
+        #expect(row.children.isEmpty)
+    }
+
+    @Test func aheadSaysWhatThereIsNothingToDoAbout() throws {
+        let row = try #require(menu(install(checked: MenuCheckAnswer(verdict: .ahead,
+                                                                     latest: "0.3.1"))).first)
+        #expect(row.title == "simmer 0.3.2 is ahead of the newest release (0.3.1)")
+        #expect(row.action == nil)
+    }
+
+    /// The reason, in the row. A row that says only "could not check" sends a
+    /// person to a terminal to find out what this one already knows — and the
+    /// dash puts the reason in secondary ink for free (`informationTitle`).
+    @Test func unknownCarriesTheReasonItCouldNotTell() throws {
+        let row = try #require(menu(install(checked: MenuCheckAnswer(
+            verdict: .unknown,
+            error: "A server with the specified hostname could not be found."))).first)
+        #expect(row.title == "Could not check for updates — "
+            + "A server with the specified hostname could not be found.")
+    }
+
+    /// A check that was refused before it started is an answer too, with the
+    /// reason the caller was given. Silence here is a spinner that never stops.
+    @Test func aCheckThatNeverRanAnswersWithTheReason() throws {
+        let answer = MenuCheckAnswer.didNotRun("SIMMER_NO_UPDATE_CHECK is set")
+        #expect(answer.verdict == .unknown)
+        let row = try #require(menu(install(checked: answer)).first)
+        #expect(row.title == "Could not check for updates — SIMMER_NO_UPDATE_CHECK is set")
+    }
+
+    // MARK: two facts, one row
+
+    /// Case 12. An unattended install under way while somebody clicks Check:
+    /// the model decides, and it decides for the install — the row that takes
+    /// minutes and the one nothing else can report. The controller must not
+    /// have an opinion of its own about this.
+    @Test func anInstallUnderWayOutranksACheck() throws {
+        let row = try #require(menu(install(checking: true, installing: "0.3.3")).first)
+        #expect(row.title == "Installing 0.3.3…")
+        #expect(row.showsSpinner == false)
+        // And with an answer standing as well, it is still the install's row.
+        let both = try #require(menu(install(checked: MenuCheckAnswer(verdict: .current),
+                                             installing: "0.3.3")).first)
+        #expect(both.title == "Installing 0.3.3…")
+    }
+
+    /// A check under way outranks the answer to the check before it, and an
+    /// answer outranks the standing update line it was asked about — otherwise
+    /// the row would show yesterday's news while today's question is open.
+    @Test func theCheckOutranksItsOwnLastAnswerAndTheStandingLine() throws {
+        let checking = try #require(menu(install(
+            checking: true, checked: MenuCheckAnswer(verdict: .current),
+            updateLine: "Update available: 0.3.3")).first)
+        #expect(checking.title == "Checking for updates…")
+
+        let answered = try #require(menu(install(
+            checked: MenuCheckAnswer(verdict: .current, latest: "0.3.2"),
+            updateLine: "Update available: 0.3.3")).first)
+        #expect(answered.title == "simmer 0.3.2 is already the newest release")
+
+        // Nothing asked, and the standing line is what the row says — today's
+        // menu, unchanged.
+        let quiet = try #require(menu(install(updateLine: "Update available: 0.3.3")).first)
+        #expect(quiet.title == "Update available: 0.3.3")
+        #expect(quiet.role == .updateGroup)
+    }
+
+    /// Nothing asked and nothing to say: no group row at all, which is the
+    /// ordinary case on a Mac that is up to date — and the case that makes the
+    /// controller insert a row into a menu that is already open.
+    @Test func aQuietMenuHasNoUpdateGroupRow() {
+        let items = menu(install())
+        #expect(!items.contains { $0.role == .updateGroup })
+        #expect(items.first?.isProminent == true)
+    }
+
+    /// The state header stays the one bold line, exactly as the update row and
+    /// the Installing row were made not to compete with it.
+    @Test func noAnswerCompetesWithTheStateHeader() {
+        for checked in [MenuCheckAnswer(verdict: .available, latest: "0.3.3"),
+                        MenuCheckAnswer(verdict: .current),
+                        MenuCheckAnswer(verdict: .ahead, latest: "0.3.1"),
+                        MenuCheckAnswer(verdict: .unknown, error: "offline")] {
+            let items = menu(install(checked: checked))
+            #expect(items.first?.isProminent == false)
+            #expect(items.filter(\.isProminent).count == 1)
+        }
+        let checking = menu(install(checking: true))
+        #expect(checking.first?.isProminent == false)
+        #expect(checking.filter(\.isProminent).count == 1)
+    }
+
+    /// Exactly one of each role in any menu the app can draw: the controller
+    /// finds both rows with `first(where:)`, and a second row wearing either
+    /// role would leave one of them unreachable and un-mutated.
+    @Test func eachRoleNamesAtMostOneRow() {
+        for checking in [true, false] {
+            for installing in [nil, "0.3.3"] {
+                for line in [nil, "Update available: 0.3.3"] {
+                    let items = menu(install(checking: checking,
+                                             checked: MenuCheckAnswer(verdict: .available,
+                                                                      latest: "0.3.3"),
+                                             installing: installing, updateLine: line))
+                    #expect(items.filter { $0.role == .updateGroup }.count == 1)
+                    #expect(items.filter { $0.role == .checkForUpdates }.count == 1)
+                }
+            }
+        }
+    }
+}
+
 /// The file behind that row: written by the app before the child starts, read
 /// back only by the version that wrote it, and ended three ways.
 @Suite struct InstallInProgressTests {

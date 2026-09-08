@@ -938,6 +938,102 @@ import Testing
                 "CONTRIBUTING never tells anyone the filtered run exists")
     }
 
+    /// CONTRIBUTING says *when* a change first shows, both halves, each with
+    /// the reason beside it.
+    ///
+    /// The two halves contradict a reader's intuition — a menu-bar change
+    /// shows in the version that carries it, a fix to the installer's own
+    /// feedback one update later — so a paragraph that states them without
+    /// saying who runs the code is memorised and misapplied, which is how
+    /// 0.3.2's map convention reached nobody. Hence the reason is pinned in
+    /// the same sentence as its half, not merely somewhere in the document.
+    ///
+    /// The phrases are the ones that carry the claim and appear nowhere else
+    /// in the file (both were absent before this paragraph landed), so this
+    /// is not a grep for a word that would pass on its own; prose only, or
+    /// the next fenced example of a CHANGELOG entry could satisfy it.
+    ///
+    /// Each half is pinned to its own reason clause rather than to the word
+    /// `running`: a line long enough to state a half is long enough to say
+    /// `running` about something else, and then the reason can be cut with
+    /// the gate green.
+    @Test func contributingSaysWhenAChangeFirstShowsAndWhy() throws {
+        let prose = Self.unfencedLines(of: try Self.read("CONTRIBUTING.md"))
+        for (half, reason) in [("the version that carries it", "it is your code running"),
+                               ("the version being replaced", "running the plan")] {
+            let carriers = prose.filter { $0.contains(half) }
+            try #require(!carriers.isEmpty,
+                         "CONTRIBUTING no longer says \"\(half)\" — half the first-shows convention is gone")
+            for sentence in carriers {
+                #expect(sentence.contains(reason),
+                        "\"\(half)\" is stated without its reason \"\(reason)\" beside it: \(sentence)")
+            }
+        }
+    }
+
+    /// PLATFORM-FACTS no longer offers `terminal-notifier -sender` as a way
+    /// to post under another app's identity.
+    ///
+    /// The row read "✅ … verified by screenshot" until 3.1.0 was measured:
+    /// the flag is gone, the tool warns on stderr, exits 0 and posts under
+    /// its own bundle anyway. An absence proof, because the failure mode is
+    /// the old claim coming back — but the row also has to still be *there*,
+    /// so `#require` stops if nothing in the table mentions the flag.
+    ///
+    /// Read as one row rather than as the whole document: `✅` appears in four
+    /// other rows of the same table, so `!document.contains("✅")` would be a
+    /// gate that can only pass by deleting the table — but inside the row the
+    /// tick is refused wherever it stands, not only in `Displays?`: a tick in
+    /// the notes cell sells the flag just as well. Prose only — the section
+    /// quotes the tool's own warning inside a fence. A row wrapped across
+    /// two lines fails the cell count rather than passing on the first line,
+    /// and two rows claiming the flag fail the count: the last is a guess.
+    @Test func platformFactsNoLongerSellsSenderAsAWorkingIdentityFlag() throws {
+        let facts = try Self.read("docs/PLATFORM-FACTS.md")
+        let prose = Self.unfencedLines(of: facts)
+        let rows = prose.filter {
+            let line = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            return line.hasPrefix("|") && line.contains("-sender")
+        }
+        try #require(rows.count == 1,
+                     "the transport table has \(rows.count) rows naming -sender, not one: \(rows)")
+        let cells = rows[0].split(separator: "|", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        // Four cells between five pipes split into six components, the first
+        // and the last empty; `>= 4` is what a row wrapped after the second
+        // cell also clears, which is how it used to pass on its first line.
+        try #require(cells.count >= 6, "the -sender row is not four cells wide: \(rows[0])")
+        let displays = cells[2]
+        #expect(!rows[0].contains("✅"),
+                "PLATFORM-FACTS presents -sender as a working transport again: \(rows[0])")
+        #expect(displays.contains("❌"), "the -sender row says neither yes nor no: \(rows[0])")
+        #expect(!rows[0].contains("verified by screenshot"),
+                "the -sender row still claims a screenshot verified it: \(rows[0])")
+
+        // The recipe below the table was written when the flag worked, and a
+        // corrected table over an uncorrected recipe is the doubled input.
+        #expect(prose.contains { $0.contains("was retired by the tool") },
+                "the measurement paragraph under the table is gone")
+        #expect(prose.contains { $0.contains("was withdrawn in 3.x") },
+                "the recipe's own sentence about -sender no longer says it was withdrawn")
+        #expect(prose.contains { $0.contains("changes the icon to Script Editor's") },
+                "nothing names the osascript fallback and the identity it posts under")
+
+        // Three sentences saying the flag is dead prove nothing about a fourth
+        // saying it works, so pin the population too: outside the fences the
+        // flag is named on four lines — the table row, the measurement
+        // paragraph, the caller sentence under it, the TCC checklist line —
+        // and five times, because the measurement paragraph names it twice.
+        // Counted as mentions and not only as lines, because a claim can be
+        // reinstated in front of a line that already carries one.
+        let carriers = prose.filter { $0.contains("-sender") }
+        let mentions = carriers.reduce(0) { $0 + $1.components(separatedBy: "-sender").count - 1 }
+        #expect(carriers.count == 4,
+                "PLATFORM-FACTS names -sender on \(carriers.count) unfenced lines, not the four that all say it is dead: \(carriers)")
+        #expect(mentions == 5,
+                "PLATFORM-FACTS names -sender \(mentions) times outside the fences, not five — a sentence about the flag was added or removed: \(carriers)")
+    }
+
     /// The reader above, held to the four Makefile shapes that have each
     /// defeated a text gate in this repository's history — asserted over
     /// synthetic text, because the only way to drive them against the real
@@ -1131,6 +1227,360 @@ import Testing
             Self.expectStaysInsideTheCheckout(command, run: "a `ray build` in \(manifest)")
         }
     }
+
+    // MARK: - the menu that must not rebuild itself
+
+    /// Every function of a Swift source in which `needle` appears **as code**,
+    /// in source order, with `<top level>` for an occurrence outside any
+    /// function.
+    ///
+    /// Comments and string literals are stripped first, and that is the whole
+    /// reason this is a reader rather than a `grep`: three of the four
+    /// occurrences of `removeAllItems` in `StatusItemController.swift` are
+    /// comments explaining why the call is where it is, and the gate below
+    /// would have passed on any arrangement of them. A "never calls X" check
+    /// that reads the comment saying it never calls X has been shipped in this
+    /// repository before (T36, 7 Sep).
+    ///
+    /// A wrapped call — `menu\n    .removeAllItems()` — is found, because the
+    /// stripped text is searched as a whole and not line by line. Empty is
+    /// empty: a needle that appears nowhere gives `[]`, which the caller must
+    /// tell from `["menuNeedsUpdate"]` itself.
+    static func functionsCalling(_ needle: String, in source: String) -> [String] {
+        // Strip in one pass, keeping newlines and the byte offsets of what is
+        // left, so a `func` line and a call are still in the same order.
+        var code = ""
+        var inLineComment = false, inString = false, inMultilineString = false
+        var blockDepth = 0
+        let characters = Array(source)
+        var index = 0
+        while index < characters.count {
+            let character = characters[index]
+            let next = index + 1 < characters.count ? characters[index + 1] : "\0"
+            let third = index + 2 < characters.count ? characters[index + 2] : "\0"
+
+            if inLineComment {
+                if character.isNewline { inLineComment = false; code.append("\n") }
+                index += 1
+                continue
+            }
+            if blockDepth > 0 {
+                if character == "/" && next == "*" { blockDepth += 1; index += 2; continue }
+                if character == "*" && next == "/" { blockDepth -= 1; index += 2; continue }
+                if character.isNewline { code.append("\n") }
+                index += 1
+                continue
+            }
+            if inMultilineString {
+                if character == "\"" && next == "\"" && third == "\"" {
+                    inMultilineString = false; index += 3; continue
+                }
+                if character.isNewline { code.append("\n") }
+                index += 1
+                continue
+            }
+            if inString {
+                // A single-line literal ends at the newline whatever else is
+                // on the line: the compiler rejects one that does not, so a
+                // scanner that carries it on is reading a file no compiler
+                // would accept — and it reads the whole rest of it as string.
+                // One stray quote, and the gate is green about nothing.
+                if character.isNewline { inString = false; code.append("\n"); index += 1; continue }
+                // The escape skip stops at the same edge, for the same reason:
+                // a trailing backslash must not step the scanner over the
+                // newline and take the line below into the literal with it.
+                if character == "\\" && !next.isNewline { index += 2; continue }
+                if character == "\"" { inString = false }
+                index += 1
+                continue
+            }
+            if character == "/" && next == "/" { inLineComment = true; index += 2; continue }
+            if character == "/" && next == "*" { blockDepth = 1; index += 2; continue }
+            if character == "\"" && next == "\"" && third == "\"" {
+                inMultilineString = true; index += 3; continue
+            }
+            if character == "\"" { inString = true; index += 1; continue }
+            code.append(character)
+            index += 1
+        }
+
+        // Then walk what is left, keeping a stack of the functions whose braces
+        // are still open. A stack and not the last name seen: a nested function
+        // or a closure that ends must hand the enclosing one back, or every
+        // call after the first nested `}` is attributed to the wrong function.
+        var open: [(name: String, depth: Int)] = []
+        var depth = 0
+        var found: [String] = []
+        var pendingFunction: String?
+        for line in code.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
+            if let range = line.range(of: "func ") {
+                let rest = line[range.upperBound...]
+                let name = rest.prefix { $0.isLetter || $0.isNumber || $0 == "_" }
+                if !name.isEmpty { pendingFunction = String(name) }
+            }
+            // Where on the line the call is, so it is attributed to the
+            // function whose braces are open AT that point — not to whatever
+            // was open before the line, and not to whatever survives it.
+            // `func f(_ m: NSMenu) { m.removeAllItems() }` is legal Swift and
+            // opens and closes `f` on the line that calls: appending before
+            // the walk reads `<top level>`, appending after it reads the same,
+            // and only the offset of the call itself reads `f`.
+            let callOffset = line.range(of: needle)
+                .map { line.distance(from: line.startIndex, to: $0.lowerBound) }
+            for (offset, character) in line.enumerated() {
+                if offset == callOffset { found.append(open.last?.name ?? "<top level>") }
+                if character == "{" {
+                    depth += 1
+                    if let pendingFunction {
+                        open.append((pendingFunction, depth))
+                    }
+                    pendingFunction = nil
+                } else if character == "}" {
+                    if open.last?.depth == depth { open.removeLast() }
+                    depth -= 1
+                }
+            }
+        }
+        return found
+    }
+
+    /// `removeAllItems()` is called in exactly one function, and it is the one
+    /// AppKit calls before the menu is shown.
+    ///
+    /// It is what closes a menu that is tracking — measured in
+    /// `Prototypes/T8Probe`, which is why T8's option c is buildable at all —
+    /// so every change made while the menu is up mutates the items that are
+    /// already there. That is one line away from being undone: a second
+    /// `menu.removeAllItems()` in a refresh path looks like tidy code, works in
+    /// every unit test, and dismisses the menu under the one person who clicked
+    /// the row this ticket exists for.
+    ///
+    /// The count is asserted as well as the name, so the gate cannot pass by
+    /// the rebuild disappearing: `[]` would mean the menu is never rebuilt at
+    /// all, which is a different bug and not a pass.
+    @Test func onlyMenuNeedsUpdateRebuildsTheMenu() throws {
+        let controller = try Self.read("Sources/SimmerApp/StatusItemController.swift")
+        #expect(Self.functionsCalling("removeAllItems", in: controller) == ["menuNeedsUpdate"], """
+        `removeAllItems()` closes a tracking NSMenu. It belongs in `menuNeedsUpdate`, which \
+        AppKit calls before a menu is shown, and nowhere else — a change made while the menu \
+        is up mutates the items that are there (`applyUpdateGroup`).
+        """)
+        // The other rebuild AppKit offers, and the one a refresh path reaches
+        // for by name. `refreshTitle` is the menu bar's TITLE and must stay
+        // clear of the menu itself.
+        #expect(Self.functionsCalling("menu.update()", in: controller) == [])
+        // Submenus, on the spelling this file actually uses. The line here was
+        // `functionsCalling("setSubmenu", …) == []` and could not fail: the
+        // file assigns `item.submenu =`, so `setSubmenu` was absent whatever
+        // the code did and the gate was green about nothing (R2 nit 7). The
+        // needle is the assignment and not the receiver's name, or the gate
+        // reads only the rows that happen to call their item `item`.
+        //
+        // Named rather than counted, and both in `apply`: that is the one
+        // mutator that sets every property a model can decide, including back
+        // to nothing. A submenu attached anywhere else — a refresh path
+        // reaching for the one row it wants to change — leaves the rest of
+        // that row carrying the last state's leftovers, and does it to an item
+        // in a menu that is on screen.
+        #expect(Self.functionsCalling(".submenu = ", in: controller) == ["apply", "apply"], """
+        Attaching a submenu belongs to `apply` and nowhere else: it is the only place that resets         every property of a row, so attaching a submenu elsewhere leaves the row half-updated         under an open menu. Two lines, because `apply` clears the submenu before it decides.
+        """)
+    }
+
+    /// The answer reaches the person once: as a row while the menu is open, as
+    /// a banner while it is not — and the banner path clears it, or the next
+    /// open shows the row for an answer the banner has already delivered.
+    ///
+    /// A source-text gate and not a behavioural test, because `simmer-app` has
+    /// no test target: `NSMenu` and `NSStatusItem` are not reachable from a
+    /// unit suite here, and a test that drove them would put a menu on this
+    /// Mac's screen. The three sites are named rather than counted, so the
+    /// gate cannot pass by the clear moving somewhere else: `startCheck`
+    /// before a check begins, `deliverAnswer` after the banner is posted,
+    /// `menuDidClose` when the row that was seen goes away.
+    @Test func theBannerPathClearsTheAnswerItDelivered() throws {
+        let controller = try Self.read("Sources/SimmerApp/StatusItemController.swift")
+        #expect(Self.functionsCalling("answer = nil", in: controller)
+            == ["startCheck", "deliverAnswer", "menuDidClose"], """
+        The answer is visible on exactly one channel: the row while the menu is open, the \
+        banner while it is not. `deliverAnswer` clears it after posting the banner, or the \
+        next open shows the row for an answer the banner already gave — "never neither, and \
+        never both", the doc comment above `deliverAnswer`.
+        """)
+    }
+
+    /// The reader above, held to the shapes that defeat a text gate — over
+    /// synthetic sources, because the only way to drive them against the real
+    /// controller is to edit it, and evidence that has to be produced by hand
+    /// is evidence nobody reproduces.
+    @Test func theFunctionReaderIsNotFooledByCommentsOrLineEndings() {
+        let call = "        menu.removeAllItems()\n"
+        func source(_ body: String) -> String { "final class C {\n" + body + "}\n" }
+
+        // The plain case, and the one the gate asserts.
+        #expect(Self.functionsCalling("removeAllItems", in: source(
+            "    func menuNeedsUpdate(_ menu: NSMenu) {\n" + call + "    }\n"))
+            == ["menuNeedsUpdate"])
+
+        // The same function written on one line — legal Swift, and the shape
+        // any rewrite reaches for. The line opens the function, calls, and
+        // closes it, so the attribution has to be taken where the call is and
+        // not before the line's braces are walked or after they all are.
+        #expect(Self.functionsCalling("removeAllItems", in: source(
+            "    func menuNeedsUpdate(_ m: NSMenu) { m.removeAllItems() }\n"))
+            == ["menuNeedsUpdate"])
+
+        // A comment that names the call — every kind. This is the real file's
+        // shape: three of its four occurrences are these.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            /// `removeAllItems()` is what closes a tracking menu.
+            func applyUpdateGroup() {
+                // never removeAllItems() here
+                /* not even removeAllItems() in a block comment */
+                item.title = "x"
+            }
+        """)) == [])
+
+        // A string literal holding the needle, single-line and multi-line —
+        // a log line or a test message must not read as a call.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            func log() {
+                print("removeAllItems() closes a tracking menu")
+                print(\"\"\"
+                removeAllItems() closes a tracking menu
+                \"\"\")
+            }
+        """)) == [])
+
+        // A literal nobody closed — one stray quote, which the compiler
+        // catches and a text scanner does not. The literal has to end at the
+        // newline, or every line below it is inside a string and the gate is
+        // green about a file it never read.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            func log() {
+                print("removeAllItems)
+            }
+            func applyUpdateGroup() {
+                menu.removeAllItems()
+            }
+        """)) == ["applyUpdateGroup"])
+
+        // And a literal whose last character is a backslash: the escape skip
+        // must not step over the newline either, or the line below is read as
+        // more of the string and the call on it is never seen.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            func applyUpdateGroup() {
+                print("a literal ending in a backslash \\
+                menu.removeAllItems()
+            }
+        """)) == ["applyUpdateGroup"])
+
+        // CRLF and CR alone: the same answer, not a name with a carriage
+        // return glued to it and not one long line whose braces never close.
+        let crlf = source("    func menuNeedsUpdate() {\n" + call + "    }\n")
+            .replacingOccurrences(of: "\n", with: "\r\n")
+        #expect(Self.functionsCalling("removeAllItems", in: crlf) == ["menuNeedsUpdate"])
+        let cr = source("    func menuNeedsUpdate() {\n" + call + "    }\n")
+            .replacingOccurrences(of: "\n", with: "\r")
+        #expect(Self.functionsCalling("removeAllItems", in: cr) == ["menuNeedsUpdate"])
+
+        // Wrapped over two lines, which is how a formatter leaves a long
+        // receiver — and the shape a line-by-line reader misses.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            func menuNeedsUpdate() {
+                statusItem.menu?
+                    .removeAllItems()
+            }
+        """)) == ["menuNeedsUpdate"])
+
+        // A nested closure that ends must hand the enclosing function back,
+        // or the second call is attributed to whatever came last.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            func refreshTitle() {
+                DispatchQueue.main.async { print(1) }
+                menu.removeAllItems()
+            }
+        """)) == ["refreshTitle"])
+
+        // A function whose name merely BEGINS with the good one does not
+        // answer for it: this is the fixture that makes the gate fail, and it
+        // is why the assertion is on equality and not on `contains`.
+        let impostor = source("""
+            func menuNeedsUpdateSoon() {
+                menu.removeAllItems()
+            }
+        """)
+        #expect(Self.functionsCalling("removeAllItems", in: impostor) == ["menuNeedsUpdateSoon"])
+        #expect(Self.functionsCalling("removeAllItems", in: impostor) != ["menuNeedsUpdate"])
+
+        // Two calls, one of them where it does not belong: the gate's real
+        // failure, planted, so that the red is known to be reachable.
+        #expect(Self.functionsCalling("removeAllItems", in: source("""
+            func menuNeedsUpdate() {
+                menu.removeAllItems()
+            }
+            func applyUpdateGroup() {
+                menu.removeAllItems()
+            }
+        """)) == ["menuNeedsUpdate", "applyUpdateGroup"])
+
+        // Outside any function at all — a top-level statement in a `main.swift`
+        // — is named rather than dropped: absent and "somewhere I cannot name"
+        // are different answers.
+        #expect(Self.functionsCalling("removeAllItems", in: "menu.removeAllItems()\n")
+            == ["<top level>"])
+
+        // And a needle that is nowhere is empty, which the caller tells from
+        // the good answer by equality.
+        #expect(Self.functionsCalling("removeAllItems", in: source(
+            "    func menuNeedsUpdate() {\n        item.title = \"x\"\n    }\n")) == [])
+    }
+
+    /// Every reader of the update record defends itself against a seamed one.
+    ///
+    /// A seamed check writes a record like any other, and that record then
+    /// answers "checked" for the next 24 hours. `UpdateCommand`'s own reader
+    /// has defended itself against that since the seam existed; `AppState`'s
+    /// daily-check guard did not, so one `SIMMER_FAKE_LATEST=… simmer update`
+    /// bought a day's silence from the menu bar. A trap fixed in one reader of
+    /// a question is a finding in every other reader of the same question.
+    ///
+    /// The gate reads the text between the lookup and the brace that opens
+    /// whatever the lookup guards, which is where a defence has to be — and it
+    /// asserts WHICH files read the record, so a third reader added without a
+    /// defence fails here rather than passing for being unlisted.
+    @Test func everyReaderOfTheUpdateRecordDefendsAgainstASeamedOne() throws {
+        var readers: [(file: String, guarded: String)] = []
+        // The enumerator that `BannerTextTests` already sweeps `Sources` with,
+        // rather than a second one: one reader of "every Swift file we ship".
+        for url in BannerTextTests.swiftFiles(under: "Sources") {
+            let code = Self.codeOnly(of: try String(contentsOf: url, encoding: .utf8))
+            var from = code.startIndex
+            while let call = code.range(of: "readUpdateRecord(", range: from..<code.endIndex) {
+                // The declaration in `Ledger` is not a reader: it is the
+                // question, and it is every caller that has to defend itself.
+                guard !code[..<call.lowerBound].hasSuffix("func ") else {
+                    from = call.upperBound
+                    continue
+                }
+                let brace = code.range(of: "{", range: call.upperBound..<code.endIndex)
+                readers.append((url.lastPathComponent,
+                                String(code[call.upperBound..<(brace?.lowerBound ?? code.endIndex)])))
+                from = call.upperBound
+            }
+        }
+        #expect(readers.map(\.file) == ["AppState.swift", "UpdateCommand.swift"], """
+        The readers of the update record are the list this gate defends. One appeared or \
+        moved: add it here, with the `seamed` defence the others have.
+        """)
+        for reader in readers {
+            #expect(reader.guarded.contains("seamed"), """
+            \(reader.file) reads the update record and never mentions `seamed` before acting \
+            on it. A seamed check writes a record that answers "checked" for 24 hours, so the \
+            reader that believes it suppresses the next real check for a day.
+            """)
+        }
+    }
 }
 
 /// What `bootstrap.sh`'s `fetch()` does to a checkout that is already there.
@@ -1282,6 +1732,250 @@ import Testing
             "/usr/bin/git",
         ] + args)
         return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The ref comes from the repository `resolve_ref` asked, not from
+    /// whatever cloned the directory.
+    ///
+    /// `resolve_ref` runs `git ls-remote "$REPO"`, and `fetch` fetched
+    /// `origin` — the same split that made `simmer update --apply` fail while
+    /// switching on 8 Sep 2026, one file over. On a maintainer's Mac `origin`
+    /// is a development checkout, so the installer died with `no such ref:
+    /// v0.3.3` for a release that plainly exists, and the failure banner of
+    /// the app recommended this very script.
+    ///
+    /// Both arms, because they read different refs: a TAG needs
+    /// `--tags --force` from `$REPO`, and a BRANCH needs
+    /// `refs/remotes/origin/$REF` to have come from `$REPO` too — otherwise it
+    /// fast-forwards onto the stale `origin/main` this directory last saw and
+    /// prints "updated the existing checkout" over it.
+    @Test func theRefComesFromTheRepositoryItWasResolvedFromNotFromOrigin() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-bootstrap-lag-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let library = root.appendingPathComponent("lib.sh")
+        try Self.library(at: library)
+
+        // What GitHub holds.
+        let release = root.appendingPathComponent("release")
+        Self.git(["init", "--quiet", "--initial-branch=main", release.path])
+        try "one".write(to: release.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", release.path, "add", "f"])
+        Self.git(["-C", release.path, "commit", "--quiet", "-m", "one"])
+
+        // A development checkout, cloned before the release — the origin that
+        // lags. Cloning HERE, in this order, is what makes the fixture the Mac.
+        let dev = root.appendingPathComponent("dev")
+        Self.git(["clone", "--quiet", release.path, dev.path])
+
+        try "two".write(to: release.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", release.path, "commit", "--quiet", "-am", "two"])
+        Self.git(["-C", release.path, "tag", "v9.9.9"])
+
+        // The install checkout, cloned from the one that lags.
+        let checkout = root.appendingPathComponent("co")
+        Self.git(["clone", "--quiet", dev.path, checkout.path])
+        #expect(Self.git(["-C", checkout.path, "remote", "get-url", "origin"]) == dev.path,
+                "the fixture's origin is not the checkout that lags")
+        #expect(Self.git(["-C", checkout.path, "log", "-1", "--format=%s"]) == "one")
+
+        // The tag: it exists only in `$REPO`, and this is the failure of 8 Sep.
+        let tag = Self.fetch(ref: "v9.9.9", into: checkout, from: release, library: library)
+        #expect(tag.code == 0, "\(tag.out)")
+        #expect(!tag.out.contains("no such ref"), "\(tag.out)")
+        #expect(Self.git(["-C", checkout.path, "describe", "--tags"]) == "v9.9.9",
+                "the tag came from origin, which does not have it")
+
+        // The branch: `origin/main` must have come from `$REPO` as well, or
+        // the fast-forward lands on the stale commit and says it updated.
+        Self.git(["-C", checkout.path, "checkout", "--quiet", "main"])
+        let branch = Self.fetch(ref: "main", into: checkout, from: release, library: library)
+        #expect(branch.code == 0, "\(branch.out)")
+        #expect(Self.git(["-C", checkout.path, "log", "-1", "--format=%s"]) == "two",
+                "said it updated and landed on the stale origin: \(branch.out)")
+
+        // And `origin/*` still means "where this directory came from". The
+        // refspec writes what `$REPO` holds into a namespace of this script's
+        // own, because on a fork or mirror install the two are different
+        // repositories and `origin/main` naming one while `remote get-url
+        // origin` names the other is a lie that only shows up there
+        // (R1 finding 3). Red before that: this ref was overwritten with the
+        // release repository's commit.
+        #expect(Self.git(["-C", checkout.path, "rev-parse", "refs/remotes/origin/main"])
+            == Self.git(["-C", dev.path, "rev-parse", "main"]),
+                "the release's branches were written into origin/*")
+        #expect(Self.git(["-C", checkout.path, "rev-parse", "refs/remotes/origin/main"])
+            != Self.git(["-C", release.path, "rev-parse", "main"]),
+                "origin/main and remote get-url origin now name two repositories")
+        #expect(Self.git(["-C", checkout.path, "rev-parse",
+                          "refs/remotes/simmer-release/main"])
+            == Self.git(["-C", release.path, "rev-parse", "main"]),
+                "the namespace the branch arm reads is not what $REPO holds")
+    }
+
+    /// A branch deleted at `$REPO` leaves no ref behind in the namespace the
+    /// branch arm reads.
+    ///
+    /// Nothing pruned `refs/remotes/simmer-release/*`, so a branch deleted
+    /// upstream stayed there at the commit it was last seen at — and it is the
+    /// ref, not the branch, that the arm at `bootstrap.sh:188` tests:
+    /// `SIMMER_REF=<that branch>` took the BRANCH arm, fast-forwarded onto the
+    /// stale commit and printed "updated the existing checkout" for a branch
+    /// `$REPO` no longer has (R1 finding 4). Red before `--prune`: the ref was
+    /// still there, and `for-each-ref` listed two.
+    ///
+    /// The two arms after it are why the word is safe in this command, each
+    /// otherwise taken on trust. The refspec is explicit, so `--prune` prunes
+    /// only what that refspec covers and leaves `origin/*` — which keeps
+    /// meaning "where this directory came from" — untouched; and `--prune`
+    /// without `--prune-tags` deletes no tag, so a tag dropped upstream and a
+    /// tag that exists only in this checkout both survive. Both measured here
+    /// rather than assumed, because a prune that reached either would be a
+    /// deletion in a reader's own repository.
+    @Test func aBranchDeletedUpstreamLeavesNoStaleRefBehind() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-bootstrap-prune-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let library = root.appendingPathComponent("lib.sh")
+        try Self.library(at: library)
+
+        // What GitHub holds: main and a tag, plus a branch that is about to be
+        // deleted there — a release branch merged and tidied up is the shape.
+        let release = root.appendingPathComponent("release")
+        Self.git(["init", "--quiet", "--initial-branch=main", release.path])
+        try "one".write(to: release.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", release.path, "add", "f"])
+        Self.git(["-C", release.path, "commit", "--quiet", "-m", "one"])
+        Self.git(["-C", release.path, "tag", "v9.9.9"])
+        Self.git(["-C", release.path, "checkout", "--quiet", "-b", "topic"])
+        try "topic".write(to: release.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", release.path, "commit", "--quiet", "-am", "topic"])
+        Self.git(["-C", release.path, "checkout", "--quiet", "main"])
+
+        let checkout = root.appendingPathComponent("co")
+        Self.git(["clone", "--quiet", release.path, checkout.path])
+        // A tag of this checkout's own, which exists in no repository the
+        // fetch talks to.
+        Self.git(["-C", checkout.path, "tag", "local-only"])
+
+        // The reader installs the branch once, which is what puts the ref in
+        // the namespace at all.
+        let first = Self.fetch(ref: "topic", into: checkout, from: release, library: library)
+        #expect(first.code == 0, "\(first.out)")
+        #expect(!Self.git(["-C", checkout.path, "rev-parse",
+                           "refs/remotes/simmer-release/topic"]).isEmpty,
+                "the fixture never saw the branch it is supposed to lose")
+
+        // Deleted at `$REPO`, and the reader comes back for something else.
+        Self.git(["-C", release.path, "branch", "-D", "topic"])
+        Self.git(["-C", release.path, "tag", "-d", "v9.9.9"])
+        Self.git(["-C", checkout.path, "checkout", "--quiet", "main"])
+        let second = Self.fetch(ref: "main", into: checkout, from: release, library: library)
+        #expect(second.code == 0, "\(second.out)")
+
+        // Read as the whole namespace rather than as one ref: a second stale
+        // branch would pass a `rev-parse` of the first one's absence.
+        #expect(Self.git(["-C", checkout.path, "for-each-ref", "--format=%(refname)",
+                          "refs/remotes/simmer-release"])
+            == "refs/remotes/simmer-release/main",
+                "a branch deleted at $REPO left a ref the branch arm fast-forwards onto")
+
+        #expect(!Self.git(["-C", checkout.path, "rev-parse",
+                           "refs/remotes/origin/topic"]).isEmpty,
+                "the prune reached origin/*, which is not this script's namespace to delete")
+        #expect(Self.git(["-C", checkout.path, "tag"]) == "local-only\nv9.9.9",
+                "the prune deleted a tag in the reader's own checkout")
+    }
+
+    /// A checkout that cannot switch says why, and does not invent a reason.
+    ///
+    /// `git checkout --quiet "$REF" 2>/dev/null || die "no such ref: $REF"`
+    /// said `no such ref: v9.9.9` about a tag `git rev-parse --verify`
+    /// resolves, because the redirect swallowed git's own line and the refusal
+    /// then guessed at the one cause it knew a word for (R1 finding 2). It is
+    /// the same lie as "the tag is not there" on the `update --apply` side of
+    /// this ticket, which is why that sentence says where it looked and not
+    /// why it failed — and this half is the half a person reaches by pasting
+    /// the command the failure banner used to recommend.
+    ///
+    /// A local change to a file the tag would overwrite is the shape: git
+    /// refuses, the tag exists, and nothing about the ref is wrong.
+    @Test func aCheckoutThatCannotSwitchShowsGitsReasonRatherThanGuessing() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-bootstrap-dirty-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let library = root.appendingPathComponent("lib.sh")
+        try Self.library(at: library)
+
+        let origin = root.appendingPathComponent("origin")
+        Self.git(["init", "--quiet", "--initial-branch=main", origin.path])
+        try "one".write(to: origin.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", origin.path, "add", "f"])
+        Self.git(["-C", origin.path, "commit", "--quiet", "-m", "one"])
+        // The tag carries a different `f`, so switching to it has to write
+        // that file — which is what a local change to it forbids.
+        try "two".write(to: origin.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", origin.path, "commit", "--quiet", "-am", "two"])
+        Self.git(["-C", origin.path, "tag", "v9.9.9"])
+
+        let checkout = root.appendingPathComponent("co")
+        Self.git(["clone", "--quiet", "--branch", "main", origin.path, checkout.path])
+        Self.git(["-C", checkout.path, "reset", "--quiet", "--hard", "HEAD~1"])
+        try "mine".write(to: checkout.appendingPathComponent("f"),
+                         atomically: true, encoding: .utf8)
+
+        let result = Self.fetch(ref: "v9.9.9", into: checkout, from: origin, library: library)
+
+        #expect(result.code != 0, "a checkout that cannot switch passed: \(result.out)")
+        // The tag is there. Anything claiming otherwise is a sentence about a
+        // cause this script cannot know.
+        #expect(Self.git(["-C", checkout.path, "rev-parse", "--verify", "--quiet", "v9.9.9^{commit}"])
+            == Self.git(["-C", origin.path, "rev-parse", "v9.9.9^{commit}"]),
+                "the fixture's tag did not arrive, so this test is about the wrong failure")
+        #expect(!result.out.contains("no such ref"),
+                "the tag resolves and the refusal named the ref: \(result.out)")
+        // git's own words, which are the only thing here that knows the reason.
+        #expect(result.out.contains("would be overwritten"), "\(result.out)")
+        #expect(result.out.contains("could not switch"), "\(result.out)")
+        // And the tree is where it was — the next thing `main` does is
+        // `make -C "$DIR" install`.
+        #expect((try? String(contentsOf: checkout.appendingPathComponent("f"),
+                             encoding: .utf8)) == "mine",
+                "the checkout was moved under a refusal")
+        // One competing fix, not two: git's nine-line hint block stays out,
+        // the same rule the merge arm holds.
+        #expect(!result.out.contains("hint:"), "\(result.out)")
+    }
+
+    /// An absent ref still says so — the arm the message above must not be
+    /// confused with. Both refusals now carry git's own line; only this one
+    /// is about the ref.
+    @Test func anAbsentRefIsStillNamedAsAnAbsentRef() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-bootstrap-absent-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let library = root.appendingPathComponent("lib.sh")
+        try Self.library(at: library)
+
+        let origin = root.appendingPathComponent("origin")
+        Self.git(["init", "--quiet", "--initial-branch=main", origin.path])
+        try "one".write(to: origin.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        Self.git(["-C", origin.path, "add", "f"])
+        Self.git(["-C", origin.path, "commit", "--quiet", "-m", "one"])
+
+        let checkout = root.appendingPathComponent("co")
+        Self.git(["clone", "--quiet", "--branch", "main", origin.path, checkout.path])
+
+        let result = Self.fetch(ref: "v0.0.1", into: checkout, from: origin, library: library)
+        #expect(result.code != 0, "\(result.out)")
+        #expect(result.out.contains("could not switch"), "\(result.out)")
+        // git's own words name the ref here, which is the difference.
+        #expect(result.out.contains("did not match") || result.out.contains("invalid reference"),
+                "git's reason for an absent ref is missing: \(result.out)")
     }
 
     @Test func fetchTellsATagFromABranchAndRefusesADivergedCheckout() throws {

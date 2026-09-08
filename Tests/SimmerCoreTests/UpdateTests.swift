@@ -270,6 +270,55 @@ import Testing
         #expect(!check(installed: "0.2.0", latest: "error").updateAvailable)
     }
 
+    /// Every one of the answer row's titles puts a value from the report into
+    /// its sentence, so a verdict that arrives with that value empty draws a
+    /// degenerate one: `"Update available:  — you have 0.3.2"`,
+    /// `"…is ahead of the newest release ()"`, `"Could not check for updates — "`.
+    /// `MenuModel.answerGroup` (`MenuModel.swift:403`) says in prose that
+    /// `check` never answers that way and draws the titles unguarded; this is
+    /// the assertion that says it. R2 nit 6.
+    ///
+    /// The last row is the one that can actually happen. A record whose
+    /// `latest` and `error` are both empty is a legal ledger state — a file
+    /// written before the `error` field existed, or a truncated one — and the
+    /// cache path reads it straight back into `report`. What stops the
+    /// degenerate title there is one line, `UpdateCommand.swift:161`: delete
+    /// `if report.error.isEmpty { report.error = "no release information" }`
+    /// and this row goes red with an empty reason, which is the menu drawing
+    /// "Could not check for updates — " and sending the reader to a terminal.
+    ///
+    /// The `Set` line is what keeps the loop from being vacuous: all four
+    /// verdicts have to be in the sweep for the switch to have looked at them.
+    @Test func noVerdictArrivesWithHalfOfItsSentenceEmpty() {
+        let blank = ledger()
+        blank.writeUpdateRecord(.init(checkedAt: 1_800_000_000, latest: "", error: "",
+                                      installed: "0.2.0"))
+        let reports = [
+            check(installed: "0.2.0", latest: "v0.3.0"),                // available
+            check(installed: "0.2.0", latest: "v0.2.0"),                // current
+            check(installed: "0.3.0", latest: "v0.2.0"),                // ahead
+            check(installed: "0.2.0", latest: "error"),                 // the source said why
+            check(installed: "0.2.0", latest: ""),                      // nothing was asked
+            check(installed: "0.2.0", latest: "nightly"),               // cannot compare
+            check(installed: "0.2.0", latest: "v0.3.0", cached: true),  // never checked
+            check(installed: "0.2.0", latest: "v0.3.0", cached: true, ledger: blank),
+        ]
+        #expect(Set(reports.map(\.verdict.rawValue))
+            == ["available", "current", "ahead", "unknown"])
+        for report in reports {
+            switch report.verdict {
+            case .available, .ahead:
+                #expect(!report.latestDisplay.isEmpty,
+                        "\(report.verdict.rawValue) with no release to name")
+            case .unknown:
+                #expect(!report.error.isEmpty, "unknown with no reason to give")
+            case .current:
+                // The only title that names neither: it is about the install.
+                break
+            }
+        }
+    }
+
     /// A tag that is not a version is a question this cannot answer, not a
     /// reason to claim currency.
     @Test func anUnparseableTagIsUnknownRatherThanCurrent() {
@@ -487,6 +536,49 @@ import Testing
         #expect(plan.steps[2].described.contains("install NOTES=0"))
         // Something has to bring the menu bar back — `make install` quits it.
         #expect(plan.reopenBundle == "/Users/x/Applications/Simmer.app")
+    }
+
+    /// The release's files come from the remote the release was read from, not
+    /// from whatever cloned this checkout.
+    ///
+    /// The two were the same remote by coincidence, and on a maintainer's Mac
+    /// they are not: `origin` there is a dev checkout whose `main` lags the
+    /// release, so the fetch succeeded, the tag was not in it, and the switch
+    /// failed with `pathspec 'v0.3.3' did not match any file(s) known to git`
+    /// (8 Sep 2026, twice). The remote is asserted as an ARGUMENT of the
+    /// fetch, because a fetch with no remote argument is the defect.
+    @Test func theInstallerFetchNamesTheReleasesOwnRemote() {
+        let decision = UpdateCommand.applyPlan(
+            for: report(installed: "0.2.0", latest: "v0.3.0", kind: .bundle),
+            exists: all)
+        guard case .run(let plan) = decision else { #expect(Bool(false), "\(decision)"); return }
+
+        let fetch = plan.steps[0]
+        #expect(fetch.arguments.last == Install.repositoryURL, "\(fetch.arguments)")
+        // `--force`, kept and pinned: a tag can legitimately have moved on the
+        // remote, and a stale local one installs the wrong thing in silence.
+        #expect(fetch.arguments.contains("--force"), "\(fetch.arguments)")
+
+        // And the plan carries it as data, with the tag as published and the
+        // checkout — the three things the failure sentence names, so that
+        // nothing downstream re-derives them from an argument list.
+        #expect(plan.releaseFetch == UpdateCommand.ReleaseFetch(
+            tag: "v0.3.0", checkout: "/Users/x/.local/share/simmer",
+            remote: Install.repositoryURL))
+    }
+
+    /// Somebody's own checkout keeps fetching its own `origin`, and carries no
+    /// `releaseFetch`: what that plan installs is what its default branch
+    /// holds, so its upstream is the only remote that answers the question.
+    @Test func aCheckoutsOwnPlanStillFetchesItsOwnOrigin() {
+        let decision = UpdateCommand.applyPlan(
+            for: checkoutBundle(), exists: all,
+            checkoutState: { _ in .init(branch: "main", defaultBranch: "main", clean: true) })
+        guard case .run(let plan) = decision else { #expect(Bool(false), "\(decision)"); return }
+
+        #expect(plan.releaseFetch == nil)
+        #expect(plan.steps[0].described == "git -C \(mine) fetch --quiet")
+        #expect(!plan.steps[0].described.contains(Install.repositoryURL))
     }
 
     /// The honesty property, asserted rather than promised: the printed command
@@ -1005,6 +1097,19 @@ import Testing
 
     /// Every sentence names the version, says whether anything changed, and
     /// ends with something to do. Those three are the whole point of it.
+    ///
+    /// `plan()` carries no `releaseFetch`, and that is what these three rows
+    /// are about: a plan that fetched no release from a remote it was told
+    /// about. The **one exception** to the last expectation is the `switching`
+    /// sentence of a plan that did — `theSwitchingSentenceDoesNotSendThemBackToTheRemoteThatFailed` —
+    /// and the ban on `git ` below is about which command, not about git. What this row
+    /// refuses is the failing command — the thing nobody typed, which belongs
+    /// on the second line as evidence. What that sentence ends in is a **look**
+    /// and not a fix: `git -C <checkout> status`, read-only, true whether the
+    /// tag is absent or the tree is dirty, and named because the fix this
+    /// phase would otherwise print fetches the remote that just failed.
+    /// A command in the message earns its place by being the reader's next
+    /// step; the pin and its exception say the same thing from two sides.
     @Test(arguments: [UpdateCommand.ApplyPhase.fetching, .switching, .installing])
     func eachInstallPhaseSaysWhatHappenedAndWhatToRun(_ phase: UpdateCommand.ApplyPhase) {
         let text = sentence(phase)
@@ -1047,6 +1152,123 @@ import Testing
             phase: .relaunching, plan: plan(kind: .checkout), updateCommand: "")
         #expect(text.hasSuffix("."), "\(text)")
         #expect(!text.contains("open "), "\(text)")
+    }
+
+    /// The plan of a bundle install: it fetched a release from a remote, so
+    /// there is a tag, a checkout and a remote to name.
+    private func installerPlan(
+        tag: String = "v0.9.0",
+        checkout: String = "/Users/x/.local/share/simmer",
+        remote: String = "https://github.com/moralesl/simmer"
+    ) -> UpdateCommand.ApplyPlan {
+        UpdateCommand.ApplyPlan(
+            steps: [], target: "0.9.0", reopenBundle: "/Applications/Simmer.app",
+            releaseFetch: .init(tag: tag, checkout: checkout, remote: remote))
+    }
+
+    /// The 8 Sep sentence, and what it could not tell anybody.
+    ///
+    /// "Could not switch to simmer 0.3.3. Nothing was installed." was true of
+    /// an install checkout whose `origin` lagged the release — and equally
+    /// true of a dirty tree, a moved tag and a disk that filled up. What it
+    /// now adds is where it looked: the tag, the checkout, and the remote it
+    /// fetched from.
+    @Test func theSwitchingSentenceNamesTheTagTheCheckoutAndTheRemote() {
+        let text = UpdateCommand.failureSentence(
+            phase: .switching, plan: installerPlan(),
+            updateCommand: "curl -fsSL https://github.com/moralesl/simmer/raw/main/bootstrap.sh | bash")
+
+        #expect(text.contains("Could not switch to simmer 0.9.0"), "\(text)")
+        #expect(text.contains("Nothing was installed"), "\(text)")
+        #expect(text.contains("the tag v0.9.0"), "\(text)")
+        #expect(text.contains("/Users/x/.local/share/simmer"), "\(text)")
+        #expect(text.contains("after fetching from https://github.com/moralesl/simmer"), "\(text)")
+        // The two clauses a truncated banner body must still show come first.
+        #expect(text.hasPrefix("Could not switch to simmer 0.9.0. Nothing was installed."),
+                "a banner truncates its tail, so the tail is the diagnostic half: \(text)")
+    }
+
+    /// It says where it looked, never why it failed.
+    ///
+    /// The same arm is reached by a dirty tree or a stray file in that
+    /// checkout — Luis's own is on a detached HEAD — so a sentence asserting
+    /// "the tag is not there" would be a lie about those. git's own words are
+    /// the second line, which `theFailingCommandIsTheSecondLineNotTheFirst`
+    /// pins.
+    @Test func theSwitchingSentenceClaimsNoCause() {
+        let text = UpdateCommand.failureSentence(
+            phase: .switching, plan: installerPlan(), updateCommand: "")
+        for cause in ["is not in", "does not exist", "missing", "not there", "lags", "dirty",
+                      "because"] {
+            #expect(!text.contains(cause),
+                    "a sentence composed from the plan cannot know the cause: \(text)")
+        }
+    }
+
+    /// And it never recommends the place that just failed.
+    ///
+    /// The update command for a bundle install is the one-paste installer,
+    /// which fetches the same remote the plan just fetched — so a failure
+    /// sentence ending in `Run: curl … | bash` sent Luis to a command that
+    /// failed for the identical reason. What it names instead reads the
+    /// checkout and stays true whatever the cause.
+    @Test func theSwitchingSentenceDoesNotSendThemBackToTheRemoteThatFailed() {
+        let installer = "curl -fsSL https://github.com/moralesl/simmer/raw/main/bootstrap.sh | bash"
+        let text = UpdateCommand.failureSentence(
+            phase: .switching, plan: installerPlan(), updateCommand: installer)
+
+        #expect(!text.contains("curl"), "\(text)")
+        #expect(!text.contains("| bash"), "\(text)")
+        #expect(!text.contains("Run: "), "\(text)")
+        #expect(text.hasSuffix("Look with: git -C /Users/x/.local/share/simmer status"), "\(text)")
+    }
+
+    /// The fetch that never got that far: the remote it TRIED is the fact this
+    /// sentence exists for on the day GitHub is unreachable while `origin` is
+    /// perfectly fine — the case a plan fetching `origin` never had.
+    @Test func theFetchingSentenceNamesTheRemoteItTried() {
+        let text = UpdateCommand.failureSentence(
+            phase: .fetching, plan: installerPlan(), updateCommand: "brew upgrade simmer")
+        #expect(text.contains("Could not fetch simmer 0.9.0 from https://github.com/moralesl/simmer"),
+                "\(text)")
+        #expect(text.contains("Nothing on this Mac was changed"), "\(text)")
+        // Nothing was fetched, so the retry is not a recommendation of a
+        // failure: it stays.
+        #expect(text.contains("Run: brew upgrade simmer"), "\(text)")
+    }
+
+    /// A plan that fetched no release from a remote it was told about — the
+    /// one-step Homebrew plan, a checkout fast-forwarding its own upstream —
+    /// says exactly what it said before, byte for byte.
+    @Test func aPlanWithNoReleaseFetchKeepsItsOldSentences() {
+        #expect(UpdateCommand.failureSentence(phase: .fetching, plan: plan(),
+                                              updateCommand: "brew upgrade simmer")
+            == "Could not fetch simmer 0.9.0. Nothing on this Mac was changed. "
+                + "Run: brew upgrade simmer")
+        #expect(UpdateCommand.failureSentence(phase: .switching, plan: plan(),
+                                              updateCommand: "brew upgrade simmer")
+            == "Could not switch to simmer 0.9.0. Nothing was installed. "
+                + "Run: brew upgrade simmer")
+    }
+
+    /// T1's deliverable 4, pinned by equality because nothing pinned its
+    /// order: the phase first — which part stopped is what decides whether
+    /// anything on this Mac changed — then the command, then git's own words.
+    /// The sentence above is for the person; this line is what makes the click
+    /// answerable tomorrow, and it is how the 8 Sep failure was diagnosed in
+    /// one read.
+    @Test func theLogLineIsPhaseThenCommandThenGitsOwnWords() {
+        let step = UpdateCommand.ApplyStep(
+            executable: "/usr/bin/git",
+            arguments: ["-C", "/Users/x/.local/share/simmer", "checkout", "--quiet", "v0.9.0"],
+            phase: .switching)
+        #expect(UpdateCommand.applyLogSentence(
+            .failed(step: step,
+                    detail: "error: pathspec 'v0.9.0' did not match any file(s) known to git",
+                    plan: installerPlan()))
+            == "update: 0.9.0 failed while switching — "
+                + "git -C /Users/x/.local/share/simmer checkout --quiet v0.9.0: "
+                + "error: pathspec 'v0.9.0' did not match any file(s) known to git")
     }
 
     /// The sentence is the message; the failing command and its stderr tail
@@ -1147,5 +1369,295 @@ import Testing
             }
         }
         #expect(UpdateCommand.reopenStep(bundle: "/Applications/Simmer.app").phase == .relaunching)
+    }
+}
+
+
+/// The plan's own steps, run by real `git`, against repositories this test
+/// makes — the case that got through every other test in this file.
+///
+/// Everything above asserts what the plan SAYS. On 8 Sep 2026 the plan said
+/// something correct-looking and did nothing useful: `git fetch --tags --force`
+/// in the install checkout, then `git checkout v0.3.3`, with the fetch reading
+/// the checkout's `origin` and the release read from GitHub. Both steps were
+/// right about themselves and wrong together, and no assertion over an
+/// argument list could see it. So the fixture is the shape of Luis's Mac —
+/// a "release" repository that has the tag, a "dev" clone that lags it, and an
+/// installer checkout cloned from dev — and the steps are executed.
+///
+/// Hermetic by construction, not by promise: `runStep` refuses any step whose
+/// arguments name a remote with a scheme, so a test that forgot to point the
+/// plan at its fixture cannot quietly reach github.com. The suite proves that
+/// guard by feeding it the real plan's own fetch step
+/// (`theGuardRefusesTheRealPlansOwnRemote`), which it must refuse.
+@Suite struct ApplyPlanAgainstRealGitTests {
+    /// A step naming a remote this suite may not reach. A thrown error rather
+    /// than a recorded expectation, because the check IS the reason the next
+    /// line is safe to run — `#expect` would record the issue and then spawn
+    /// the process anyway.
+    enum StepWouldLeaveTheFixture: Error, CustomStringConvertible, Equatable {
+        case remoteWithAScheme(String)
+
+        var description: String {
+            switch self {
+            case .remoteWithAScheme(let argument):
+                return "a step in this suite names \(argument) — the fixtures are plain paths, "
+                    + "and a suite that calls itself hermetic does not spawn git at a URL"
+            }
+        }
+    }
+
+    /// git with none of the tester's identity or configuration, which is the
+    /// one hermetic git this target has: `BootstrapFetchTests` established it
+    /// and a second spelling of it would be a second thing to keep in step.
+    @discardableResult
+    static func git(_ args: [String]) -> String { BootstrapFetchTests.git(args) }
+
+    static let hermeticEnvironment = [
+        "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+        "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+        "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+    ]
+
+    /// One of the plan's steps, verbatim, under that environment.
+    static func runStep(_ step: UpdateCommand.ApplyStep) throws -> (out: String, code: Int32) {
+        for argument in step.arguments
+        where argument.contains("://") || argument.hasPrefix("git@") {
+            throw StepWouldLeaveTheFixture.remoteWithAScheme(argument)
+        }
+        let result = Shell.run("/usr/bin/env",
+                               hermeticEnvironment + [step.executable] + step.arguments)
+        return (result.stdout + result.stderr, result.status)
+    }
+
+    /// The three repositories of 8 Sep, in a temporary directory.
+    ///
+    /// `release` is what GitHub holds: the commit the tag names. `dev` is a
+    /// clone taken before that tag existed — a maintainer's checkout between
+    /// pulls. `checkout` is the install checkout, cloned from `dev`, so its
+    /// `origin` is the one that lags. `home` is what `Install.detect` is given,
+    /// with symlinks resolved because `/var/folders` is one.
+    struct Fixture {
+        let root: URL, release: URL, dev: URL, checkout: URL, home: String
+
+        static func make(tagged: Bool = true) throws -> Fixture {
+            let root = URL(fileURLWithPath: FileManager.default.temporaryDirectory
+                .appendingPathComponent("simmer-origin-\(UUID().uuidString)").path)
+                .resolvingSymlinksInPath()
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+            let release = root.appendingPathComponent("release")
+            git(["init", "--quiet", "--initial-branch=main", release.path])
+            // A Makefile, because `applyPlan` refuses a checkout that has no
+            // `.git` and no `Makefile` to build from — the clone needs it.
+            try "install:\n\t@true\n".write(to: release.appendingPathComponent("Makefile"),
+                                            atomically: true, encoding: .utf8)
+            git(["-C", release.path, "add", "Makefile"])
+            git(["-C", release.path, "commit", "--quiet", "-m", "the release before the release"])
+
+            // The clone is taken HERE, before the tag: that is what "origin
+            // lags" means, and doing it in this order is what makes the
+            // fixture the Mac rather than a description of it.
+            let dev = root.appendingPathComponent("dev")
+            git(["clone", "--quiet", release.path, dev.path])
+
+            try "0.9.0".write(to: release.appendingPathComponent("VERSION"),
+                              atomically: true, encoding: .utf8)
+            git(["-C", release.path, "add", "VERSION"])
+            git(["-C", release.path, "commit", "--quiet", "-m", "release 9.9.9"])
+            if tagged { git(["-C", release.path, "tag", "v9.9.9"]) }
+
+            let checkout = root.appendingPathComponent(".local/share/simmer")
+            try FileManager.default.createDirectory(
+                at: checkout.deletingLastPathComponent(), withIntermediateDirectories: true)
+            git(["clone", "--quiet", dev.path, checkout.path])
+            return Fixture(root: root, release: release, dev: dev, checkout: checkout,
+                           home: root.path)
+        }
+
+        /// What the install checkout's `origin` actually is — printed by the
+        /// test rather than assumed, because the whole defect was a wrong
+        /// assumption about this one value.
+        var checkoutOrigin: String {
+            ApplyPlanAgainstRealGitTests.git(["-C", checkout.path, "remote", "get-url", "origin"])
+        }
+
+        var checkoutHead: String {
+            ApplyPlanAgainstRealGitTests.git(["-C", checkout.path, "rev-parse", "HEAD"])
+        }
+
+        func releaseCommit(_ ref: String) -> String {
+            ApplyPlanAgainstRealGitTests.git(["-C", release.path, "rev-parse", ref])
+        }
+
+        func tearDown() { try? FileManager.default.removeItem(at: root) }
+    }
+
+    /// A bundle install whose installer checkout is the fixture's, and a plan
+    /// that fetches the release from the fixture's release repository.
+    private func makePlan(_ fixture: Fixture, releaseRemote: String? = nil,
+                      latest: String = "v9.9.9") -> UpdateCommand.ApplyPlan? {
+        let install = Install.detect(
+            executablePath: "\(fixture.home)/Applications/Simmer.app/Contents/MacOS/simmer",
+            home: fixture.home)
+        #expect(install.source == .installer(fixture.checkout.path),
+                "the fixture is not placed as an installer checkout: \(install.source)")
+        let report = UpdateCommand.check(
+            now: 1_800_000_000, installed: "0.2.0", install: install, appVersion: nil,
+            ledger: Ledger(stateDir: fixture.root.appendingPathComponent("state")),
+            source: FakeReleaseSource(value: latest), cached: false, seamed: false)
+        let decision = UpdateCommand.applyPlan(
+            for: report, exists: { FileManager.default.fileExists(atPath: $0) },
+            releaseRemote: releaseRemote ?? fixture.release.path)
+        guard case .run(let plan) = decision else {
+            #expect(Bool(false), "no plan: \(decision)")
+            return nil
+        }
+        return plan
+    }
+
+    /// First, the defect — on real `git`, in this fixture, so that the test
+    /// below is measured against a failure rather than against nothing.
+    ///
+    /// This is the 0.3.2 plan, spelled out: fetch tags from `origin`, then
+    /// check out the tag. It is Luis's 16:20, twice, including git's own words.
+    @Test func fetchingOriginInThisFixtureFailsExactlyAsItDidOnHisMac() throws {
+        let fixture = try Fixture.make(); defer { fixture.tearDown() }
+        #expect(fixture.checkoutOrigin == fixture.dev.path,
+                "the install checkout's origin is the one that lags")
+
+        let old = UpdateCommand.ApplyStep(
+            executable: "/usr/bin/git",
+            arguments: ["-C", fixture.checkout.path, "fetch", "--tags", "--force", "--quiet"],
+            phase: .fetching)
+        let fetched = try Self.runStep(old)
+        #expect(fetched.code == 0, "the fetch itself succeeded — that was never the failure")
+
+        let switched = try Self.runStep(UpdateCommand.ApplyStep(
+            executable: "/usr/bin/git",
+            arguments: ["-C", fixture.checkout.path, "checkout", "--quiet", "v9.9.9"],
+            phase: .switching))
+        #expect(switched.code != 0, "origin lags and the tag was found anyway")
+        #expect(switched.out.contains("pathspec 'v9.9.9' did not match"),
+                "git's own words, and the line in simmer.log that made this readable: \(switched.out)")
+    }
+
+    /// And the fix: the same checkout, the same two steps, the remote the
+    /// release was read from. The tag arrives and the checkout ends on it.
+    @Test func theReleasesRemoteInstallsTheReleaseThroughACheckoutWhoseOriginLags() throws {
+        let fixture = try Fixture.make(); defer { fixture.tearDown() }
+        let plan = try #require(makePlan(fixture))
+
+        // The plan is the real one: three steps, and `make install` is not run
+        // here — this suite is about the two git steps.
+        #expect(plan.steps.count == 3)
+        #expect(plan.releaseFetch == .init(tag: "v9.9.9", checkout: fixture.checkout.path,
+                                           remote: fixture.release.path))
+
+        let fetched = try Self.runStep(plan.steps[0])
+        #expect(fetched.code == 0, "\(fetched.out)")
+        let switched = try Self.runStep(plan.steps[1])
+        #expect(switched.code == 0, "\(switched.out)")
+
+        #expect(fixture.checkoutHead == fixture.releaseCommit("v9.9.9"),
+                "the checkout is not on the release's commit")
+        #expect(Self.git(["-C", fixture.checkout.path, "describe", "--tags"]) == "v9.9.9")
+        // And `origin` is untouched by all of it: fetching a URL updates no
+        // remote-tracking branch, which is exactly right for a checkout that
+        // only ever sits on tags.
+        #expect(fixture.checkoutOrigin == fixture.dev.path)
+    }
+
+    /// The inversion: the release's own remote does not have the tag either.
+    /// Nothing is installed, and the sentence names all three of the things
+    /// that decide what a person does next.
+    @Test func aTagMissingEverywhereIsRefusedWithTheCheckoutTheRemoteAndTheTag() throws {
+        let fixture = try Fixture.make(tagged: false); defer { fixture.tearDown() }
+        let plan = try #require(makePlan(fixture))
+        let before = fixture.checkoutHead
+
+        #expect(try Self.runStep(plan.steps[0]).code == 0, "the fetch has nothing to fail on")
+        let switched = try Self.runStep(plan.steps[1])
+        #expect(switched.code != 0, "a tag that exists nowhere was switched to")
+        #expect(fixture.checkoutHead == before, "the checkout was moved under a failure")
+
+        let sentence = UpdateCommand.failureSentence(
+            phase: .switching, plan: plan,
+            updateCommand: "curl -fsSL https://github.com/moralesl/simmer/raw/main/bootstrap.sh | bash")
+        #expect(sentence.contains(fixture.checkout.path), "\(sentence)")
+        #expect(sentence.contains(fixture.release.path), "\(sentence)")
+        #expect(sentence.contains("v9.9.9"), "\(sentence)")
+        #expect(!sentence.contains("curl"), "\(sentence)")
+    }
+
+    /// A tag that moved. `--force` is in the plan for exactly this, and this
+    /// is what pins it: the local `v9.9.9` points somewhere else, and the
+    /// release's is what gets installed.
+    ///
+    /// Without `--force` the fetch REFUSES the tag update and exits non-zero,
+    /// so the ending is a wrong install either way — silently the stale one
+    /// before `--force`, and a failed update without it.
+    @Test func aLocalTagThatMovedIsReplacedRatherThanInstalled() throws {
+        let fixture = try Fixture.make(); defer { fixture.tearDown() }
+        let stale = fixture.checkoutHead
+        Self.git(["-C", fixture.checkout.path, "tag", "v9.9.9", stale])
+        #expect(Self.git(["-C", fixture.checkout.path, "rev-parse", "v9.9.9"]) == stale)
+
+        let plan = try #require(makePlan(fixture))
+        #expect(try Self.runStep(plan.steps[0]).code == 0)
+        #expect(try Self.runStep(plan.steps[1]).code == 0)
+
+        #expect(fixture.checkoutHead == fixture.releaseCommit("v9.9.9"),
+                "the stale local tag was installed instead of the release")
+        #expect(fixture.checkoutHead != stale)
+    }
+
+    /// The release's remote is unreachable while `origin` is perfectly fine —
+    /// an offline maintainer, or GitHub down. The fetch fails, nothing is
+    /// changed, and the `.fetching` sentence names the remote it tried; a plan
+    /// that fetched `origin` never had this case at all.
+    @Test func anUnreachableReleaseRemoteFailsFetchingAndNamesIt() throws {
+        let fixture = try Fixture.make(); defer { fixture.tearDown() }
+        let gone = fixture.root.appendingPathComponent("not-a-repository").path
+        let plan = try #require(makePlan(fixture, releaseRemote: gone))
+        let before = fixture.checkoutHead
+
+        let fetched = try Self.runStep(plan.steps[0])
+        #expect(fetched.code != 0, "a fetch from nowhere succeeded: \(fetched.out)")
+        #expect(fixture.checkoutHead == before, "nothing on this Mac was changed")
+
+        let sentence = UpdateCommand.failureSentence(phase: .fetching, plan: plan,
+                                                     updateCommand: "")
+        #expect(sentence.contains(gone), "the sentence names the remote it tried: \(sentence)")
+        #expect(sentence.contains("Nothing on this Mac was changed"), "\(sentence)")
+    }
+
+    /// And the reverse: `origin` is gone while the release's remote answers.
+    /// The old plan could not install here at all; this one does not consult
+    /// `origin`, so it installs the release.
+    @Test func anOriginThatVanishedDoesNotStopTheInstall() throws {
+        let fixture = try Fixture.make(); defer { fixture.tearDown() }
+        try FileManager.default.removeItem(at: fixture.dev)
+        let plan = try #require(makePlan(fixture))
+
+        #expect(try Self.runStep(plan.steps[0]).code == 0,
+                "the plan consulted the origin it does not need")
+        #expect(try Self.runStep(plan.steps[1]).code == 0)
+        #expect(fixture.checkoutHead == fixture.releaseCommit("v9.9.9"))
+    }
+
+    /// The hermetic guard, inverted: the real plan's own fetch step names
+    /// `https://github.com/moralesl/simmer`, and this suite must refuse to run
+    /// it. Without this the guard is decoration — every step above happens to
+    /// carry a plain path, so nothing would have exercised it.
+    @Test func theGuardRefusesTheRealPlansOwnRemote() throws {
+        let fixture = try Fixture.make(); defer { fixture.tearDown() }
+        let plan = try #require(makePlan(fixture, releaseRemote: Install.repositoryURL))
+        #expect(throws: StepWouldLeaveTheFixture.remoteWithAScheme(Install.repositoryURL)) {
+            _ = try Self.runStep(plan.steps[0])
+        }
+        // The steps that name no remote stay runnable, or the guard would have
+        // made the suite green by refusing everything.
+        #expect(throws: Never.self) { _ = try Self.runStep(plan.steps[1]) }
     }
 }

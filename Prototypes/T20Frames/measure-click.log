@@ -1,0 +1,9 @@
+retrying the opening click — the menu was not up
+0-baseline	open=true	closes=0	window=true	items=19
+1-synthetic-click-on-the-custom-row	open=true	closes=0	window=true	items=19
+2-after-the-posted-click	open=false	closes=1	window=false	items=19
+handler-runs=0
+AXIsProcessTrusted=false
+checkRow.item.title=Check for Updates… hasAction=true hasTarget=true isEnabled=true
+checkRow.view.accessibilityLabel=Check for Updates… role=AXMenuItem isElement=true enabled=true
+SKIP the menu never stayed open — nothing was measured (opens=1)

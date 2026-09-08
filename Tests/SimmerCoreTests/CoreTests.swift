@@ -566,6 +566,28 @@ import Testing
                                    executablePath: "simmer").isSeamed)
     }
 
+    /// A seamed process reads nothing from the network, because
+    /// `makeReleaseSource` hands it a source that cannot reach it. The menu
+    /// bar's daily-check guard rests on that one layer down — "the seam bars
+    /// the network in `makeReleaseSource`", `AppState.swift:126` — and nothing
+    /// asserted it, so the comment was the whole guarantee.
+    ///
+    /// All three answers, because the interesting one is the middle: told what
+    /// to answer, a fake; seamed and not told, a source that reads nothing;
+    /// neither, the real one. The seamed source's own answer is asserted too,
+    /// since "not GitHub" would also be satisfied by something that hangs.
+    @Test func aSeamedProcessGetsAReleaseSourceThatCannotReachTheNetwork() {
+        func source(_ env: [String: String]) -> ReleaseSource {
+            SimmerEnvironment(env: env, isTTY: false,
+                              executablePath: "/usr/local/bin/simmer").makeReleaseSource()
+        }
+        #expect(source(["SIMMER_FAKE_NOW": "1800000000"]) is SeamedReleaseSource)
+        #expect(source(["SIMMER_FAKE_LATEST": "v9.9.9"]) is FakeReleaseSource)
+        #expect(source(["SIMMER_OWNER": "agent:x"]) is GitHubReleaseSource)
+        #expect(source(["SIMMER_FAKE_PMSET": "/tmp/switch"]).newestRelease()
+            == .unavailable("seamed — set SIMMER_FAKE_LATEST to answer this without the network"))
+    }
+
     /// A reason is free text about what someone is doing, so it carries
     /// customer names, project names and ticket numbers — and the log and the
     /// event stream keep every one of them, dated. SECURITY.md describes this

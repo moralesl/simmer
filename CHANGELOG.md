@@ -5,6 +5,17 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ## Unreleased
 
+<!-- release: patch -->
+
+### Changed
+
+- **Check for Updates… answers in the menu, without closing it.** The click used to close the menu, the check took one to three seconds, and the answer was only visible the next time you opened it — 0.3.3 added a banner on every verdict, and a banner is a channel this tool offers and never depends on. Now the row at the top of the menu says "Checking for updates…" with a spinner the moment you click, and becomes the answer in place: the release and the version you have, "already the newest release", or what stopped the check from answering. The banner is posted only when the menu was closed before the answer arrived, so the answer is somewhere on every path and never in two places at once. A second click during the check cannot start a second one, an install already under way keeps the row it needs, and a check that is refused before it starts says so instead of leaving a spinner turning. **0.3.4 is the first version that shows this** — a menu change shows in the version that carries it, unlike installer feedback, which first shows on the update after. The row that starts the check is drawn by the app rather than by AppKit, because a click on a standard menu row ends the menu; a Return on it still answers by banner, since AppKit delivers no keyboard events to a row's own view.
+
+### Fixed
+
+- **`simmer update --apply` and `bootstrap.sh` fetch the release from the repository they read it from**, rather than from the install checkout's `origin`. Where `origin` was a development checkout or a mirror that lags the release, the fetch succeeded, the tag was not in what it fetched, and the install failed while switching — `pathspec 'v0.3.3' did not match any file(s) known to git` — with the failure banner recommending the one-paste installer, which fetched the same `origin` and failed the same way. A failure while switching now names the tag, the checkout and the remote it fetched from, and no longer sends you back to that remote. Like every fix to the installer's own feedback, this one first helps on the update **after** 0.3.4: the plan is run by the version being replaced.
+- **`bootstrap.sh` no longer fast-forwards a branch install onto a commit the repository has deleted.** The branches it fetches live in a namespace of the script's own now, `refs/remotes/simmer-release/*`, and that namespace is pruned on every fetch — so a branch deleted upstream leaves no stale ref behind, the install keeps the checkout as it is and says `at <branch>` instead of "updated the existing checkout" onto a commit nobody has any more. `--prune` was measured before it was trusted: the refspec is explicit, so `origin/*` survives, and without `--prune-tags` no tag is deleted, upstream's or the checkout's own; both are arms of the test beside the fix. This shows on the next run rather than the update after, because the documented install fetches `bootstrap.sh` from `main` every time.
+
 ## 0.3.3 — 2026-09-08
 
 ### Fixed
