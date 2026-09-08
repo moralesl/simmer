@@ -350,7 +350,9 @@ public struct Ledger: Sendable {
     // MARK: log + events
 
     public func log(_ message: String, now: Int) {
-        append("\(Formats.logStamp(now))  \(message)\n", to: logFile)
+        // Discarded on purpose: the log is where a failure elsewhere is
+        // reported, so there is nowhere left for a failure OF the log to go.
+        _ = append("\(Formats.logStamp(now))  \(message)\n", to: logFile)
     }
 
     /// One JSON object per transition, append-only (CONTRACTS.md § State).
@@ -364,7 +366,7 @@ public struct Ledger: Sendable {
             ("event", .string(name)),
         ]
         pairs.append(contentsOf: fields)
-        append(JSONValue.object(pairs).serialized() + "\n", to: eventsFile)
+        _ = append(JSONValue.object(pairs).serialized() + "\n", to: eventsFile)
     }
 
     // MARK: the notification spool — the CLI's channel TO the app
@@ -405,7 +407,11 @@ public struct Ledger: Sendable {
     /// this feature.
     public var updateAttemptedFile: URL { stateDir.appendingPathComponent("update-attempted") }
 
-    public func enqueueNotification(_ request: NotificationRequest, now: Int) {
+    /// Returns whether the banner is now somebody else's to post. False is a
+    /// banner that will never arrive, and the only caller that can still say
+    /// something about it is the one that asked (`UpdateCLI`, R2 finding 8).
+    @discardableResult
+    public func enqueueNotification(_ request: NotificationRequest, now: Int) -> Bool {
         let json = JSONValue.object([
             ("v", .int(1)),
             ("ts", .int(now)),
@@ -415,7 +421,7 @@ public struct Ledger: Sendable {
             ("sound", .bool(request.sound)),
             ("actionable", .bool(request.actionable)),
         ])
-        append(json.serialized() + "\n", to: spoolFile)
+        return append(json.serialized() + "\n", to: spoolFile)
     }
 
     /// Claims the whole spool atomically (rename), so a racing append lands
@@ -1076,16 +1082,22 @@ public struct Ledger: Sendable {
     /// POSIX O_APPEND, not seek-then-write: the app's event tick and the
     /// LaunchAgent tick may append concurrently, and only kernel-level append
     /// keeps their lines whole.
-    private func append(_ text: String, to url: URL) {
+    ///
+    /// Returns whether the line actually landed. It used to return void, and
+    /// the diff that made this the SOLE channel for the starting banner made
+    /// that a defect: an `O_NOFOLLOW` refusal or a full disk lost the banner
+    /// and wrote nothing about it anywhere (R2 finding 8). A short write
+    /// counts as a failure too — a half-written JSONL line is not a banner.
+    private func append(_ text: String, to url: URL) -> Bool {
         // O_NOFOLLOW: these are append-only records inside a directory the
         // user owns, and a symlink dropped in their place would redirect every
-        // future line somewhere else entirely — silently, since the failure
-        // path here is deliberately quiet.
+        // future line somewhere else entirely.
         let fd = open(url.path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0o600)
-        guard fd >= 0 else { return }
+        guard fd >= 0 else { return false }
         defer { close(fd) }
         let data = Array(text.utf8)
-        _ = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+        let written = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+        return written == data.count
     }
 }
 

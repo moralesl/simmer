@@ -507,6 +507,18 @@ public enum UpdateCommand {
         "update: installing \(plan.target) for \(owner)"
     }
 
+    /// The line for a banner that could not even be queued.
+    ///
+    /// `simmer.log` is a DIFFERENT file from `notify-spool.jsonl`, which is
+    /// the point: the case that loses the banner is a symlink or a full disk
+    /// at the spool, and one channel has to survive it (R2 finding 8). It
+    /// names the file, because `append` knows only that the line did not land
+    /// and `ls -l` in the state directory answers why.
+    public static func applyLogSentence(bannerNotQueued plan: ApplyPlan) -> String {
+        "update: could not queue the installing banner for \(plan.target) "
+            + "— check notify-spool.jsonl in this directory"
+    }
+
     public static func applyLogSentence(_ result: ApplyResult) -> String {
         switch result {
         case .nothingToDo(let sentence):
