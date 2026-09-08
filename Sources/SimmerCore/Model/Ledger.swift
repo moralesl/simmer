@@ -708,7 +708,19 @@ public struct Ledger: Sendable {
         guard let startedText = fields["started_at"], let startedAt = Int(startedText),
               startedAt > 0, let installed = fields["installed"], installed == version
         else { return nil }
-        guard now - startedAt < InstallInProgress.maxAge else { return nil }
+        // Two-sided, and that is the whole of it: `now - startedAt < maxAge`
+        // is also true of every timestamp in the future, so a `started_at` of
+        // now + 86400 claimed to be installing forever — the immortal record
+        // the refusal to default an ABSENT `started_at` was there to prevent,
+        // left open on the other side (R2 finding 6).
+        //
+        // A future stamp reads as no record, which sends the row back to
+        // `Update available` — true whether or not something is installing,
+        // and the same direction every other unreadable shape here takes. It
+        // does make the row clickable again, but that is the 15-minute
+        // backstop's behaviour too, and both are backstops: the child clears
+        // this record on every ending it reaches.
+        guard (0..<InstallInProgress.maxAge).contains(now - startedAt) else { return nil }
         // `target` absent and `target=` empty are the same answer on purpose:
         // an install whose target this reader cannot name is still an install.
         return InstallInProgress(target: fields["target"] ?? "",

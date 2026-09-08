@@ -408,6 +408,41 @@ import Testing
         #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: edge) == nil)
     }
 
+    /// Case 14, and R2 finding 6: `now - startedAt < maxAge` is also true of
+    /// every timestamp in the FUTURE, so a clock jump — or a hand-written
+    /// record — claimed to be installing forever. The one-sided comparison
+    /// was the immortal record that refusing to default an ABSENT
+    /// `started_at` was there to prevent, left open on the other side.
+    ///
+    /// Driven through the renderer as well as the reader, because "no record"
+    /// is only the right answer if the row it produces is true: `Update
+    /// available: 0.3.2` is true whether or not something is installing.
+    @Test func aRecordFromTheFutureIsNotAnAnswerEither() throws {
+        let led = ledger()
+        // Written by a clock a day fast, read by one that is right.
+        led.writeInstallInProgress(target: "0.3.2", now: now + 86_400, installed: "0.3.1")
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: now) == nil)
+        // One second ahead is already not an answer: there is no tolerance to
+        // tune, because simmer writes `env.now()` and nothing legitimate is
+        // ever ahead of the reader.
+        led.writeInstallInProgress(target: "0.3.2", now: now + 1, installed: "0.3.1")
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: now) == nil)
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: now + 1) != nil)
+
+        let install = MenuInstall(
+            version: "0.3.1", canHandBackUnattended: true,
+            updateLine: "Update available: 0.3.2",
+            updateCommand: "brew upgrade simmer", canApplyUpdate: true,
+            releaseNotesURL: "https://example.test/v0.3.2",
+            installing: led.readInstallInProgress(writtenBy: "0.3.1", now: now)?.target)
+        let row = try #require(MenuModel.build(
+            aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000,
+                                         sleepDisabled: false),
+            batteryLine: "battery 80%, on AC", install: install).first)
+        #expect(row.title == "Update available: 0.3.2")
+        #expect(!row.children.isEmpty, "the row a person can act on came back")
+    }
+
     @Test func clearingItEndsTheState() {
         let led = ledger()
         led.writeInstallInProgress(target: "0.3.2", now: now, installed: "0.3.1")
