@@ -1009,6 +1009,20 @@ import Testing
                 "the recipe's own sentence about -sender no longer says it was withdrawn")
         #expect(prose.contains { $0.contains("changes the icon to Script Editor's") },
                 "nothing names the osascript fallback and the identity it posts under")
+
+        // Three sentences saying the flag is dead prove nothing about a fourth
+        // saying it works, so pin the population too: outside the fences the
+        // flag is named on four lines — the table row, the measurement
+        // paragraph, the caller sentence under it, the TCC checklist line —
+        // and five times, because the measurement paragraph names it twice.
+        // Counted as mentions and not only as lines, because a claim can be
+        // reinstated in front of a line that already carries one.
+        let carriers = prose.filter { $0.contains("-sender") }
+        let mentions = carriers.reduce(0) { $0 + $1.components(separatedBy: "-sender").count - 1 }
+        #expect(carriers.count == 4,
+                "PLATFORM-FACTS names -sender on \(carriers.count) unfenced lines, not the four that all say it is dead: \(carriers)")
+        #expect(mentions == 5,
+                "PLATFORM-FACTS names -sender \(mentions) times outside the fences, not five — a sentence about the flag was added or removed: \(carriers)")
     }
 
     /// The reader above, held to the four Makefile shapes that have each
