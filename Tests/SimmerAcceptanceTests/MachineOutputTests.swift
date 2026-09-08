@@ -418,6 +418,52 @@ import Testing
     /// Raycast needs none of that — it emits one plain line. This
     /// asserts the difference is real rather than assumed.
     
+    /// The "more" and "Release mine" rows follow ownership, the same rule as
+    /// the app's menu (`MenuModel.swift:200-201` and `243`, predicate for
+    /// predicate): `extend` and `down` under a name that holds nothing refuse
+    /// at exit 1, and every row carries refresh=true — so those rows were
+    /// clicks that did nothing, invisibly, whenever the only claims on the
+    /// machine were somebody else's.
+    @Test func swiftBarActionsMatchWhatTheMenuBarActuallyHolds() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["45m", "-r", "eval", "--owner", "agent:eval"])
+        let foreign = sim.run(["render", "swiftbar"]).out
+        #expect(!foreign.contains("Release mine"),
+                "a release row for a claim the menu bar does not hold")
+        #expect(foreign.contains("param1=\"15m\""),
+                "with no claim of its own, 'more' takes one")
+        #expect(!foreign.contains("param1=\"+15m\""))
+
+        sim.run(["45m", "-r", "hold", "--owner", "menubar"])
+        let mine = sim.run(["render", "swiftbar"]).out
+        #expect(mine.contains("Release mine"))
+        #expect(mine.contains("param1=\"+15m\""), "with its own claim, 'more' extends it")
+        // "Release everything" is not ownership-gated: there is something to
+        // release either way, and that row is the one a person reaches for
+        // when the claim holding the machine awake is not theirs.
+        #expect(foreign.contains("Release everything"))
+        #expect(mine.contains("Release everything"))
+    }
+
+    /// The open-ended state has its own `Release mine` row, and it was the
+    /// same defect: `down --owner menubar` refuses when the menu bar holds
+    /// nothing, and refresh=true swallows the refusal. Asserted separately
+    /// because it is a separate branch of the switch — the active case being
+    /// right proved nothing about this one.
+    @Test func swiftBarActionsFollowOwnershipWithNoDeadlineEither() {
+        let sim = Sim(); defer { sim.tearDown() }
+        sim.run(["forever", "-r", "eval", "--owner", "agent:eval"])
+        let foreign = sim.run(["render", "swiftbar"]).out
+        #expect(foreign.contains("Simmering with no deadline"), "wrong state: \(foreign)")
+        #expect(!foreign.contains("Release mine"))
+        #expect(foreign.contains("Release everything"))
+
+        sim.run(["forever", "-r", "hold", "--owner", "menubar"])
+        let mine = sim.run(["render", "swiftbar"]).out
+        #expect(mine.contains("Simmering with no deadline"), "wrong state: \(mine)")
+        #expect(mine.contains("Release mine"))
+    }
+
     @Test func swiftBarShowsTheAggregateAndTheActions() {
         let sim = Sim(); defer { sim.tearDown() }
         let idle = sim.run(["render", "swiftbar"]).out
