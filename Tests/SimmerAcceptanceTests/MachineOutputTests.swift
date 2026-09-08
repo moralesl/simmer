@@ -516,8 +516,8 @@ import Testing
     /// rather than the four that were wrong: a new command cannot join the
     /// surface without answering the question one way or the other.
     @Test(arguments: ["claim", "extend", "release", "cap", "status", "budget",
-                      "doctor", "log", "render", "notify-test", "uninstall",
-                      "update"])
+                      "guard", "doctor", "log", "render", "notify-test",
+                      "uninstall", "update"])
     func everyVerbHonoursJSON(_ verb: String) {
         let sim = Sim(); defer { sim.tearDown() }
         sim.run(["2h", "--owner", "terminal"]) // something for them to describe
@@ -587,9 +587,15 @@ import Testing
         // Each row is the whole invocation: for `run` the flag has to sit
         // BEFORE the terminator, because everything after `--` belongs to the
         // command — which is itself the behaviour under test here.
+        // `guard` is here for the same reason `run` is: its answer is what the
+        // tick DID, which goes to the log and to `events.jsonl`. Listed
+        // explicitly so this and `everyVerbHonoursJSON` cannot come to
+        // disagree about which verbs refuse — an enumeration that is one
+        // short is a gate that vouches for a verb it never named.
         for invocation in [["notify-test", "--json"],
                            ["render", "raycast", "--json"],
                            ["run", "--json", "--", "true"],
+                           ["guard", "--json"],
                            ["uninstall", "--json"]] {
             let result = sim.run(invocation)
             #expect(result.code == 1)
