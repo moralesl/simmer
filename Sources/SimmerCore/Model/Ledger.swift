@@ -519,7 +519,25 @@ public struct Ledger: Sendable {
         // silently, forever. Its lines are requests that were never posted;
         // they are drained too, and `maxAge` — not the crash — decides which
         // of them still deserve a banner.
-        var text = (try? String(contentsOf: draining, encoding: .utf8)) ?? ""
+        //
+        // …unless the name is a symlink to the SPOOL ITSELF, in which case
+        // the read follows it, the unlink below takes the link and leaves the
+        // spool, and the rename then hands the very same lines back as the
+        // fresh half: every banner posted TWICE (verified,
+        // `["one-entry", "one-entry"]`). One file cannot be both halves of
+        // one drain, so the identity is settled before the read rather than
+        // after — the recovered half is whatever the sentinel names, and a
+        // sentinel naming the spool has recovered nothing.
+        //
+        // Both sides are resolved and compared, rather than opening the
+        // sentinel `O_NOFOLLOW`: a link to a file elsewhere is a real
+        // stranded half and must keep posting (`anEmptyStrandedSentinelIsNotImmortalEither`
+        // asserts it), and `O_NOFOLLOW` refuses that one too.
+        let isTheSpoolItself = draining.resolvingSymlinksInPath().standardizedFileURL
+            == spoolFile.resolvingSymlinksInPath().standardizedFileURL
+        var text = isTheSpoolItself
+            ? ""
+            : ((try? String(contentsOf: draining, encoding: .utf8)) ?? "")
         // Unconditional, and keyed on the sentinel EXISTING rather than on
         // what it holds. Removing it only when it read as non-empty leaves
         // exactly the same immortality behind for the shapes that read as

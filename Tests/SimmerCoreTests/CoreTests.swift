@@ -1081,6 +1081,54 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: sentinel.path))
     }
 
+    /// A sentinel that is a symlink to the SPOOL ITSELF is not both halves of
+    /// one drain.
+    ///
+    /// The read follows the link and takes the spool's lines as the recovered
+    /// half; the unlink then takes the LINK and leaves the spool; the rename
+    /// puts the same file back under the same name and it is read again. Every
+    /// banner posted twice — a duplicate, which is the one direction the
+    /// review of the symlink shapes did not consider: it answered for a link
+    /// to a file elsewhere, where the target's lines post once and the target
+    /// survives, and that answer is still right.
+    ///
+    /// Fixtures through `banner(_:)` like every other drain test here: a
+    /// title-only request is dropped by the drain's text gate, so it would
+    /// assert the mechanics of draining over a shape the tool no longer
+    /// produces (adversarial case 6, and this test was the tenth fixture —
+    /// written against the tip before that gate landed).
+    @Test func aSentinelLinkedToTheSpoolIsNotBothHalvesOfOneDrain() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sentinel = ledger.spoolFile.appendingPathExtension("draining")
+        ledger.enqueueNotification(banner("one-entry"), now: 1000)
+        try? FileManager.default.createSymbolicLink(
+            atPath: sentinel.path, withDestinationPath: ledger.spoolFile.path)
+
+        #expect(ledger.drainNotifications(now: 1010).map(\.title) == ["one-entry"],
+                "one entry, one banner")
+        #expect(!FileManager.default.fileExists(atPath: sentinel.path))
+        #expect(!FileManager.default.fileExists(atPath: ledger.spoolFile.path),
+                "the spool was drained, so it is gone")
+        // And the drain is not poisoned for the next one.
+        ledger.enqueueNotification(banner("after"), now: 1020)
+        #expect(ledger.drainNotifications(now: 1030).map(\.title) == ["after"])
+
+        // The shape it must not be confused with: a link to a real file
+        // ELSEWHERE is a genuine stranded half. Its lines post, the link
+        // goes, and the target survives.
+        let elsewhere = dir.appendingPathComponent("stranded.jsonl")
+        ledger.enqueueNotification(banner("stranded"), now: 1040)
+        try? FileManager.default.moveItem(at: ledger.spoolFile, to: elsewhere)
+        try? FileManager.default.createSymbolicLink(
+            atPath: sentinel.path, withDestinationPath: elsewhere.path)
+        ledger.enqueueNotification(banner("fresh"), now: 1040)
+        #expect(ledger.drainNotifications(now: 1050).map(\.title) == ["stranded", "fresh"])
+        #expect(FileManager.default.fileExists(atPath: elsewhere.path),
+                "a file outside the spool was deleted by a drain")
+        #expect(!FileManager.default.fileExists(atPath: sentinel.path))
+    }
+
     /// The crash can land mid-`write`, so the stranded half can end without a
     /// newline. The spool is line-delimited and the boundary between two reads
     /// of it has to be one too: a partial record glued to the first whole one
