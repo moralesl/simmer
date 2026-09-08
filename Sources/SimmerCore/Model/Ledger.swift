@@ -296,9 +296,23 @@ public struct Ledger: Sendable {
         until = epoch(until)
         setAt = epoch(setAt)
         expires = epoch(expires)
-        // `expires` is contracted strictly after `until`; a value that is not
-        // is damage, and re-deriving it keeps the ceiling real for its night.
-        if expires <= until { expires = 0 }
+        // `expires` is contracted strictly after `until` AND no later than
+        // the rollover that `writeCap` derives — one night, not 75 years. A
+        // value outside that window is damage, and re-deriving it keeps the
+        // ceiling real for its own night.
+        //
+        // The upper half was missing, and it is the one shape both checks let
+        // through: `until` and `expires` each in range, `expires` strictly
+        // after `until`, mutually inconsistent. `until=1000000,
+        // expires=4102444800` read back live and every claim and every
+        // extend was then refused until 2100 — the lockout the paragraph
+        // above says this check exists to prevent, arriving from the other
+        // side.
+        //
+        // `>` and not `>=`: `Cap.rollover(after: until)` is exactly what
+        // `writeCap` records, so the value the writer produces has to read
+        // back unchanged.
+        if expires <= until || expires > Cap.rollover(after: until) { expires = 0 }
         guard until != 0 else { return nil }
         // A file written before caps expired carries no `expires`. Deriving it
         // here is what retires those caps on first read rather than stranding

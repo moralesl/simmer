@@ -1254,4 +1254,40 @@ import Testing
         try? negative.write(to: ledger.capFile, atomically: true, encoding: .utf8)
         #expect(ledger.storedCap() == nil)
     }
+
+    /// An `expires` that is too FAR out is damage too, and it was the one
+    /// shape both checks let through: `until` and `expires` each in range,
+    /// `expires` strictly after `until`, and mutually inconsistent.
+    ///
+    /// `until=1000000, expires=4102444800` read back live and
+    /// `ClaimCommand.swift:96` then refused every claim and every extend
+    /// until 2100 — the lockout the comment above this check exists to
+    /// prevent, arriving from the other side. `writeCap` cannot produce it
+    /// (`expires` is always `Cap.rollover(after: until)`, ≤ 24 h out), so it
+    /// takes a corrupt file, and re-deriving keeps the ceiling real for its
+    /// own night instead of stranding it for 75 years.
+    @Test func aCapWhoseExpiryIsTooFarOutIsDamageAndIsReDerived() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let overWide = "format=2\nuntil=1000000\nset_by=x\nset_at=1000\nexpires=4102444800\n"
+        try? overWide.write(to: ledger.capFile, atomically: true, encoding: .utf8)
+        #expect(ledger.storedCap()?.expires == Cap.rollover(after: 1_000_000),
+                "a cap whose expiry is in 2100 locks every claim out until then")
+        // And the ceiling itself survives — the direction that must not
+        // become a wrong refusal.
+        #expect(ledger.storedCap()?.until == 1_000_000)
+
+        // The boundary, which is why the check is `>` and not `>=`: the value
+        // `writeCap` itself produces must read back unchanged.
+        let onTheRollover = "format=2\nuntil=1000000\nset_by=x\nset_at=1000\n"
+            + "expires=\(Cap.rollover(after: 1_000_000))\n"
+        try? onTheRollover.write(to: ledger.capFile, atomically: true, encoding: .utf8)
+        #expect(ledger.storedCap()?.expires == Cap.rollover(after: 1_000_000))
+
+        // Asserted through `writeCap` as well, so the boundary is the real
+        // one rather than this test's arithmetic agreeing with itself.
+        #expect(ledger.writeCap(until: 3000, setBy: "terminal", now: 1000))
+        #expect(ledger.storedCap()?.expires == Cap.rollover(after: 3000),
+                "a cap round-trip through writeCap lost its expiry")
+    }
 }
