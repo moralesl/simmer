@@ -68,13 +68,31 @@ TEST_FLAGS = -Xswiftc -F -Xswiftc $(CLT_FRAMEWORKS) \
 endif
 endif
 
-.PHONY: build test test-release test-raycast skill app install uninstall clean release-check release-notes
+.PHONY: build test print-test-flags test-release test-raycast skill app install uninstall clean release-check release-notes
 
 build:
 	swift build -c release
 
 test:
 	swift test $(TEST_FLAGS)
+
+# The flags above, on one line, for a FILTERED run: `swift test` alone finds no
+# Testing.framework on a CLT-only Mac and has been seen exiting 0 on a failed
+# compile, and `make test` has no spelling for "just this one test" — so
+#
+#   swift test $(make -s print-test-flags) --filter <TestName>       # in a shell
+#
+# is the loop a person actually runs thirty times while fixing one finding.
+#
+# It must never become a second definition of the flags: it echoes $(TEST_FLAGS)
+# and nothing else, so it cannot say something different from `test`, and
+# StructureTests asserts that both recipes name that same variable. Prints an
+# empty line where TEST_FLAGS is empty (a selected Xcode), which is correct —
+# bare `swift test` works there and the substitution expands to nothing.
+#
+# `@`, because the substitution takes whatever this prints as arguments.
+print-test-flags:
+	@echo $(TEST_FLAGS)
 
 # The same acceptance suite, driving the RELEASE binary instead of the debug
 # one `swift test` builds for itself.
