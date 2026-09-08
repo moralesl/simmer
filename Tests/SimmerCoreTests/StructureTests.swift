@@ -239,8 +239,11 @@ import Testing
 
         // GitHub's rule for the anchor it generates from a heading: lowercased,
         // punctuation dropped, spaces to hyphens.
-        let headings = try Self.read("docs/FAQ.md")
-            .components(separatedBy: "\n")
+        // Through `scriptLines`, the one reader of this question: measured on
+        // this FAQ, `components(separatedBy: "\n")` finds 5 anchors under LF
+        // and under CRLF but exactly 1 under CR alone — and not the one this
+        // test looks for, so it failed saying the link left the FAQ.
+        let headings = Self.scriptLines(of: try Self.read("docs/FAQ.md"))
             .filter { $0.hasPrefix("#") }
             .map { heading -> String in
                 let words = heading.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces).lowercased()
@@ -1229,7 +1232,14 @@ import Testing
             ("a second call in a comment", body + "\n# main \"$@\" used to live here\n"),
         ] {
             let library = try Self.libraryText(of: script)
-            #expect(!library.split(separator: "\n").contains {
+            // `scriptLines`, not `split(separator: "\n")`: on the CRLF row
+            // that spelling returned the whole library as ONE line, which is
+            // never equal to `main "$@"`, so this absence proof PASSED no
+            // matter what `libraryText` had done — the one row written to
+            // catch a CRLF bug was the one row that could not fail. Measured
+            // on a CRLF library with the call deliberately left in: the old
+            // spelling passes, this one fails.
+            #expect(!StructureTests.scriptLines(of: library).contains {
                 $0.trimmingCharacters(in: .whitespacesAndNewlines) == "main \"$@\""
             }, "\(shape): the library still calls main — sourcing it installs simmer")
             #expect(library.contains("fetch() {"), "\(shape): the library lost its functions")
