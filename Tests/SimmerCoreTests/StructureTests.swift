@@ -1273,7 +1273,22 @@ import Testing
         // for by name. `refreshTitle` is the menu bar's TITLE and must stay
         // clear of the menu itself.
         #expect(Self.functionsCalling("menu.update()", in: controller) == [])
-        #expect(Self.functionsCalling("setSubmenu", in: controller) == [])
+        // Submenus, on the spelling this file actually uses. The line here was
+        // `functionsCalling("setSubmenu", …) == []` and could not fail: the
+        // file assigns `item.submenu =`, so `setSubmenu` was absent whatever
+        // the code did and the gate was green about nothing (R2 nit 7). The
+        // needle is the assignment and not the receiver's name, or the gate
+        // reads only the rows that happen to call their item `item`.
+        //
+        // Named rather than counted, and both in `apply`: that is the one
+        // mutator that sets every property a model can decide, including back
+        // to nothing. A submenu attached anywhere else — a refresh path
+        // reaching for the one row it wants to change — leaves the rest of
+        // that row carrying the last state's leftovers, and does it to an item
+        // in a menu that is on screen.
+        #expect(Self.functionsCalling(".submenu = ", in: controller) == ["apply", "apply"], """
+        Attaching a submenu belongs to `apply` and nowhere else: it is the only place that resets         every property of a row, so attaching a submenu elsewhere leaves the row half-updated         under an open menu. Two lines, because `apply` clears the submenu before it decides.
+        """)
     }
 
     /// The answer reaches the person once: as a row while the menu is open, as
