@@ -175,7 +175,7 @@ Neither field changed meaning when the second clock arrived; `fits` and the exit
   Written **before** the attempt starts, because the attempt quits `Simmer.app` and there is nothing left to write it afterwards; still seeing that release on the next daily check is what proves the attempt did not land.
   Its absence is the safe default in the same way `auto-update.on`'s presence is: with no record, the next check tries.
   Cleared when a person turns unattended installs **on**, so asking for them is asking for an attempt — and not when they turn them off, because nothing reads it while off and forgetting it there would make the answer depend on which way the switch moved last.
-- `update-installing` — the release an install **now under way** is installing, `key=value` (`target`, `started_at`, `installed`).
+- `update-in-progress` — the release an install **now under way** is installing, `key=value` (`target`, `started_at`, `installed`).
   A fourth fact about the same tag, and therefore a fourth file: what the last check found, what a person has been told, what this Mac has tried by itself, and what is happening right now.
   Written by the app before it spawns `simmer update --apply`, so the menu tells the truth from the first time it is opened after the click — the menu being the one channel that cannot be suppressed and can be re-read, which a banner is neither.
   Read back **only by the version that wrote it**, exactly as `update-check` is, and that is what ends it on the good path: the app that comes back is the new version, so the record it left behind is invisible to it and nothing has to delete anything.

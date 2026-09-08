@@ -96,7 +96,7 @@ struct UpdateCLI: ParsableCommand {
             // all. Clearing it here is what keeps a refusal from leaving a
             // menu row that says "Installing…" for fifteen minutes.
             ledger.log(UpdateCommand.applyLogSentence(result), now: env.now())
-            ledger.clearInstallingUpdate()
+            ledger.clearInstallInProgress()
             // Do not re-inline this. Assembling the Outcome here instead —
             // which is what these four endings used to do — is what the
             // RELEASE binary silently lost: one line where the CLI built it,

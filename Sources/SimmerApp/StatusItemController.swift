@@ -102,7 +102,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                   // above: the click that started the install
                                   // is what closed this menu, and the next
                                   // open is the first chance to say so.
-                                  installing: AppState.shared.installingUpdate())
+                                  installing: AppState.shared.installInProgress())
         let model = MenuModel.build(aggregate: ctx.aggregate(), batteryLine: batteryLine,
                                     install: install)
         for entry in model {

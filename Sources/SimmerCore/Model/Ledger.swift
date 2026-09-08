@@ -497,7 +497,7 @@ public struct Ledger: Sendable {
         var checked = 0
         var latest = "", error = "", installed = ""
         var seamed = false
-        // CRLF is one Character in Swift; see `readInstallingUpdate`.
+        // CRLF is one Character in Swift; see `readInstallInProgress`.
         for line in text.split(whereSeparator: \.isNewline) {
             let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
             guard parts.count == 2 else { continue }
@@ -568,7 +568,7 @@ public struct Ledger: Sendable {
     // whether it was ever shown. The menu is what a person opens when a banner
     // is missed, so the menu has to know.
 
-    public struct InstallingRecord: Sendable, Equatable {
+    public struct InstallInProgress: Sendable, Equatable {
         /// What is being installed, as a person reads it (`0.3.2`, or
         /// `0.3.2 or newer` for the plan that installs a branch). Empty is a
         /// legitimate value and NOT the same as no record: it means an install
@@ -598,19 +598,19 @@ public struct Ledger: Sendable {
         public static let maxAge = 15 * 60
     }
 
-    public var updateInstallingFile: URL { stateDir.appendingPathComponent("update-installing") }
+    public var updateInProgressFile: URL { stateDir.appendingPathComponent("update-in-progress") }
 
-    public func writeInstallingUpdate(target: String, now: Int, installed: String) {
+    public func writeInstallInProgress(target: String, now: Int, installed: String) {
         _ = atomicWrite("""
         target=\(Claim.singleLine(target, limit: 64))
         started_at=\(now)
         installed=\(Claim.singleLine(installed, limit: 64))
 
-        """, to: updateInstallingFile)
+        """, to: updateInProgressFile)
     }
 
-    public func clearInstallingUpdate() {
-        try? FileManager.default.removeItem(at: updateInstallingFile)
+    public func clearInstallInProgress() {
+        try? FileManager.default.removeItem(at: updateInProgressFile)
     }
 
     /// The install under way, **only if this binary is the one that started
@@ -620,8 +620,8 @@ public struct Ledger: Sendable {
     /// two answers to one question is not an answer, and the safe direction
     /// here is to claim nothing — the row falls back to "Update available",
     /// which is true whether or not something is installing.
-    public func readInstallingUpdate(writtenBy version: String, now: Int) -> InstallingRecord? {
-        guard let text = try? String(contentsOf: updateInstallingFile, encoding: .utf8)
+    public func readInstallInProgress(writtenBy version: String, now: Int) -> InstallInProgress? {
+        guard let text = try? String(contentsOf: updateInProgressFile, encoding: .utf8)
         else { return nil }
         var fields: [String: String] = [:]
         // `whereSeparator: \.isNewline` and NOT `separator: "\n"`: Swift
@@ -639,10 +639,10 @@ public struct Ledger: Sendable {
         guard let startedText = fields["started_at"], let startedAt = Int(startedText),
               startedAt > 0, let installed = fields["installed"], installed == version
         else { return nil }
-        guard now - startedAt < InstallingRecord.maxAge else { return nil }
+        guard now - startedAt < InstallInProgress.maxAge else { return nil }
         // `target` absent and `target=` empty are the same answer on purpose:
         // an install whose target this reader cannot name is still an install.
-        return InstallingRecord(target: fields["target"] ?? "",
+        return InstallInProgress(target: fields["target"] ?? "",
                                 startedAt: startedAt, installed: installed)
     }
 
@@ -650,7 +650,7 @@ public struct Ledger: Sendable {
     /// tag in the same shape, so they are read by the same three lines.
     private func readTag(from file: URL) -> String {
         guard let text = try? String(contentsOf: file, encoding: .utf8) else { return "" }
-        // CRLF is one Character in Swift; see `readInstallingUpdate`.
+        // CRLF is one Character in Swift; see `readInstallInProgress`.
         for line in text.split(whereSeparator: \.isNewline) {
             let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
             if parts.count == 2, parts[0] == "latest" { return String(parts[1]) }

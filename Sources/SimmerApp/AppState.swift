@@ -286,7 +286,7 @@ final class AppState {
         let ledger = Ledger(stateDir: environment.stateDir)
         let startedAt = environment.now()
         if let target {
-            ledger.writeInstallingUpdate(target: target, now: startedAt,
+            ledger.writeInstallInProgress(target: target, now: startedAt,
                                          installed: AppState.version)
             NotificationCenter.default.post(name: .simmerStateChanged, object: nil)
         }
@@ -299,10 +299,10 @@ final class AppState {
         // change is what ends the record instead.
         child.terminationHandler = { _ in
             let ledger = Ledger(stateDir: self.environment.stateDir)
-            guard let record = ledger.readInstallingUpdate(
+            guard let record = ledger.readInstallInProgress(
                 writtenBy: AppState.version, now: self.environment.now()),
                 record.startedAt == startedAt else { return }
-            ledger.clearInstallingUpdate()
+            ledger.clearInstallInProgress()
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .simmerStateChanged, object: nil)
             }
@@ -314,7 +314,7 @@ final class AppState {
             // Nothing was started, so nothing is installing: the record goes
             // before the banner, or the menu keeps a promise the failure has
             // already broken.
-            ledger.clearInstallingUpdate()
+            ledger.clearInstallInProgress()
             NotificationCenter.default.post(name: .simmerStateChanged, object: nil)
             Notifier.shared.post([NotificationRequest(
                 title: "Could not start the update",
@@ -325,10 +325,10 @@ final class AppState {
 
     /// The install this Mac has started and not yet seen the end of, for the
     /// menu. Nil unless THIS version wrote it and it is recent enough to be
-    /// plausible — `Ledger.readInstallingUpdate` decides both.
-    func installingUpdate() -> String? {
+    /// plausible — `Ledger.readInstallInProgress` decides both.
+    func installInProgress() -> String? {
         Ledger(stateDir: environment.stateDir)
-            .readInstallingUpdate(writtenBy: AppState.version, now: environment.now())?
+            .readInstallInProgress(writtenBy: AppState.version, now: environment.now())?
             .target
     }
 

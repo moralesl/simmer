@@ -366,7 +366,7 @@ import Testing
 
 /// The file behind that row: written by the app before the child starts, read
 /// back only by the version that wrote it, and ended three ways.
-@Suite struct InstallingRecordTests {
+@Suite struct InstallInProgressTests {
     private func ledger() -> Ledger {
         Ledger(stateDir: FileManager.default.temporaryDirectory
             .appendingPathComponent("simmer-installing-\(UUID().uuidString)"))
@@ -376,15 +376,15 @@ import Testing
 
     @Test func whatWasWrittenIsWhatIsRead() throws {
         let led = ledger()
-        led.writeInstallingUpdate(target: "0.3.2", now: now, installed: "0.3.1")
-        let record = try #require(led.readInstallingUpdate(writtenBy: "0.3.1", now: now))
+        led.writeInstallInProgress(target: "0.3.2", now: now, installed: "0.3.1")
+        let record = try #require(led.readInstallInProgress(writtenBy: "0.3.1", now: now))
         #expect(record.target == "0.3.2")
         #expect(record.startedAt == now)
         #expect(record.installed == "0.3.1")
     }
 
     @Test func noRecordAtAllIsNil() {
-        #expect(ledger().readInstallingUpdate(writtenBy: "0.3.1", now: now) == nil)
+        #expect(ledger().readInstallInProgress(writtenBy: "0.3.1", now: now) == nil)
     }
 
     /// Case 12. The app that comes back IS the new version, so the record it
@@ -392,9 +392,9 @@ import Testing
     /// the reason nothing has to delete anything on the success path.
     @Test func aRecordFromTheVersionYouReplacedIsNotAnAnswer() {
         let led = ledger()
-        led.writeInstallingUpdate(target: "0.3.2", now: now, installed: "0.3.1")
-        #expect(led.readInstallingUpdate(writtenBy: "0.3.2", now: now) == nil)
-        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: now) != nil)
+        led.writeInstallInProgress(target: "0.3.2", now: now, installed: "0.3.1")
+        #expect(led.readInstallInProgress(writtenBy: "0.3.2", now: now) == nil)
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: now) != nil)
     }
 
     /// Case 11's backstop. A row saying "Installing…" forever is a lie, and
@@ -402,28 +402,28 @@ import Testing
     /// the app was quit — closes on the clock.
     @Test func anAncientRecordIsNotAnAnswer() {
         let led = ledger()
-        led.writeInstallingUpdate(target: "0.3.2", now: now, installed: "0.3.1")
-        let edge = now + Ledger.InstallingRecord.maxAge
-        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: edge - 1) != nil)
-        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: edge) == nil)
+        led.writeInstallInProgress(target: "0.3.2", now: now, installed: "0.3.1")
+        let edge = now + Ledger.InstallInProgress.maxAge
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: edge - 1) != nil)
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: edge) == nil)
     }
 
     @Test func clearingItEndsTheState() {
         let led = ledger()
-        led.writeInstallingUpdate(target: "0.3.2", now: now, installed: "0.3.1")
-        led.clearInstallingUpdate()
-        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: now) == nil)
+        led.writeInstallInProgress(target: "0.3.2", now: now, installed: "0.3.1")
+        led.clearInstallInProgress()
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: now) == nil)
         // Idempotent: the app's terminationHandler and the child's own ending
         // both clear it, and either may be second.
-        led.clearInstallingUpdate()
+        led.clearInstallInProgress()
     }
 
     /// Case 5, at the file. `target=` empty is "installing, target unnamed" —
     /// a record, not the absence of one.
     @Test func anEmptyTargetIsStillARecord() throws {
         let led = ledger()
-        led.writeInstallingUpdate(target: "", now: now, installed: "0.3.1")
-        let record = try #require(led.readInstallingUpdate(writtenBy: "0.3.1", now: now))
+        led.writeInstallInProgress(target: "", now: now, installed: "0.3.1")
+        let record = try #require(led.readInstallInProgress(writtenBy: "0.3.1", now: now))
         #expect(record.target == "")
     }
 
@@ -431,9 +431,9 @@ import Testing
     /// parsed as a key nobody wrote, so the write folds it before it lands.
     @Test func aTargetWithNewlinesIsFoldedIntoOneLine() throws {
         let led = ledger()
-        led.writeInstallingUpdate(target: "0.3.2\ninstalled=9.9.9", now: now,
+        led.writeInstallInProgress(target: "0.3.2\ninstalled=9.9.9", now: now,
                                   installed: "0.3.1")
-        let record = try #require(led.readInstallingUpdate(writtenBy: "0.3.1", now: now))
+        let record = try #require(led.readInstallInProgress(writtenBy: "0.3.1", now: now))
         #expect(!record.target.contains("\n"))
         #expect(record.installed == "0.3.1", "the fold must not let a value forge a key")
     }
@@ -446,8 +446,8 @@ import Testing
         try FileManager.default.createDirectory(at: led.stateDir,
                                                 withIntermediateDirectories: true)
         try "target=0.3.2\r\nstarted_at=\(now)\r\ninstalled=0.3.1\r\n"
-            .write(to: led.updateInstallingFile, atomically: true, encoding: .utf8)
-        let record = try #require(led.readInstallingUpdate(writtenBy: "0.3.1", now: now))
+            .write(to: led.updateInProgressFile, atomically: true, encoding: .utf8)
+        let record = try #require(led.readInstallInProgress(writtenBy: "0.3.1", now: now))
         #expect(record.target == "0.3.2")
         #expect(record.installed == "0.3.1")
     }
@@ -460,8 +460,8 @@ import Testing
         try FileManager.default.createDirectory(at: led.stateDir,
                                                 withIntermediateDirectories: true)
         try "target=0.3.2\ntarget=9.9.9\nstarted_at=\(now)\ninstalled=0.3.1\n"
-            .write(to: led.updateInstallingFile, atomically: true, encoding: .utf8)
-        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: now) == nil)
+            .write(to: led.updateInProgressFile, atomically: true, encoding: .utf8)
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: now) == nil)
     }
 
     /// A record with no timestamp is unknown, not now: defaulting it would
@@ -471,12 +471,12 @@ import Testing
         try FileManager.default.createDirectory(at: led.stateDir,
                                                 withIntermediateDirectories: true)
         try "target=0.3.2\ninstalled=0.3.1\n"
-            .write(to: led.updateInstallingFile, atomically: true, encoding: .utf8)
-        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: now) == nil)
+            .write(to: led.updateInProgressFile, atomically: true, encoding: .utf8)
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: now) == nil)
 
         try "target=0.3.2\nstarted_at=\ninstalled=0.3.1\n"
-            .write(to: led.updateInstallingFile, atomically: true, encoding: .utf8)
-        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: now) == nil)
+            .write(to: led.updateInProgressFile, atomically: true, encoding: .utf8)
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: now) == nil)
     }
 
     /// Case 1. A symlink where the record goes must not be a write into
@@ -488,15 +488,15 @@ import Testing
                                                 withIntermediateDirectories: true)
         let elsewhere = led.stateDir.appendingPathComponent("elsewhere")
         try "untouched".write(to: elsewhere, atomically: true, encoding: .utf8)
-        try FileManager.default.createSymbolicLink(at: led.updateInstallingFile,
+        try FileManager.default.createSymbolicLink(at: led.updateInProgressFile,
                                                    withDestinationURL: elsewhere)
 
-        led.writeInstallingUpdate(target: "0.3.2", now: now, installed: "0.3.1")
+        led.writeInstallInProgress(target: "0.3.2", now: now, installed: "0.3.1")
 
         #expect(try String(contentsOf: elsewhere, encoding: .utf8) == "untouched")
-        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: now)?.target == "0.3.2")
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: now)?.target == "0.3.2")
         let type = try FileManager.default.attributesOfItem(
-            atPath: led.updateInstallingFile.path)[.type] as? FileAttributeType
+            atPath: led.updateInProgressFile.path)[.type] as? FileAttributeType
         #expect(type == .typeRegular, "the link is gone, not followed")
     }
 
@@ -512,10 +512,10 @@ import Testing
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
 
         let led = Ledger(stateDir: link)
-        led.writeInstallingUpdate(target: "0.3.2", now: now, installed: "0.3.1")
-        #expect(led.readInstallingUpdate(writtenBy: "0.3.1", now: now)?.target == "0.3.2")
+        led.writeInstallInProgress(target: "0.3.2", now: now, installed: "0.3.1")
+        #expect(led.readInstallInProgress(writtenBy: "0.3.1", now: now)?.target == "0.3.2")
         #expect(Ledger(stateDir: real)
-            .readInstallingUpdate(writtenBy: "0.3.1", now: now)?.target == "0.3.2")
+            .readInstallInProgress(writtenBy: "0.3.1", now: now)?.target == "0.3.2")
     }
 }
 
@@ -614,8 +614,8 @@ import Testing
     @Test func noLineCarriesALocalisedNumber() {
         let led = Ledger(stateDir: FileManager.default.temporaryDirectory
             .appendingPathComponent("simmer-locale-\(UUID().uuidString)"))
-        led.writeInstallingUpdate(target: "0.3.2", now: 1_800_000_000, installed: "0.3.1")
-        let text = (try? String(contentsOf: led.updateInstallingFile, encoding: .utf8)) ?? ""
+        led.writeInstallInProgress(target: "0.3.2", now: 1_800_000_000, installed: "0.3.1")
+        let text = (try? String(contentsOf: led.updateInProgressFile, encoding: .utf8)) ?? ""
         // The whole line, so a separator on either side of the number fails:
         // `1.800.000.000` and `1,800,000,000` are both wrong, and a German
         // locale produces the first.

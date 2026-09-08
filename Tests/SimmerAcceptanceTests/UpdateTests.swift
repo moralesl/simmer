@@ -939,7 +939,7 @@ import Testing
     /// installs, so nothing may say it is installing — and the refusal
     /// sentence, which names the way that works instead, has to reach the one
     /// channel a click can hear.
-    @Test func aRefusalSaysSoAndLeavesNoInstallingRecord() throws {
+    @Test func aRefusalSaysSoAndLeavesNoRecordBehind() throws {
         let sim = Sim(); defer { sim.tearDown() }
         let result = sim.run(["update", "--apply"], env: applying(sim, ahead: "2"))
 
@@ -950,7 +950,7 @@ import Testing
         #expect(log(sim).contains("update: refused —"), "\(log(sim))")
         #expect(!log(sim).contains("update: installing"), "nothing started")
         #expect(!FileManager.default.fileExists(
-            atPath: sim.stateDir.appendingPathComponent("update-installing").path))
+            atPath: sim.stateDir.appendingPathComponent("update-in-progress").path))
     }
 
     /// Case 11: `make install` fails half-way. The app is never quit, so the
@@ -964,14 +964,14 @@ import Testing
         try FileManager.default.createDirectory(at: sim.stateDir,
                                                 withIntermediateDirectories: true)
         try "target=9.9.9 or newer\nstarted_at=\(Sim.epoch)\ninstalled=\(installedVersion(sim))\n"
-            .write(to: sim.stateDir.appendingPathComponent("update-installing"),
+            .write(to: sim.stateDir.appendingPathComponent("update-in-progress"),
                    atomically: true, encoding: .utf8)
 
         let result = sim.run(["update", "--apply"], env: env)
 
         #expect(result.code == 1, "\(result.combined)")
         #expect(!FileManager.default.fileExists(
-            atPath: sim.stateDir.appendingPathComponent("update-installing").path),
+            atPath: sim.stateDir.appendingPathComponent("update-in-progress").path),
                 "a row saying Installing… forever is a lie")
         #expect(log(sim).contains("failed while installing"), "\(log(sim))")
     }

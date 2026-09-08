@@ -107,7 +107,7 @@ public struct MenuInstall: Sendable, Equatable {
     /// the row exists to carry.
     ///
     /// It is here rather than derived from `updateLine` because it is a fact
-    /// about this Mac and not about the repository: `Ledger.readInstallingUpdate`
+    /// about this Mac and not about the repository: `Ledger.readInstallInProgress`
     /// answers it, and the app is what asks.
     public var installing: String?
 
