@@ -544,7 +544,15 @@ public enum UpdateCommand {
         outcome.stdout = ["✅ simmer \(plan.target) installed"
             + (reopened ? " · Simmer.app relaunched" : "")]
         var subtitle = reopened ? "Simmer.app was relaunched" : ""
-        var body = ""
+        // The last word of the click, and it has to arrive. Title + subtitle
+        // + `body: ""` is character-for-character the 0.3.1 shape this
+        // command's own diagnosis blames for the silence — and with the app
+        // not running the subtitle is empty too, so the ending was a
+        // title-only banner: no informative text at all, accepted by `add`,
+        // never presented (R2 finding 1). The `relaunchFailure` branch below
+        // overwrites it, because a menu bar that did not come back is the
+        // more important sentence.
+        var body = "You are on \(plan.target) now."
         if let relaunchFailure {
             let sentence = failureSentence(phase: .relaunching, plan: plan,
                                            updateCommand: updateCommand)

@@ -916,8 +916,15 @@ import Testing
         #expect(starting == "Installing simmer 9.9.9 or newer…")
         // The one banner nobody has ever seen was the only one posted with an
         // empty body; on macOS that content is accepted and never presented.
-        let entry = try #require(sim.spoolEntries().first)
-        #expect((entry["body"] as? String)?.isEmpty == false)
+        //
+        // EVERY entry, not `.first`: this test counts two and used to read
+        // one, so the ending banner — the last word of the click, and the
+        // 0.3.1 shape exactly — sat here unread for a whole release (R2
+        // finding 5).
+        let entries = sim.spoolEntries()
+        #expect(entries.allSatisfy { ($0["body"] as? String)?.isEmpty == false },
+                "a banner with an empty body is one macOS never presents: \(entries)")
+        let entry = try #require(entries.first)
         #expect(entry["sound"] as? Bool == false)
         // One per phase: the start, then the ending. Never two for one event.
         #expect(titles.count == 2, "\(titles)")

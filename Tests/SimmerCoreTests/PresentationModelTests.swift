@@ -542,6 +542,36 @@ import Testing
         #expect(banner.actionable == false, "there is no Extend/Release to offer")
     }
 
+    /// The same defect at the OTHER end of the same click (R2 finding 1). The
+    /// start banner got a body in 0.3.2 and the ending banner did not, so
+    /// every good apply finished with title + subtitle + `body: ""` — and
+    /// when the app was not running to relaunch, the subtitle was empty too:
+    /// a title-only banner, which is no informative text at all.
+    @Test func theEndingBannerCarriesABodyOnBothArms() throws {
+        let good = try #require(UpdateCommand.applied(plan(), reopened: true)
+            .notifications.first)
+        #expect(good.title == "simmer 0.3.2 installed")
+        #expect(good.body == "You are on 0.3.2 now.")
+        #expect(!good.subtitle.isEmpty)
+
+        // Case 11's other half: the app was not running, so there is nothing
+        // to say about a relaunch and the subtitle is legitimately empty. The
+        // body is then the whole message, which is why it may not be.
+        let quiet = try #require(UpdateCommand.applied(plan(), reopened: false)
+            .notifications.first)
+        #expect(quiet.subtitle.isEmpty)
+        #expect(quiet.body == "You are on 0.3.2 now.")
+
+        // Case 11: the relaunch-failed arm still names the failure and is not
+        // the success sentence — the update landed, the menu bar did not.
+        let failed = try #require(UpdateCommand.applied(
+            plan(), reopened: false, relaunchFailure: "LSOpenURLs error -600")
+            .notifications.first)
+        #expect(failed.subtitle == "Simmer.app did not come back")
+        #expect(failed.body.contains("did not come back"))
+        #expect(failed.body != "You are on 0.3.2 now.")
+    }
+
     /// Case 13: with notifications denied the menu row is the only channel,
     /// and it must not be the only one that names the version either.
     @Test func everyChannelNamesTheVersion() {
