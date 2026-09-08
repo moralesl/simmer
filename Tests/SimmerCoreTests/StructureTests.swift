@@ -938,6 +938,77 @@ import Testing
                 "CONTRIBUTING never tells anyone the filtered run exists")
     }
 
+    /// CONTRIBUTING says *when* a change first shows, both halves, each with
+    /// the reason beside it.
+    ///
+    /// The two halves contradict a reader's intuition — a menu-bar change
+    /// shows in the version that carries it, a fix to the installer's own
+    /// feedback one update later — so a paragraph that states them without
+    /// saying who runs the code is memorised and misapplied, which is how
+    /// 0.3.2's map convention reached nobody. Hence the reason is pinned in
+    /// the same sentence as its half, not merely somewhere in the document.
+    ///
+    /// The phrases are the ones that carry the claim and appear nowhere else
+    /// in the file (both were absent before this paragraph landed), so this
+    /// is not a grep for a word that would pass on its own; prose only, or
+    /// the next fenced example of a CHANGELOG entry could satisfy it.
+    @Test func contributingSaysWhenAChangeFirstShowsAndWhy() throws {
+        let prose = Self.unfencedLines(of: try Self.read("CONTRIBUTING.md"))
+        for half in ["the version that carries it", "the version being replaced"] {
+            let carriers = prose.filter { $0.contains(half) }
+            try #require(!carriers.isEmpty,
+                         "CONTRIBUTING no longer says \"\(half)\" — half the first-shows convention is gone")
+            for sentence in carriers {
+                #expect(sentence.contains("running") || sentence.contains("runs"),
+                        "\"\(half)\" is stated without the reason beside it — who runs the code: \(sentence)")
+            }
+        }
+    }
+
+    /// PLATFORM-FACTS no longer offers `terminal-notifier -sender` as a way
+    /// to post under another app's identity.
+    ///
+    /// The row read "✅ … verified by screenshot" until 3.1.0 was measured:
+    /// the flag is gone, the tool warns on stderr, exits 0 and posts under
+    /// its own bundle anyway. An absence proof, because the failure mode is
+    /// the old claim coming back — but the row also has to still be *there*,
+    /// so `#require` stops if nothing in the table mentions the flag.
+    ///
+    /// Read as cells rather than as one string: `✅` appears in four other
+    /// rows of the same table, so `!document.contains("✅")` would be a gate
+    /// that can only pass by deleting the table. Prose only — the section
+    /// quotes the tool's own warning inside a fence. A row wrapped across
+    /// two lines fails the cell count rather than passing on the first line,
+    /// and two rows claiming the flag fail the count: the last is a guess.
+    @Test func platformFactsNoLongerSellsSenderAsAWorkingIdentityFlag() throws {
+        let facts = try Self.read("docs/PLATFORM-FACTS.md")
+        let prose = Self.unfencedLines(of: facts)
+        let rows = prose.filter {
+            let line = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            return line.hasPrefix("|") && line.contains("-sender")
+        }
+        try #require(rows.count == 1,
+                     "the transport table has \(rows.count) rows naming -sender, not one: \(rows)")
+        let cells = rows[0].split(separator: "|", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        try #require(cells.count >= 4, "the -sender row is not four cells wide: \(rows[0])")
+        let displays = cells[2]
+        #expect(!displays.contains("✅"),
+                "PLATFORM-FACTS presents -sender as a working transport again: \(rows[0])")
+        #expect(displays.contains("❌"), "the -sender row says neither yes nor no: \(rows[0])")
+        #expect(!rows[0].contains("verified by screenshot"),
+                "the -sender row still claims a screenshot verified it: \(rows[0])")
+
+        // The recipe below the table was written when the flag worked, and a
+        // corrected table over an uncorrected recipe is the doubled input.
+        #expect(prose.contains { $0.contains("was retired by the tool") },
+                "the measurement paragraph under the table is gone")
+        #expect(prose.contains { $0.contains("was withdrawn in 3.x") },
+                "the recipe's own sentence about -sender no longer says it was withdrawn")
+        #expect(prose.contains { $0.contains("changes the icon to Script Editor's") },
+                "nothing names the osascript fallback and the identity it posts under")
+    }
+
     /// The reader above, held to the four Makefile shapes that have each
     /// defeated a text gate in this repository's history — asserted over
     /// synthetic text, because the only way to drive them against the real
