@@ -114,6 +114,16 @@ final class Harness: NSObject, NSMenuDelegate {
     var outPaths: [String] = []
     var openNow = false
     var closes = 0
+    var opens = 0
+    /// One retry of the opening click, once.
+    ///
+    /// Measured over five runs: four opened, one did not open at all — the
+    /// click landed before the status item had taken its place in the menu bar.
+    /// That is a failure of the harness's own opening, and it must not be
+    /// reported as the failure the gate is looking for, which is a menu that
+    /// opened and then closed under a mutation. So the two are separated: a
+    /// retry first, and a different exit code if it still never opened.
+    var retried = false
     var clickedHandlerRuns = 0
     /// Kept the way the controller keeps them: found by role, mutated in place.
     var updateGroupItem: NSMenuItem?
@@ -170,8 +180,10 @@ final class Harness: NSObject, NSMenuDelegate {
             // A no-op target, because `NSMenu.autoenablesItems` disables any
             // item whose action nothing responds to — and a frame full of gray
             // rows that are black in the app would be a picture of the harness.
-            item.target = self
-            item.action = #selector(noop(_:))
+            if ProcessInfo.processInfo.environment["T20_NO_TARGETS"] == nil {
+                item.target = self
+                item.action = #selector(noop(_:))
+            }
         } else {
             item.isEnabled = false
             let font = NSFont.menuFont(ofSize: 0)
@@ -209,7 +221,7 @@ final class Harness: NSObject, NSMenuDelegate {
 
     // MARK: NSMenuDelegate
 
-    func menuWillOpen(_ menu: NSMenu) { openNow = true }
+    func menuWillOpen(_ menu: NSMenu) { openNow = true; opens += 1 }
     func menuDidClose(_ menu: NSMenu) { openNow = false; closes += 1 }
 
     func after(_ seconds: Double, _ body: @escaping () -> Void) {
@@ -268,7 +280,30 @@ extension Harness {
                 self.menu.removeItem(at: 1)
                 self.menu.removeItem(at: 0)
             }),
-            ("9-synthetic-click-on-the-custom-row", {
+        ]
+        run(steps, 0)
+        statusItem.button?.performClick(nil)
+    }
+
+    /// The one claim no measurement in this process can reach: that a real
+    /// click on a custom-view row leaves the menu open.
+    ///
+    /// `CGEvent.post` needs Accessibility, which this Mac does not grant.
+    /// `NSApp.postEvent` puts an event in this process's own queue, and the
+    /// result is the negative below: the view's handler does not run
+    /// (handler-runs=0) and the menu dismisses anyway — a posted click reaches
+    /// the tracking session as a click, not as a click on the row. So it is
+    /// reported as a negative result and kept out of the mutation gate, whose
+    /// claim is zero closes: run inside that battery, this step was the one
+    /// close it counted, which is a gate measuring its own probe.
+    ///
+    /// What settles the claim is Apple's own statement that a view in a menu
+    /// item "can receive all mouse events as normal" (Views in Menu Items) and
+    /// one click by hand in the built app.
+    func runMeasureClick() {
+        let steps: [(String, () -> Void)] = [
+            ("0-baseline", {}),
+            ("1-synthetic-click-on-the-custom-row", {
                 // Whether a click can be made at all without Accessibility.
                 // `CGEvent.post` needs it; `NSApp.postEvent` puts an event in
                 // this process's own queue, which a tracking menu may or may
@@ -291,6 +326,7 @@ extension Harness {
                     }
                 }
             }),
+            ("2-after-the-posted-click", {}),
         ]
         run(steps, 0)
         statusItem.button?.performClick(nil)
@@ -319,8 +355,36 @@ extension Harness {
                     + " role=\(view?.accessibilityRole()?.rawValue ?? "-")"
                     + " isElement=\(view?.isAccessibilityElement() ?? false)"
                     + " enabled=\(view?.isAccessibilityEnabled() ?? false)")
+                // Counted BEFORE the teardown: `cancelTracking()` is itself a
+                // close, and reading the counter after it made the gate report
+                // its own tidying-up as the failure it is looking for.
+                let closesDuring = self.closes
+                let everOpened = self.opens > 0 && self.openNow
                 self.menu.cancelTracking()
-                NSApp.terminate(nil)
+                guard everOpened else {
+                    // Exit 2, not 1: nothing was measured, so nothing failed.
+                    print("SKIP the menu never stayed open — nothing was measured"
+                        + " (opens=\(self.opens))")
+                    exit(2)
+                }
+                // A refusal, so this is a gate and not a print-out: any close
+                // observed during the battery is the design's central claim
+                // failing, and a proof line that cannot fail is decoration.
+                print(closesDuring == 0
+                    ? "PASS every mutation of an open menu, zero closes"
+                    : "FAIL the menu closed \(closesDuring) time(s) during the battery")
+                exit(closesDuring == 0 ? 0 : 1)
+            }
+            return
+        }
+        if index == 0, !openNow, !retried {
+            // Not open yet: click again and start the battery over, once.
+            retried = true
+            closes = 0
+            print("retrying the opening click — the menu was not up")
+            after(0.6) {
+                self.statusItem.button?.performClick(nil)
+                self.after(0.9) { self.run(steps, 0) }
             }
             return
         }
@@ -344,6 +408,7 @@ extension Harness {
     /// one open. That the change happens with the menu still open is what
     /// `measure` proves; a frame only shows what it looks like.
     func runCapture(answer: MenuCheckAnswer?, delay: Double = 1.1) {
+        var stillOpenAtCapture = false
         rebuild(checking: answer == nil, checked: answer)
         // The pointer out of the menu before the shutter, and back afterwards.
         // Whichever row it happens to rest on draws highlighted, and a frame
@@ -351,6 +416,7 @@ extension Harness {
         // two frames of a pair have to differ in the one row that changed.
         let savedPointer = NSEvent.mouseLocation
         after(delay - 0.3) {
+            if ProcessInfo.processInfo.environment["T20_NO_WARP"] != nil { return }
             if let screen = NSScreen.screens.first {
                 CGWarpMouseCursorPosition(CGPoint(x: screen.frame.maxX - 40,
                                                   y: screen.frame.maxY - 40))
@@ -358,6 +424,7 @@ extension Harness {
         }
         after(delay) {
             print("open-before-capture=\(self.openNow)")
+            stillOpenAtCapture = self.openNow
             // Case 16: which process is in the frame. On a crowded menu bar
             // macOS hides an overflowing status item while `performClick` still
             // opens its menu, so whether the harness's own `T20` title is
@@ -374,7 +441,13 @@ extension Harness {
                 CGWarpMouseCursorPosition(
                     CGPoint(x: savedPointer.x,
                             y: (NSScreen.screens.first?.frame.maxY ?? 0) - savedPointer.y))
-                NSApp.terminate(nil)
+                // A capture of a menu that had already dismissed itself is not
+                // a frame of this design, so it exits non-zero rather than
+                // leaving a picture of the desktop behind under the right name.
+                // With `capture-checking 0.4` this is the measurement of the
+                // spinner's threaded animation: red before
+                // `usesThreadedAnimation = false`, green after.
+                exit(stillOpenAtCapture ? 0 : 1)
             }
         }
         statusItem.button?.performClick(nil)
@@ -386,7 +459,16 @@ extension Harness {
 let args = Array(CommandLine.arguments.dropFirst())
 guard let mode = args.first else {
     FileHandle.standardError.write(Data("""
-    usage: T20Frames measure | capture-checking <png> | capture-answer <png>
+    usage: T20Frames measure | measure-click
+           T20Frames capture-checking <png> [delay] | capture-answer <png>
+           T20Frames capture-current <png> | capture-unknown <png>
+
+    Every capture exits non-zero if the menu was not open when the shutter
+    fired, so a capture is a measurement and not only a picture.
+
+    T20_NO_WARP=1     leave the pointer where it is (it highlights a row)
+    T20_NO_TARGETS=1  no target on the action rows, so autoenabling disables
+                      them — the configuration a dismissal was first seen in
 
     """.utf8))
     exit(2)
@@ -404,6 +486,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
         harness.after(0.8) {
             switch harness.mode {
             case "measure": harness.runMeasure()
+            case "measure-click": harness.runMeasureClick()
             case "capture-checking":
                 // Two delays, so two runs can be diffed: an indeterminate
                 // NSProgressIndicator inside a tracking menu either turns or

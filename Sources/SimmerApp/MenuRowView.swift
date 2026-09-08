@@ -58,14 +58,21 @@ final class MenuRowView: NSView {
             indicator.style = .spinning
             indicator.controlSize = .small
             indicator.isIndeterminate = true
-            // Measured, not preference: with the animation on its own thread —
-            // AppKit's default — a menu opened while this row is in it dismisses
-            // itself after 150 to 400 ms. A spinner swapped in while the menu is
-            // already up survives, so the shape hides until somebody closes the
-            // menu with Escape during a check and opens it again, which is case
-            // 13 of this ticket's own list. `Prototypes/T20Frames
-            // capture-checking <delay>` is the measurement: open=false at 0.4 s
-            // with the thread, open=true at 1.35 s without it.
+            // Menu tracking runs in its own run-loop mode, and an animation
+            // driven from a background thread inside a tracking menu is the
+            // documented hazard there (AppKit, Views in Menu Items: a timer has
+            // to be added to the run loop in `NSEventTrackingRunLoopMode`). So
+            // the animation stays on the main thread.
+            //
+            // It was first credited with more than that, and the record is
+            // corrected here rather than left to stand: a menu opened with this
+            // row already in it dismissed itself after 150–400 ms three times
+            // in a row, this line was added, and the dismissal stopped — n=2
+            // against n=3. Taking the line out again today does NOT bring the
+            // dismissal back (six runs, both delays), so the cause of those
+            // three is not known and this is not the fix for it.
+            // `Prototypes/T20Frames capture-checking 0.4` is the guard that
+            // would catch it coming back, whatever it was.
             indicator.usesThreadedAnimation = false
             self.spinner = indicator
         } else {
