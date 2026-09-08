@@ -529,12 +529,22 @@ public struct Ledger: Sendable {
         // after — the recovered half is whatever the sentinel names, and a
         // sentinel naming the spool has recovered nothing.
         //
-        // Both sides are resolved and compared, rather than opening the
-        // sentinel `O_NOFOLLOW`: a link to a file elsewhere is a real
-        // stranded half and must keep posting (`anEmptyStrandedSentinelIsNotImmortalEither`
-        // asserts it), and `O_NOFOLLOW` refuses that one too.
-        let isTheSpoolItself = draining.resolvingSymlinksInPath().standardizedFileURL
-            == spoolFile.resolvingSymlinksInPath().standardizedFileURL
+        // The two names are compared by the FILE they reach — device and
+        // inode — not by their paths. A path comparison answered the symlink
+        // and missed the HARD link, where there is no target to resolve
+        // because both names ARE the file: same double post,
+        // `["hard-linked", "hard-linked"]`, measured. Asking the filesystem
+        // which file a name reaches subsumes both, and needs no list of the
+        // ways two names can meet.
+        //
+        // Not `O_NOFOLLOW` on the sentinel: a link to a file elsewhere is a
+        // real stranded half and must keep posting
+        // (`anEmptyStrandedSentinelIsNotImmortalEither` asserts it), and
+        // `O_NOFOLLOW` refuses that one too.
+        let isTheSpoolItself = Ledger.fileIdentity(atPath: draining.path)
+            .flatMap { sentinel in
+                Ledger.fileIdentity(atPath: spoolFile.path).map { $0 == sentinel }
+            } ?? false
         var text = isTheSpoolItself
             ? ""
             : ((try? String(contentsOf: draining, encoding: .utf8)) ?? "")
@@ -1188,6 +1198,33 @@ public struct Ledger: Sendable {
     /// that a defect: an `O_NOFOLLOW` refusal or a full disk lost the banner
     /// and wrote nothing about it anywhere (R2 finding 8). A short write
     /// counts as a failure too — a half-written JSONL line is not a banner.
+    /// Which FILE a path reaches, as the pair that identifies one: device and
+    /// inode.
+    ///
+    /// `stat` and not `lstat`, deliberately — the question is what the name
+    /// reaches, and a symlink reaches its target. `lstat` would answer about
+    /// the link itself and let a sentinel symlinked to the spool through as a
+    /// different file, which is the defect this identity was introduced to
+    /// close. `nil` means the name reaches nothing, which is not the same as
+    /// reaching something else: a dangling symlink and an absent name both
+    /// answer `nil`, and neither is the spool.
+    ///
+    /// Not `URL.resourceValues(forKeys: [.fileResourceIdentifierKey])`, which
+    /// looks like the Foundation-native spelling of this and is wrong for the
+    /// case that matters: measured on this Mac, it does NOT follow a symlink
+    /// (a link and its target compare unequal) and it answers non-nil for a
+    /// DANGLING link — so the sentinel symlinked to the spool would be read
+    /// as a different file again. It gets the hard link right and the one
+    /// shape finding 6 was about wrong.
+    static func fileIdentity(atPath path: String) -> (dev: dev_t, ino: ino_t)? {
+        // `Darwin.stat` names the STRUCT; the syscall of the same name is
+        // reached through a typed reference to it.
+        let syscall: (UnsafePointer<CChar>, UnsafeMutablePointer<Darwin.stat>) -> Int32 = stat
+        var info = Darwin.stat()
+        guard path.withCString({ syscall($0, &info) }) == 0 else { return nil }
+        return (info.st_dev, info.st_ino)
+    }
+
     private func append(_ text: String, to url: URL) -> Bool {
         // O_NOFOLLOW: these are append-only records inside a directory the
         // user owns, and a symlink dropped in their place would redirect every

@@ -1114,6 +1114,20 @@ import Testing
         ledger.enqueueNotification(banner("after"), now: 1020)
         #expect(ledger.drainNotifications(now: 1030).map(\.title) == ["after"])
 
+        // A HARD link to the spool is the same file under two names, and it
+        // is the shape a path comparison cannot see: there is no target to
+        // resolve, both names are the file. Same double post, same fix — the
+        // identity of the FILE rather than of the name.
+        let hard = ledger.spoolFile.appendingPathExtension("draining")
+        ledger.enqueueNotification(banner("hard-linked"), now: 1060)
+        #expect((try? FileManager.default.linkItem(at: ledger.spoolFile, to: hard)) != nil,
+                "the fixture could not make a hard link")
+        #expect(ledger.drainNotifications(now: 1070).map(\.title) == ["hard-linked"],
+                "one entry, one banner")
+        #expect(!FileManager.default.fileExists(atPath: hard.path))
+        ledger.enqueueNotification(banner("after the hard link"), now: 1080)
+        #expect(ledger.drainNotifications(now: 1090).map(\.title) == ["after the hard link"])
+
         // The shape it must not be confused with: a link to a real file
         // ELSEWHERE is a genuine stranded half. Its lines post, the link
         // goes, and the target survives.
