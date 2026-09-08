@@ -466,12 +466,25 @@ public struct Ledger: Sendable {
                     now: now)
                 continue
             }
-            requests.append(NotificationRequest(
+            let request = NotificationRequest(
                 title: object["title"] as? String ?? "",
                 subtitle: object["subtitle"] as? String ?? "",
                 body: object["body"] as? String ?? "",
                 sound: object["sound"] as? Bool ?? true,
-                actionable: object["actionable"] as? Bool ?? false))
+                actionable: object["actionable"] as? Bool ?? false)
+            // The one construction in this codebase whose text a reader
+            // cannot decide: these three fields come out of a file. A banner
+            // with no informative text is accepted by `add` and never
+            // presented, so posting it is a no-op that looks like a delivery
+            // — and the whole 0.3.1 diagnosis is that nobody could tell the
+            // difference. Dropped here, out loud, the way a stale one is:
+            // whatever went wrong upstream leaves a line a person can find.
+            guard request.hasInformativeText else {
+                log("dropped a banner with no informative text (macOS never presents one): "
+                        + "\(object["title"] as? String ?? "?")", now: now)
+                continue
+            }
+            requests.append(request)
         }
         return requests
     }

@@ -53,6 +53,11 @@ public enum BundleNotifier {
     /// Fire-and-forget from the app's main flow; UN handles delivery.
     public static func post(_ request: NotificationRequest) {
         guard available else { return }
+        // The last gate before UN, and the reason it is a gate: `add` accepts
+        // a title-only content, reports no error, and never presents it. The
+        // spool drops these already (Ledger.drainNotifications); this is the
+        // app's own direct posts, which do not pass through it.
+        guard request.hasInformativeText else { return }
         let content = UNMutableNotificationContent()
         content.title = request.title
         if !request.subtitle.isEmpty { content.subtitle = request.subtitle }

@@ -546,6 +546,21 @@ import Testing
         #expect(banner.sound == false)
     }
 
+    /// The property, over all four verdicts at once — the shape the structure
+    /// gate enforces on the source, asserted here on the values. A check that
+    /// cannot answer is the one arm whose text comes from `report.error`, and
+    /// `check` guarantees that is never empty ("no release information").
+    @Test func everyVerdictsBannerHasInformativeText() {
+        for (installed, latest) in [("0.3.1", "v0.3.2"), ("0.3.2", "v0.3.2"),
+                                    ("0.4.0", "v0.3.2"), ("0.3.2", "error")] {
+            let banner = UpdateCommand.notification(report(installed: installed, latest: latest))
+            #expect(banner.hasInformativeText, """
+            a banner with neither subtitle nor body is one macOS never presents: \
+            \(installed) vs \(latest) — \(banner)
+            """)
+        }
+    }
+
     @Test func beingAheadOfTheNewestReleaseSaysThereIsNothingToDo() {
         let banner = UpdateCommand.notification(report(installed: "0.4.0", latest: "v0.3.2"))
         #expect(banner.title.contains("ahead"))

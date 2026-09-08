@@ -858,3 +858,551 @@ import Testing
         #expect(tagOverDiverged.out.contains("at v9.9.10"), "\(tagOverDiverged.out)")
     }
 }
+
+
+/// Every banner this tool constructs carries informative text.
+///
+/// macOS accepts a `UNMutableNotificationContent` with a title and no
+/// informative text, reports no error, and never presents it — which is
+/// indistinguishable from a banner that worked. That is the whole of the 0.3.1
+/// "Install it now" silence, and the fix was applied by hand twice: to the
+/// start banner of the click (T1) and then to the ending banner of the SAME
+/// click (R2 finding 1). `git grep 'body: ""'` could not see the second one,
+/// because there the empty string was a `var` assigned three lines later.
+///
+/// So the property is asserted over the source instead of the spelling being
+/// searched for. The reader below is a pure function of source text, which is
+/// what lets `theBannerTextReaderSeesTheShapesThatShipped` prove it red on the
+/// shapes that actually shipped — the `var` included.
+///
+/// Its own suite, which is this file's convention rather than a departure from
+/// it: `StructureTests` and `BootstrapFetchTests` are already two.
+@Suite struct BannerTextTests {
+    /// What source text can say about one field of a `NotificationRequest(…)`.
+    ///
+    /// Three answers, not two. `unknown` is a parameter, a pattern binding, a
+    /// property or a call, and this reader may not pretend to know its value;
+    /// folding unknown into either neighbour is how `// ""`, a missing-file
+    /// check and `2>/dev/null || true` each handed a fallback the decision.
+    enum BannerText: Equatable { case empty, text, unknown }
+
+    /// One construction, and the two fields that decide whether macOS will
+    /// present it. `title` is not one of them: a title-only banner is exactly
+    /// the one that never appears.
+    struct BannerSite: Equatable {
+        var line: Int
+        /// The enclosing `func`, so the list of undecidable sites below is
+        /// pinned to something that does not move when a line does.
+        var function: String
+        var subtitle: BannerText
+        var body: BannerText
+        /// Red. The reader can see that both fields are empty or emptiable.
+        var isSilent: Bool { subtitle == .empty && body == .empty }
+        /// Green on the text itself, rather than on an absence of evidence.
+        var isDecided: Bool { subtitle == .text || body == .text }
+    }
+
+    /// Comments blanked, string literals kept, offsets and newlines unchanged
+    /// — so a line number still means a line, and a doc comment that shows the
+    /// very syntax this reader looks for cannot be read as a construction
+    /// (adversarial case 4: three gates in three weeks read a document's own
+    /// examples as items).
+    static func blankingComments(_ chars: [Character]) -> [Character] {
+        var out = chars
+        func at(_ i: Int) -> Character? { i >= 0 && i < chars.count ? chars[i] : nil }
+        var i = 0, blockDepth = 0
+        var inLiteral = false, inMultiline = false
+        while i < chars.count {
+            let c = chars[i]
+            if blockDepth > 0 {
+                if c == "/", at(i + 1) == "*" {
+                    blockDepth += 1; out[i] = " "; out[i + 1] = " "; i += 2; continue
+                }
+                if c == "*", at(i + 1) == "/" {
+                    blockDepth -= 1; out[i] = " "; out[i + 1] = " "; i += 2; continue
+                }
+                if !c.isNewline { out[i] = " " }
+                i += 1
+                continue
+            }
+            if inMultiline {
+                if c == "\"", at(i + 1) == "\"", at(i + 2) == "\"" { inMultiline = false; i += 3 }
+                else { i += 1 }
+                continue
+            }
+            if inLiteral {
+                if c == "\\" { i += 2; continue }
+                if c == "\"" { inLiteral = false }
+                i += 1
+                continue
+            }
+            if c == "\"", at(i + 1) == "\"", at(i + 2) == "\"" { inMultiline = true; i += 3; continue }
+            if c == "\"" { inLiteral = true; i += 1; continue }
+            if c == "/", at(i + 1) == "/" {
+                // `isNewline`, never `== "\n"`: Swift grapheme-clusters CRLF
+                // into ONE Character, so the literal comparison never matches
+                // in a CRLF file and this would blank the rest of it
+                // (adversarial case 2).
+                while i < chars.count, !chars[i].isNewline { out[i] = " "; i += 1 }
+                continue
+            }
+            if c == "/", at(i + 1) == "*" {
+                blockDepth = 1; out[i] = " "; out[i + 1] = " "; i += 2; continue
+            }
+            i += 1
+        }
+        return out
+    }
+
+    /// The balanced argument list of the call whose `(` sits at `open`, one
+    /// string per argument — so a construction wrapped across five lines is
+    /// read whole (adversarial case 3: a renderer read the first line and
+    /// dropped the rest in silence).
+    static func argumentList(_ chars: [Character], open: Int) -> [String] {
+        func at(_ j: Int) -> Character? { j < chars.count ? chars[j] : nil }
+        var pieces: [String] = []
+        var current = ""
+        var depth = 0
+        var inLiteral = false, inMultiline = false
+        var i = open
+        while i < chars.count {
+            let c = chars[i]
+            if inMultiline {
+                if c == "\"", at(i + 1) == "\"", at(i + 2) == "\"" {
+                    inMultiline = false; current += "\"\"\""; i += 3
+                } else { current.append(c); i += 1 }
+                continue
+            }
+            if inLiteral {
+                if c == "\\" {
+                    current.append(c)
+                    if let next = at(i + 1) { current.append(next) }
+                    i += 2
+                    continue
+                }
+                if c == "\"" { inLiteral = false }
+                current.append(c)
+                i += 1
+                continue
+            }
+            if c == "\"", at(i + 1) == "\"", at(i + 2) == "\"" {
+                inMultiline = true; current += "\"\"\""; i += 3; continue
+            }
+            if c == "\"" { inLiteral = true; current.append(c); i += 1; continue }
+            if c == "(" || c == "[" || c == "{" {
+                depth += 1
+                if depth > 1 { current.append(c) }
+                i += 1
+                continue
+            }
+            if c == ")" || c == "]" || c == "}" {
+                depth -= 1
+                if depth == 0 { pieces.append(current); return pieces }
+                current.append(c)
+                i += 1
+                continue
+            }
+            if c == ",", depth == 1 { pieces.append(current); current = ""; i += 1; continue }
+            current.append(c)
+            i += 1
+        }
+        return pieces
+    }
+
+    /// The text of the argument labelled `label`, or nil when it is absent —
+    /// which is not the same thing at the call site, but is the same banner:
+    /// the initialiser defaults both fields to "".
+    static func argument(_ pieces: [String], label: String) -> String? {
+        for piece in pieces {
+            let trimmed = piece.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.hasPrefix(label + ":") else { continue }
+            return String(trimmed.dropFirst(label.count + 1))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    /// The content of `expr` when it is exactly one string literal.
+    static func wholeStringLiteral(_ expr: String) -> String? {
+        let chars = Array(expr)
+        guard chars.count >= 2, chars.first == "\"", chars.last == "\"" else { return nil }
+        var i = 1
+        while i < chars.count - 1 {
+            if chars[i] == "\\" { i += 2; continue }
+            // A second literal: a concatenation, or a multi-line literal.
+            // Both are answered further down.
+            if chars[i] == "\"" { return nil }
+            i += 1
+        }
+        return String(chars[1..<(chars.count - 1)])
+    }
+
+    /// The two branches of a top-level `a ? b : c`, if that is what this is.
+    static func ternaryBranches(_ expr: String) -> (String, String)? {
+        let chars = Array(expr)
+        var depth = 0, question = -1, colon = -1
+        var inLiteral = false
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if inLiteral {
+                if c == "\\" { i += 2; continue }
+                if c == "\"" { inLiteral = false }
+                i += 1
+                continue
+            }
+            if c == "\"" { inLiteral = true; i += 1; continue }
+            if c == "(" || c == "[" || c == "{" { depth += 1; i += 1; continue }
+            if c == ")" || c == "]" || c == "}" { depth -= 1; i += 1; continue }
+            if depth == 0, c == "?" {
+                // Neither `??` nor `foo?.bar` nor `as?` opens a ternary.
+                if i + 1 < chars.count, chars[i + 1] == "?" || chars[i + 1] == "." {
+                    i += 2
+                    continue
+                }
+                if question < 0 { question = i }
+                i += 1
+                continue
+            }
+            if depth == 0, c == ":", question >= 0, colon < 0 { colon = i }
+            i += 1
+        }
+        guard question >= 0, colon > question else { return nil }
+        return (String(chars[(question + 1)..<colon]), String(chars[(colon + 1)...]))
+    }
+
+    static func isIdentifier(_ expr: String) -> Bool {
+        guard let first = expr.first, first.isLetter || first == "_" else { return false }
+        return expr.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
+    }
+
+    /// The initialiser of the last `var`/`let <name> = …` in `scope`, which the
+    /// caller bounds to the enclosing `func` — so a same-named variable in a
+    /// neighbouring function cannot answer for this one, in either direction.
+    static func declaration(of name: String, in scope: String) -> String? {
+        var found: String?
+        for keyword in ["var ", "let "] {
+            var from = scope.startIndex
+            while let range = scope.range(of: keyword + name, range: from..<scope.endIndex) {
+                from = range.upperBound
+                let rest = scope[range.upperBound...]
+                guard let equals = rest.firstIndex(of: "=") else { continue }
+                // `var bodyText = …` must not answer for `body`, and a type
+                // annotation is not an initialiser.
+                guard rest[rest.startIndex..<equals].allSatisfy({ $0 == " " }) else { continue }
+                let after = rest[rest.index(after: equals)...]
+                guard after.first != "=" else { continue }
+                found = String(after.prefix { !$0.isNewline })
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return found
+    }
+
+    /// Whether a literal's content is blank once the escapes that MEAN
+    /// whitespace are read as whitespace: `body: "\t"` passes every `isEmpty`
+    /// check and is presented as nothing (adversarial case 10).
+    static func isBlankLiteral(_ content: String) -> Bool {
+        var text = content
+        for escape in ["\\t", "\\n", "\\r", "\\0"] {
+            text = text.replacingOccurrences(of: escape, with: " ")
+        }
+        // Anything still escaped is a real character (`\\`, `\"`).
+        return !text.contains("\\")
+            && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Whether any string literal in VALUE position in `expr` has a character
+    /// in it — the answer for a concatenation.
+    ///
+    /// Literals nested inside `(` or `[` do not count, and that is the whole
+    /// point: `object["subtitle"] as? String ?? ""` carries a non-empty
+    /// literal, and it is a dictionary KEY. Counting it read the spool
+    /// deserialiser — the one construction whose text comes out of a file — as
+    /// proof of text.
+    static func containsNonEmptyLiteral(_ expr: String) -> Bool {
+        let chars = Array(expr)
+        var i = 0, depth = 0
+        while i < chars.count {
+            let c = chars[i]
+            if c == "(" || c == "[" { depth += 1; i += 1; continue }
+            if c == ")" || c == "]" { depth -= 1; i += 1; continue }
+            guard c == "\"" else { i += 1; continue }
+            var content = ""
+            i += 1
+            while i < chars.count, chars[i] != "\"" {
+                if chars[i] == "\\" {
+                    content.append(chars[i])
+                    if i + 1 < chars.count { content.append(chars[i + 1]) }
+                    i += 2
+                    continue
+                }
+                content.append(chars[i])
+                i += 1
+            }
+            i += 1
+            if depth == 0, !isBlankLiteral(content) { return true }
+        }
+        return false
+    }
+
+    /// `expr` as this reader sees it. A bare identifier is resolved against the
+    /// enclosing function's own declarations, which is the whole reason the
+    /// reader exists rather than a grep: the blocker was `var body = ""`
+    /// assigned three lines later, and the grep came back clean.
+    static func classify(_ expr: String?, scope: String, depth: Int = 0) -> BannerText {
+        // Absent. The initialiser defaults both fields to "", so an argument
+        // nobody passed is an empty one — the same banner, not a third case.
+        guard let raw = expr?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty
+        else { return .empty }
+        guard depth < 4 else { return .unknown }
+
+        if let content = wholeStringLiteral(raw) {
+            if content.contains("\\(") { return .text }
+            return isBlankLiteral(content) ? .empty : .text
+        }
+        // Either branch empty makes the banner emptiable, which is the same
+        // risk as an empty literal: `applied()`'s subtitle is
+        // `reopened ? "…" : ""` and goes out blank whenever there was no app
+        // running to relaunch — which is how the ending banner managed to be
+        // title-only rather than merely body-less.
+        if let (left, right) = ternaryBranches(raw) {
+            let a = classify(left, scope: scope, depth: depth + 1)
+            let b = classify(right, scope: scope, depth: depth + 1)
+            if a == .empty || b == .empty { return .empty }
+            return a == .text && b == .text ? .text : .unknown
+        }
+        if isIdentifier(raw) {
+            guard let initialiser = declaration(of: raw, in: scope) else { return .unknown }
+            return classify(initialiser, scope: scope, depth: depth + 1)
+        }
+        return containsNonEmptyLiteral(raw) ? .text : .unknown
+    }
+
+    /// Every `NotificationRequest(…)` construction in one file, as source text
+    /// can see it.
+    static func bannerSites(in source: String) -> [BannerSite] {
+        let code = blankingComments(Array(source))
+        let needle = Array("NotificationRequest(")
+        var sites: [BannerSite] = []
+        var line = 1
+        var i = 0
+        while i < code.count {
+            if code[i].isNewline { line += 1; i += 1; continue }
+            guard i + needle.count <= code.count,
+                  Array(code[i..<(i + needle.count)]) == needle
+            else { i += 1; continue }
+            // `UNNotificationRequest(` is UserNotifications' own type: it takes
+            // a `content`, not a body, and it is what ours is translated INTO.
+            let previous = i > 0 ? code[i - 1] : " "
+            guard !(previous.isLetter || previous.isNumber || previous == "_") else {
+                i += needle.count
+                continue
+            }
+            var scopeStart = 0
+            var j = i - 5
+            while j >= 0 {
+                if code[j] == "f", code[j + 1] == "u", code[j + 2] == "n",
+                   code[j + 3] == "c", code[j + 4] == " " {
+                    scopeStart = j
+                    break
+                }
+                j -= 1
+            }
+            let scope = String(code[scopeStart..<i])
+            let name = String(scope.dropFirst("func ".count).prefix {
+                $0.isLetter || $0.isNumber || $0 == "_"
+            })
+            let pieces = argumentList(code, open: i + needle.count - 1)
+            sites.append(BannerSite(
+                line: line,
+                function: name.isEmpty ? "(top level)" : name,
+                subtitle: classify(argument(pieces, label: "subtitle"), scope: scope),
+                body: classify(argument(pieces, label: "body"), scope: scope)))
+            i += needle.count
+        }
+        return sites
+    }
+
+    static func swiftFiles(under relativePath: String) -> [URL] {
+        let root = StructureTests.repoRoot.appendingPathComponent(relativePath)
+        let all = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" } ?? []
+        return all.sorted { $0.path < $1.path }
+    }
+
+    /// The reader itself, against the shapes that actually shipped. A gate is
+    /// only worth its green if it can be shown red, and the two shapes that
+    /// reached a release are both here.
+    @Test func theBannerTextReaderSeesTheShapesThatShipped() {
+        func silent(_ source: String) -> [Bool] { Self.bannerSites(in: source).map(\.isSilent) }
+
+        // 0.3.1's banner, and R2 finding 2: both fields an empty literal.
+        #expect(silent(#"let x = NotificationRequest(title: "t", subtitle: "", body: "")"#) == [true])
+        // Absent is the same banner as empty — the initialiser defaults both.
+        #expect(silent(#"let x = NotificationRequest(title: "t")"#) == [true])
+        // Case 10: whitespace is not text, however it is spelled.
+        #expect(silent(#"let x = NotificationRequest(title: "t", body: " ")"#) == [true])
+        #expect(silent(#"let x = NotificationRequest(title: "t", body: "\t\n")"#) == [true])
+        // One field is enough, in either slot.
+        #expect(silent(#"let x = NotificationRequest(title: "t", body: "done")"#) == [false])
+        #expect(silent(#"let x = NotificationRequest(title: "t", subtitle: "done")"#) == [false])
+
+        // Case 9, the blocker: `var body = ""` assigned three lines later,
+        // which is what `git grep 'body: ""'` came back clean on.
+        let shipped = """
+        func applied(_ plan: Plan) -> NotificationRequest {
+            var subtitle = reopened ? "Simmer.app was relaunched" : ""
+            var body = ""
+            if let failure { body = failure }
+            return NotificationRequest(title: "t", subtitle: subtitle, body: body)
+        }
+        """
+        #expect(silent(shipped) == [true], "the reader must see the shape that shipped")
+        // …and the fix, which is one line of it.
+        #expect(silent(shipped.replacingOccurrences(
+            of: #"var body = """#,
+            with: #"var body = "You are on 0.3.3 now.""#)) == [false])
+        // A `var` in a NEIGHBOURING function may not answer for this one.
+        #expect(silent("""
+        func other() { var body = "" }
+        func mine() -> NotificationRequest {
+            var body = "landed"
+            return NotificationRequest(title: "t", body: body)
+        }
+        """) == [false])
+
+        // Case 4: a doc comment holding the very syntax the reader looks for.
+        #expect(silent("""
+        /// Never write NotificationRequest(title: "t", subtitle: "", body: "").
+        /* NotificationRequest(title: "t", body: "") is wrong too. */
+        let x = NotificationRequest(title: "t", body: "real")
+        """) == [false], "a comment is not a construction")
+        // …and a `//` inside a string literal does not start a comment.
+        #expect(silent(#"let x = NotificationRequest(title: "https://x", body: "")"#) == [true])
+
+        // Case 3: one construction wrapped across lines, fields in an order
+        // nobody planned for.
+        #expect(silent("""
+        let x = NotificationRequest(
+            title: "t",
+            sound: false,
+            body: "the body",
+            subtitle: "")
+        """) == [false])
+
+        // Case 2: CRLF reads the same as LF, and the line numbers agree.
+        let lf = """
+        func a() -> NotificationRequest {
+            // a comment
+            return NotificationRequest(title: "t", body: "")
+        }
+        """
+        let crlf = lf.replacingOccurrences(of: "\n", with: "\r\n")
+        #expect(Self.bannerSites(in: lf) == Self.bannerSites(in: crlf))
+        #expect(Self.bannerSites(in: lf).map(\.line) == [3])
+        #expect(Self.bannerSites(in: lf).map(\.function) == ["a"])
+
+        // UN's own type is not ours.
+        #expect(Self.bannerSites(in: """
+        let x = UNNotificationRequest(identifier: "i", content: c, trigger: nil)
+        """).isEmpty)
+
+        // Case 5, and the reason `unknown` is its own answer: a body out of a
+        // parameter is neither proof of text nor proof of silence, and the
+        // gate says which of the two it has.
+        let fromAway = Self.bannerSites(in: """
+        func copied(_ command: String) -> NotificationRequest {
+            NotificationRequest(title: "Copied to clipboard", subtitle: "", body: command)
+        }
+        """)
+        #expect(fromAway.map(\.body) == [.unknown])
+        #expect(fromAway.map(\.isSilent) == [false])
+        #expect(fromAway.map(\.isDecided) == [false])
+        // A concatenation and an interpolation are both text.
+        #expect(Self.bannerSites(
+            in: #"let x = NotificationRequest(title: "t", body: "a " + "b")"#)
+            .map(\.body) == [.text])
+        #expect(Self.bannerSites(
+            in: #"let x = NotificationRequest(title: "t", body: "on \(target) now")"#)
+            .map(\.body) == [.text])
+    }
+
+    /// The sites this reader cannot decide, named rather than waved through:
+    /// an unknown folded into a pass is a gate that proves nothing.
+    ///
+    /// Each takes its text from a parameter, a pattern binding or the spool
+    /// file, and each is caught at runtime instead —
+    /// `NotificationRequest.hasInformativeText` is consulted by
+    /// `Ledger.drainNotifications`, which drops such an entry and says so in
+    /// the log, and by `BundleNotifier.post`, the app's own last gate.
+    ///
+    /// Keyed by function rather than by line, so an edit above one of them
+    /// does not turn this into a list to re-number.
+    static let bannersWhoseTextComesFromElsewhere = [
+        // A failed spawn: `error.localizedDescription`.
+        "AppState.swift:applyUpdate",
+        // The spool deserialiser — three fields out of a file, the one
+        // construction here whose text no source reader can decide.
+        "Ledger.swift:drainNotifications",
+        // `body: command`, the thing that was copied.
+        "MenuModel.swift:copied",
+        // `subtitle: why`, a required parameter; all eight callers of
+        // `Engine.settle` pass a non-empty literal.
+        "Settle.swift:settle",
+        // `subtitle: step.described` and `body: sentence`, the latter out of
+        // `failureSentence`, which has no arm that returns an empty string.
+        "UpdateCommand.swift:applyFailed",
+        // `body: sentence` and `body: why`, bound out of an `ApplyResult`.
+        "UpdateCommand.swift:applyOutcome",
+        // The `.unknown` arm's `body: report.error`, which `check` guarantees
+        // is never empty ("no release information").
+        "UpdateCommand.swift:notification",
+    ]
+
+    /// The gate. No `NotificationRequest` this tool constructs may reach
+    /// `UNUserNotificationCenter` with neither subtitle nor body.
+    @Test func everyBannerThisToolConstructsCarriesInformativeText() throws {
+        var silent: [String] = []
+        var undecided: Set<String> = []
+        var total = 0
+        let files = Self.swiftFiles(under: "Sources")
+        #expect(files.count > 10, "found \(files.count) source files; the reader read nothing")
+        for file in files {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            for site in Self.bannerSites(in: source) {
+                total += 1
+                if site.isSilent { silent.append("\(file.lastPathComponent):\(site.line)") }
+                else if !site.isDecided {
+                    undecided.insert("\(file.lastPathComponent):\(site.function)")
+                }
+            }
+        }
+        // A reader that suddenly finds nothing is the failure a gate cannot
+        // notice by itself.
+        #expect(total >= 25, "found only \(total) NotificationRequest constructions")
+        #expect(silent.isEmpty, """
+        a banner with neither subtitle nor body is one macOS accepts and never presents \
+        (T1, R2 finding 1): \(silent.sorted())
+        """)
+        #expect(undecided.sorted() == Self.bannersWhoseTextComesFromElsewhere, """
+        the sites whose text this reader cannot decide have changed. Give the new one a \
+        literal subtitle or body, or add it to `bannersWhoseTextComesFromElsewhere` with \
+        the reason its value cannot be empty: \(undecided.sorted())
+        """)
+    }
+
+    /// The runtime half, at the type: both readers of the property must keep
+    /// reading it. Source, because neither can be driven from here — one needs
+    /// a bundle with a notification grant, and the other is asserted on values
+    /// in the ledger's own suite.
+    @Test func theTwoLastGatesStillConsultTheProperty() throws {
+        #expect(try StructureTests.read("Sources/SimmerNotifyKit/BundleNotifier.swift")
+            .contains("guard request.hasInformativeText else { return }"),
+                "BundleNotifier.post is the last thing between a banner and UN")
+        #expect(try StructureTests.read("Sources/SimmerCore/Model/Ledger.swift")
+            .contains("guard request.hasInformativeText else {"),
+                "the spool is the channel every CLI banner arrives on")
+    }
+}
