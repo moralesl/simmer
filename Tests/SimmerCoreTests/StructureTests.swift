@@ -1260,6 +1260,28 @@ import Testing
         #expect(Self.functionsCalling("setSubmenu", in: controller) == [])
     }
 
+    /// The answer reaches the person once: as a row while the menu is open, as
+    /// a banner while it is not — and the banner path clears it, or the next
+    /// open shows the row for an answer the banner has already delivered.
+    ///
+    /// A source-text gate and not a behavioural test, because `simmer-app` has
+    /// no test target: `NSMenu` and `NSStatusItem` are not reachable from a
+    /// unit suite here, and a test that drove them would put a menu on this
+    /// Mac's screen. The three sites are named rather than counted, so the
+    /// gate cannot pass by the clear moving somewhere else: `startCheck`
+    /// before a check begins, `deliverAnswer` after the banner is posted,
+    /// `menuDidClose` when the row that was seen goes away.
+    @Test func theBannerPathClearsTheAnswerItDelivered() throws {
+        let controller = try Self.read("Sources/SimmerApp/StatusItemController.swift")
+        #expect(Self.functionsCalling("answer = nil", in: controller)
+            == ["startCheck", "deliverAnswer", "menuDidClose"], """
+        The answer is visible on exactly one channel: the row while the menu is open, the \
+        banner while it is not. `deliverAnswer` clears it after posting the banner, or the \
+        next open shows the row for an answer the banner already gave — "never neither, and \
+        never both", the doc comment above `deliverAnswer`.
+        """)
+    }
+
     /// The reader above, held to the shapes that defeat a text gate — over
     /// synthetic sources, because the only way to drive them against the real
     /// controller is to edit it, and evidence that has to be produced by hand

@@ -348,6 +348,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             applyUpdateGroup()
         } else if let banner {
             Notifier.shared.post([banner])
+            // The banner has said it, so the row must not say it again on the
+            // next open: "never both" is the promise above, and a menu that
+            // was closed mid-check is the one path where the answer arrives
+            // with nobody looking at the row.
+            answer = nil
         }
         refreshTitle()
     }
