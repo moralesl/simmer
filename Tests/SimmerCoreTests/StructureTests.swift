@@ -629,6 +629,17 @@ import Testing
     ///
     /// Every `-o` it carries, not the last one: which occurrence oclif keeps
     /// is its business, and a gate that picks one is guessing.
+    ///
+    /// The path is judged as it is *written*, and a written path that expands
+    /// is not judgeable: npm runs every script through `sh`, so
+    /// `-o $HOME/.config/raycast/extensions/simmer` and `-o ${HOME}/x` reach
+    /// the process as absolute paths and carry neither a `/` nor a `~` for
+    /// this to refuse. Measured, not assumed — a probe script through
+    /// `npm run` printed `/Users/luis/.config/raycast/extensions/simmer` from
+    /// the first and `/Users/luis/x` from the second. So a `$` anywhere in the
+    /// argument is refused outright rather than expanded here: substitution is
+    /// the shell's, and a gate that tries to predict it is guessing about
+    /// somebody else's environment. That also covers `$(…)` and `${…}`.
     static func expectStaysInsideTheCheckout(_ command: String, run by: String) {
         let outputs = outputArguments(in: command)
         guard !outputs.isEmpty else {
@@ -642,6 +653,8 @@ import Testing
                     "\(by) writes to the absolute path \(output): \(command)")
             #expect(!output.hasPrefix("~"),
                     "\(by) writes under $HOME, where the registered copy lives: \(command)")
+            #expect(!output.contains("$"),
+                    "\(by) has a shell expansion in \(output), which sh resolves before ray sees it")
             #expect(!output.split(separator: "/").contains(".."),
                     "\(by) climbs out of the checkout via \(output): \(command)")
         }
