@@ -37,7 +37,7 @@ Every attempt below was actually run:
 | `osascript` | ✅ | Script Editor | works; quill icon; alert style must be Banners |
 | SwiftBar URL scheme | ✅ | SwiftBar | honours title, subtitle and body |
 | Shortcuts (`/usr/bin/shortcuts run`) | ✅ | Shortcuts | **title is the shortcut's name**; body via Shortcut Input |
-| `terminal-notifier` (own identity) | unproven | **its own** (`fr.julienxx.oss.terminal-notifier`) | 3.1.0 accepts the post and lists it as delivered, title "Terminal"; whether a banner reached the screen is not knowable here (see the TCC table below). The 2017 1.x binary registered in the legacy DB and was never shown |
+| `terminal-notifier` (own identity) | ⚠️ unproven | **its own** (`fr.julienxx.oss.terminal-notifier`) | 3.1.0 accepts the post and lists it as delivered, title "Terminal"; whether a banner reached the screen is not knowable here (see the TCC table below). The 2017 1.x binary registered in the legacy DB and was never shown |
 | **`terminal-notifier -sender <id>`** | ❌ | **still its own** | **the flag is gone.** 3.1.0 ignores it and says so |
 | AppleScript applet with own bundle | ❌ | Script Editor | applets do **not** own their notifications — attributed to the OSA host |
 | **Our own ad-hoc-signed bundle** | ✅ | **our own icon and name** | THE answer — see the verified recipe below. Earlier failures were a cached per-bundle-id denial from a first run in `/tmp`, not a platform refusal |
