@@ -184,9 +184,14 @@ An implementation must do this migration: someone upgrading mid-lease must not s
 
 The whole ownership model rests on one property: **two different owners must never be handed the same claim file.** So the map from owner to id is contracted, not left to an implementation.
 
-- **A filename-safe owner IS its own id, unaltered** — ASCII letters, digits and `._:-`, within the length budget below.
-  That covers every owner any surface produces (`terminal`, `menubar`, `agent:evals`, `run:4821`), so no filename ever moves and nothing is owed a migration.
-- **Otherwise:** unsafe characters flatten to `_`, **and a fingerprint of the original owner is appended** — `agent:a/b` → `agent:a_b-e6a27fc6`.
+- **A lowercase filename-safe owner IS its own id, unaltered** — ASCII lowercase letters, digits and `._:-`, within the length budget below, and not wearing a reserved shape.
+  That covers every owner any surface produces (`terminal`, `menubar`, `agent:evals`, `run:4821`), so their filenames never move.
+- **Case is part of the flattening.** APFS folds it and the ledger is the same filesystem, so two ids differing only in case are one FILE on a stock Mac — `Terminal` addressed `terminal`'s claim.
+  An owner carrying an uppercase letter is therefore a mangled owner: folded to lowercase and fingerprinted like any other alteration.
+  (0.1.0 passed mixed-case owners through unaltered; an implementation must migrate those files to the name their owner resolves to now, keeping the later deadline where two collide — no path through a migration may cost a caller awake time it already holds.)
+- **Otherwise:** unsafe characters flatten to `_`, the result folds to lowercase, **and a fingerprint of the original owner is appended** — `agent:a/b` → `agent:a_b-e6a27fc6`.
+- **The passthrough and fingerprinted forms must be disjoint sets, and the reserved shapes are what keeps them so.** Every fingerprinted id ends in `-<8 lowercase hex>`, and a passthrough id may never: an owner that already wears that shape — or `.tmp.<pid>`, the pre-0.2.0 staging suffix the ledger reads as crash debris — is fingerprinted rather than passed through, even though it is filename-safe.
+  Without this, a fingerprinted id was itself a valid owner: reading a victim's id out of `status --json` and claiming under it landed on their file, silently, with no retire event.
 - The fingerprint is FNV-1a over the raw owner's UTF-8, as 8 lowercase hex digits.
   It must **not** come from a per-process-seeded hash: an id that moves between invocations leaves an actor unable to address the claim it just wrote, which is worse than the collision it would be fixing.
 - The length budget is `NAME_MAX` **minus the temp-file suffix the rename goes through**, not `NAME_MAX` — a claim written under `<id>.tmp.<pid>` and renamed into place needs the temporary name to fit too.
