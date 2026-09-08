@@ -203,14 +203,19 @@ public enum RaycastExtension {
     ///
     /// The fix is `npm run dev`, not `npm run build` — and not because
     /// `ray build` registers nothing. Its output directory *defaults* to
-    /// `~/.config/raycast/extensions/<name>/`, so `npm run build` as this
-    /// repository spells it (`ray build -e dist`, no `-o`) overwrites the
-    /// registered copy with a one-shot artifact of whichever checkout it was
-    /// run in — a worktree's branch included. `ray develop` is the one that
-    /// registers the checkout and leaves it registered, and it needs a live
-    /// TTY, so it is a command a person runs in a terminal and then
-    /// interrupts, which is what `integrations/raycast/README.md` documents
-    /// and what this must not contradict.
+    /// `~/.config/raycast/extensions/<name>/`, and this repository spelled
+    /// the script `ray build -e dist` with no `-o` until 2026-09-08, so
+    /// `npm run build` overwrote the registered copy with a one-shot artifact
+    /// of whichever checkout it ran in — a worktree's branch, twice in one
+    /// morning. The script passes `-o dist` now and
+    /// `theRaycastBuildStaysInsideItsOwnCheckout`
+    /// (`Tests/SimmerCoreTests/StructureTests.swift`) goes red the day it
+    /// stops, so building is no longer a hazard here; it is simply not the
+    /// fix. `ray develop` is the one that registers the checkout and leaves
+    /// it registered, and it needs a live TTY, so it is a command a person
+    /// runs in a terminal and then interrupts, which is what
+    /// `integrations/raycast/README.md` documents and what this must not
+    /// contradict.
     public static func fixLines(checkout: String) -> [String] {
         ["  cd \(checkout)/\(checkoutSubpath) && npm ci && npm run dev",
          "  it needs a terminal; ⌃C once Raycast has it — integrations/raycast/README.md"]
