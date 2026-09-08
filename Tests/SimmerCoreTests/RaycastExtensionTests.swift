@@ -238,9 +238,10 @@ import Testing
         #expect(why.contains("/Users/luis/old/simmer"))
     }
 
-    /// The fix is `npm run dev`, not `npm run build`: `ray build` produces the
-    /// store's artifact and registers nothing, and a doctor row that hands out
-    /// a command which does not fix the thing it reported is worse than no row.
+    /// The fix is `npm run dev`, not `npm run build`, because a doctor row
+    /// that hands out a command which does not fix the thing it reported is
+    /// worse than no row. `ray build` is not even the harmless alternative it
+    /// reads as: with no `-o` it writes into the registered extension itself.
     @Test func theFixRegistersRatherThanJustBuilds() {
         let lines = RaycastExtension.fixLines(checkout: "/Users/x/.local/share/simmer")
         #expect(lines.joined().contains("npm run dev"))
