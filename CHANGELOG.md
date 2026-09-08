@@ -5,6 +5,27 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ## Unreleased
 
+<!-- release: patch -->
+
+### Fixed
+
+- **Pressing "Install it now" now shows that it is installing.** The click closed the menu and then nothing on screen said anything for the minute or two `make install` takes — the app posted a banner and it was never seen. The update row now reads *Installing 0.3.2…* and stops being clickable while the child runs, which is the one channel that cannot be held back by a Focus mode and can be re-read after a banner has faded; the banner itself now comes from the child through the spool, so it survives `Simmer.app` being replaced halfway through, and it carries a body — macOS accepts a notification with no informative text and never presents it. A refusal and a "nothing to install" each say so too; before this, three of the four endings of `update --apply` were silent when the menu had started it, because the child's stdout and stderr both go to `/dev/null`. And `simmer update --apply` writes one line to `simmer.log` when it starts and one for however it ended: the 0.3.1 click left no trace anywhere a person looks.
+- A stranded `notify-spool.jsonl.draining` sentinel is recovered as the unfinished drain it is, rather than being every future banner, silently, forever: `moveItem` refuses an existing destination, and the `defer` that swept the sentinel only ever ran in-process. Its lines are drained too, and `maxAge` — not the crash — decides which of them still deserve a banner.
+- `removeClaim` no longer answers "still matching" about a claim file that is GONE, so two ticks coinciding on one claim record one ending instead of two on `events.jsonl`. The tick that lost the race is also quiet about it: the outcome is correct, and an ERROR line per lost race teaches the log's reader to skim.
+- `simmer guard --json` refuses and names `simmer status --json`, instead of accepting the flag, printing nothing and exiting 0 — the one verb `everyVerbHonoursJSON` was not walking.
+- The cap record is range-checked at its own parser, the way a claim has always been: a corrupt `until` or `expires` is "this field is not a value" rather than a trap waiting on the first surface to do arithmetic on it. An `expires` that is not strictly after `until` is re-derived, so the ceiling keeps the night it was set for.
+- A sudoers rule that runs as somebody other than root is no longer counted as simmer's own capability. A foreign `(operator) NOPASSWD: /usr/bin/pmset …` made `doctor` vouch for a guard whose `sudo -n` is refused on every tick.
+- The SwiftBar menu's "more" and "Release mine" rows follow who holds a claim, the same rule as the app's menu. Both refuse at exit 1 under a name that holds nothing, and every row carries `refresh=true` — so they were clicks that did nothing, invisibly, whenever the claims on the machine were somebody else's.
+- `bootstrap.sh` tells a tag from a branch instead of swallowing every failed fast-forward. A diverged checkout now dies naming the fix, where it used to print "updated the existing checkout" and hand the stale tree to `make install`.
+- `docs/CONTRACTS.md` § the claim id now states the map the code has implemented since #11 shipped in 0.2.0 — case folding, the reserved shapes and the disjointness rule — where it still described the pre-fix owner→id passthrough; an implementation written to the old letter would have reintroduced the case-fold takeover and the forged-fingerprint attack. Description catching up with code: no machine surface moves in this release.
+
+### Changed
+
+- **The Raycast extension's dependencies move, and TypeScript moves one major rather than two.**
+  `@raycast/api` 2.0.6 → 2.2.0, `@types/node` 22.19.17 → 26.4.0 and `typescript` 5.9.3 → 6.0.3, each read before it landed rather than merged on a green tick.
+  Raycast publishes no changelog for the 2.x line, so the api bump was read as the diff between the two versions' own type declarations; the api version matches the installed Raycast, which is what `.github/dependabot.yml` says it has to do. The types bump was read against what the extension actually calls — `execFile`, `accessSync`, `watch`, `homedir`, `join`, `process.env`, none of it newer than Node 12, under a runtime Raycast declares as Node ≥ 22.22.2.
+  TypeScript stops at 6.0.3 on purpose. 7.0 is the native compiler and ships no programmatic API before 7.1, so typescript-eslint refuses to load against it and the extension's ESLint step cannot pass — Raycast's own `ray build` is perfectly happy with 7.0.2, the block is the linter. 6.0.3 needs the identical migration, one `"types": ["node"]` line in `tsconfig.json`, because TypeScript 6.0 changed that default from `["*"]` to `[]` and without it nothing loads `@types/node` at all. So the work 7 will need is done, and what is left when the linter catches up is a version number.
+
 ## 0.3.1 — 2026-09-07
 
 ### Changed

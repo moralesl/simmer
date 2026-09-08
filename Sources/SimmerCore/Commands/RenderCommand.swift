@@ -50,11 +50,22 @@ extension Commands {
             lines.append("---")
             // "15 more minutes", not "Extend 15 minutes": the second reads as
             // "make it fifteen", which is what these items used to do.
-            lines.append(act("15 more minutes", "+15m", "--owner", "menubar"))
-            lines.append(act("1 more hour", "+1h", "--owner", "menubar"))
-            lines.append(act("3 more hours", "+3h", "--owner", "menubar"))
+            //
+            // Whether the menu bar already holds a claim decides which verb
+            // delivers "more" — the same rule as `MenuModel`: `extend` adds to
+            // one that exists, and with none of its own the first press takes
+            // one. Emitting `extend` regardless was worse than cosmetic: every
+            // row carries refresh=true, so its exit-1 refusal was a click that
+            // did nothing, invisibly.
+            let mine = aggregate.live.contains { $0.claim.owner == "menubar" }
+            func more(_ label: String, _ span: String) -> String {
+                act(label, mine ? "+\(span)" : span, "--owner", "menubar")
+            }
+            lines.append(more("15 more minutes", "15m"))
+            lines.append(more("1 more hour", "1h"))
+            lines.append(more("3 more hours", "3h"))
             lines.append("---")
-            lines.append(act("Release mine", "down", "--owner", "menubar"))
+            if mine { lines.append(act("Release mine", "down", "--owner", "menubar")) }
             lines.append(act("Release everything", "down", "--all", "--owner", "menubar"))
         case .forever:
             lines.append("∞ | sfimage=cup.and.saucer.fill color=orange")
@@ -69,7 +80,11 @@ extension Commands {
             lines.append(act("-- 1 hour from now", "1h", "--owner", "menubar"))
             lines.append(act("-- 3 hours from now", "3h", "--owner", "menubar"))
             lines.append("---")
-            lines.append(act("Release mine", "down", "--owner", "menubar"))
+            // Same ownership rule as the active case: `down` under a name that
+            // holds nothing refuses, and refresh=true swallows the refusal.
+            if aggregate.live.contains(where: { $0.claim.owner == "menubar" }) {
+                lines.append(act("Release mine", "down", "--owner", "menubar"))
+            }
             lines.append(act("Release everything", "down", "--all", "--owner", "menubar"))
         case .orphan:
             lines.append(" | sfimage=exclamationmark.triangle.fill color=red")

@@ -175,6 +175,12 @@ Neither field changed meaning when the second clock arrived; `fits` and the exit
   Written **before** the attempt starts, because the attempt quits `Simmer.app` and there is nothing left to write it afterwards; still seeing that release on the next daily check is what proves the attempt did not land.
   Its absence is the safe default in the same way `auto-update.on`'s presence is: with no record, the next check tries.
   Cleared when a person turns unattended installs **on**, so asking for them is asking for an attempt — and not when they turn them off, because nothing reads it while off and forgetting it there would make the answer depend on which way the switch moved last.
+- `update-in-progress` — the release an install **now under way** is installing, `key=value` (`target`, `started_at`, `installed`).
+  A fourth fact about the same tag, and therefore a fourth file: what the last check found, what a person has been told, what this Mac has tried by itself, and what is happening right now.
+  Written by the app before it spawns `simmer update --apply`, so the menu tells the truth from the first time it is opened after the click — the menu being the one channel that cannot be suppressed and can be re-read, which a banner is neither.
+  Read back **only by the version that wrote it**, exactly as `update-check` is, and that is what ends it on the good path: the app that comes back is the new version, so the record it left behind is invisible to it and nothing has to delete anything.
+  The child clears it on every ending that installed nothing, the app clears it if the child exits while the app is still alive, and `started_at` ages it out after fifteen minutes — the backstop for a child killed outright while the app was quit.
+  `target=` empty is a legitimate value and not the same as no record: it means an install is under way whose target the reader cannot name, and the row says so rather than dropping the fact.
 - additionally, an append-only `events.jsonl` (one JSON object per transition: `v`, `ts`, `event`, `reason`, `owner`, …).
 
 A `format=1` lease is read **once**, converted into a claim, and deleted.
@@ -184,9 +190,14 @@ An implementation must do this migration: someone upgrading mid-lease must not s
 
 The whole ownership model rests on one property: **two different owners must never be handed the same claim file.** So the map from owner to id is contracted, not left to an implementation.
 
-- **A filename-safe owner IS its own id, unaltered** — ASCII letters, digits and `._:-`, within the length budget below.
-  That covers every owner any surface produces (`terminal`, `menubar`, `agent:evals`, `run:4821`), so no filename ever moves and nothing is owed a migration.
-- **Otherwise:** unsafe characters flatten to `_`, **and a fingerprint of the original owner is appended** — `agent:a/b` → `agent:a_b-e6a27fc6`.
+- **A lowercase filename-safe owner IS its own id, unaltered** — ASCII lowercase letters, digits and `._:-`, within the length budget below, and not wearing a reserved shape.
+  That covers every owner any surface produces (`terminal`, `menubar`, `agent:evals`, `run:4821`), so their filenames never move.
+- **Case is part of the flattening.** APFS folds it and the ledger is the same filesystem, so two ids differing only in case are one FILE on a stock Mac — `Terminal` addressed `terminal`'s claim.
+  An owner carrying an uppercase letter is therefore a mangled owner: folded to lowercase and fingerprinted like any other alteration.
+  (0.1.0 passed mixed-case owners through unaltered; an implementation must migrate those files to the name their owner resolves to now, keeping the later deadline where two collide — no path through a migration may cost a caller awake time it already holds.)
+- **Otherwise:** unsafe characters flatten to `_`, the result folds to lowercase, **and a fingerprint of the original owner is appended** — `agent:a/b` → `agent:a_b-e6a27fc6`.
+- **The passthrough and fingerprinted forms must be disjoint sets, and the reserved shapes are what keeps them so.** Every fingerprinted id ends in `-<8 lowercase hex>`, and a passthrough id may never: an owner that already wears that shape — or `.tmp.<pid>`, the pre-0.2.0 staging suffix the ledger reads as crash debris — is fingerprinted rather than passed through, even though it is filename-safe.
+  Without this, a fingerprinted id was itself a valid owner: reading a victim's id out of `status --json` and claiming under it landed on their file, silently, with no retire event.
 - The fingerprint is FNV-1a over the raw owner's UTF-8, as 8 lowercase hex digits.
   It must **not** come from a per-process-seeded hash: an id that moves between invocations leaves an actor unable to address the claim it just wrote, which is worse than the collision it would be fixing.
 - The length budget is `NAME_MAX` **minus the temp-file suffix the rename goes through**, not `NAME_MAX` — a claim written under `<id>.tmp.<pid>` and renamed into place needs the temporary name to fit too.

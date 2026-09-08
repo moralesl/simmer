@@ -98,10 +98,23 @@ public struct MenuInstall: Sendable, Equatable {
     /// in the renderer.
     public var releaseNotesURL: String?
 
+    /// An install this Mac has already started, and the release it installs.
+    ///
+    /// `nil` is "nothing is installing"; a non-nil value — **including the
+    /// empty string** — is "an install is under way", the empty case being one
+    /// whose target this reader cannot name. Absent and empty are different
+    /// answers here on purpose: folding them together would drop the one fact
+    /// the row exists to carry.
+    ///
+    /// It is here rather than derived from `updateLine` because it is a fact
+    /// about this Mac and not about the repository: `Ledger.readInstallInProgress`
+    /// answers it, and the app is what asks.
+    public var installing: String?
+
     public init(version: String, canHandBackUnattended: Bool,
                 updateLine: String? = nil, updateCommand: String = "",
                 versionLine: String? = nil, canApplyUpdate: Bool = false,
-                releaseNotesURL: String? = nil) {
+                releaseNotesURL: String? = nil, installing: String? = nil) {
         self.version = version
         self.canHandBackUnattended = canHandBackUnattended
         self.updateLine = updateLine
@@ -109,6 +122,7 @@ public struct MenuInstall: Sendable, Equatable {
         self.versionLine = versionLine
         self.canApplyUpdate = canApplyUpdate
         self.releaseNotesURL = releaseNotesURL
+        self.installing = installing
     }
 }
 
@@ -125,7 +139,22 @@ public enum MenuModel {
         // and a submenu instead, the same shape "Copy as CLI command" uses,
         // because the useful thing to do with it is to take the command away
         // to a terminal.
-        if let line = install.updateLine {
+        // An install already under way replaces the whole group, and it is
+        // checked FIRST: `make install` takes a minute or two, and for that
+        // minute the menu is the only channel that is certain to be there —
+        // a banner can be suppressed by Focus, and nothing simmer can read
+        // says whether it was shown (PLATFORM-FACTS.md § Notifications).
+        //
+        // No submenu and no action, so it renders as an information row:
+        // there is nothing left to install, nothing to copy that would not be
+        // a second install, and a clickable "Install it now" while one is
+        // running is an invitation to start a second child.
+        if let target = install.installing {
+            items.append(MenuItemModel(
+                title: target.isEmpty ? "Installing simmer…" : "Installing \(target)…",
+                symbol: "arrow.down.circle.fill"))
+            items.append(.separator)
+        } else if let line = install.updateLine {
             var children: [MenuItemModel] = []
             if install.canApplyUpdate {
                 // First, and named as the action it is. It runs the same

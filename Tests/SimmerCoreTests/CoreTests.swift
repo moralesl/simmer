@@ -995,3 +995,216 @@ import Testing
         #expect(ledger.claims().isEmpty)
     }
 }
+
+/// The shapes a crash or a coinciding tick leaves behind — each one must
+/// degrade toward "try again", never toward silence or a doubled record.
+@Suite struct CrashAndRaceDebris {
+    func makeLedger() -> (Ledger, URL) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("simmer-race-\(UUID().uuidString)")
+        return (Ledger(stateDir: dir), dir)
+    }
+
+    /// A drain that dies between the rename and the sweep strands
+    /// `notify-spool.jsonl.draining` — and `moveItem` refuses an existing
+    /// destination, so one stranded sentinel used to be every future banner,
+    /// silently, forever. The pre-floor warnings ride this spool, and they are
+    /// the stated condition for allowing an open-ended claim.
+    @Test func aStrandedDrainSentinelIsRecoveredNotFatal() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sentinel = ledger.spoolFile.appendingPathExtension("draining")
+        // The stranded half: a request a crashed drain read but never posted.
+        ledger.enqueueNotification(NotificationRequest(title: "stranded"), now: 1000)
+        try? FileManager.default.moveItem(at: ledger.spoolFile, to: sentinel)
+        // The fresh half, queued after the crash.
+        ledger.enqueueNotification(NotificationRequest(title: "fresh"), now: 1010)
+
+        let drained = ledger.drainNotifications(now: 1020)
+        #expect(drained.map(\.title).sorted() == ["fresh", "stranded"])
+        #expect(!FileManager.default.fileExists(atPath: sentinel.path))
+        // And the NEXT drain still works — the sentinel is gone, not immortal.
+        ledger.enqueueNotification(NotificationRequest(title: "later"), now: 1030)
+        #expect(ledger.drainNotifications(now: 1040).map(\.title) == ["later"])
+        // The crash does not extend a banner's life: age still decides.
+        ledger.enqueueNotification(NotificationRequest(title: "old"), now: 1050)
+        try? FileManager.default.moveItem(at: ledger.spoolFile, to: sentinel)
+        #expect(ledger.drainNotifications(now: 5000).isEmpty)
+    }
+
+    /// The recovery is keyed on the sentinel EXISTING, not on what it holds.
+    ///
+    /// Reading it first and removing it only when the read came back non-empty
+    /// leaves the whole defect standing for every shape that reads as empty —
+    /// a crash between the rename of an empty spool and the sweep, a dangling
+    /// symlink wearing the name (`fileExists` says false, `moveItem` still
+    /// refuses it a destination), a mode that denies the read but not the
+    /// unlink. Each one is the same immortal sentinel, and each one costs
+    /// every future banner. The pre-floor warning is the one this tool cannot
+    /// afford to drop: it is the stated condition for an open-ended claim.
+    @Test func anEmptyStrandedSentinelIsNotImmortalEither() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sentinel = ledger.spoolFile.appendingPathExtension("draining")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        #expect((try? Data().write(to: sentinel)) != nil)
+
+        ledger.enqueueNotification(NotificationRequest(title: "after the crash"), now: 1000)
+        #expect(ledger.drainNotifications(now: 1010).map(\.title) == ["after the crash"])
+        #expect(!FileManager.default.fileExists(atPath: sentinel.path))
+
+        // A dangling symlink is the same story from the other side: nothing to
+        // read, nothing `fileExists` will admit to, and still a destination
+        // `moveItem` refuses.
+        try? FileManager.default.createSymbolicLink(
+            atPath: sentinel.path, withDestinationPath: dir.appendingPathComponent("gone").path)
+        #expect(!FileManager.default.fileExists(atPath: sentinel.path), "the link dangles")
+        ledger.enqueueNotification(NotificationRequest(title: "after the link"), now: 1020)
+        #expect(ledger.drainNotifications(now: 1030).map(\.title) == ["after the link"])
+
+        // A directory wearing the name is the same destination `moveItem`
+        // refuses, and `removeItem` clears it — so the drain recovers rather
+        // than going quiet for good.
+        try? FileManager.default.createDirectory(at: sentinel, withIntermediateDirectories: true)
+        ledger.enqueueNotification(NotificationRequest(title: "after the dir"), now: 1040)
+        #expect(ledger.drainNotifications(now: 1050).map(\.title) == ["after the dir"])
+        #expect(!FileManager.default.fileExists(atPath: sentinel.path))
+    }
+
+    /// The crash can land mid-`write`, so the stranded half can end without a
+    /// newline. The spool is line-delimited and the boundary between two reads
+    /// of it has to be one too: a partial record glued to the first whole one
+    /// parses as neither, and dropping the fresh record as collateral is the
+    /// recovery costing a banner it was written to save.
+    @Test func aTruncatedStrandedHalfDoesNotSwallowTheFreshOne() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sentinel = ledger.spoolFile.appendingPathExtension("draining")
+        ledger.enqueueNotification(NotificationRequest(title: "torn"), now: 1000)
+        // What a `write` cut in half leaves: a record with no newline, and in
+        // this case no closing brace either.
+        let whole = (try? String(contentsOf: ledger.spoolFile, encoding: .utf8)) ?? ""
+        #expect(!whole.isEmpty)
+        try? String(whole.dropLast(4)).write(to: sentinel, atomically: true, encoding: .utf8)
+        try? FileManager.default.removeItem(at: ledger.spoolFile)
+
+        ledger.enqueueNotification(NotificationRequest(title: "whole"), now: 1010)
+        // The torn record is unreadable and goes; the whole one behind it must
+        // not go with it.
+        #expect(ledger.drainNotifications(now: 1020).map(\.title) == ["whole"])
+        #expect(!FileManager.default.fileExists(atPath: sentinel.path))
+    }
+
+    /// Two ticks can coincide, and both used to record the same ending:
+    /// `removeClaim` answered true for a file that was already gone, and
+    /// `retire` emits its contracted event on every true.
+    @Test func aCoincidingRetireRecordsOneEnding() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let claim = Claim(owner: "agent:eval", until: 2000, started: 900)
+        #expect(ledger.write(claim))
+        let snapshot = ledger.claims()[0]
+        #expect(ledger.retire(snapshot, why: "time is up", now: 2001))
+        // The tick that lost the race, acting on the same snapshot.
+        #expect(ledger.retire(snapshot, why: "time is up", now: 2001) == false)
+        let events = (try? String(contentsOf: ledger.eventsFile, encoding: .utf8)) ?? ""
+        #expect(events.components(separatedBy: "\"retire\"").count == 2,
+                "one ending, one event: \(events)")
+        // And no ERROR about it either — the outcome is correct, and a log
+        // line for every lost race teaches the reader to skim.
+        let log = (try? String(contentsOf: ledger.logFile, encoding: .utf8)) ?? ""
+        #expect(!log.contains("ERROR"), "\(log)")
+    }
+
+    /// `removingAClaimThatIsAlreadyGoneSucceeds` above is `down`'s truth.
+    /// With a snapshot in hand the answer flips: gone is not "still matching",
+    /// same as `write(_:ifStillMatching:)` from the other side.
+    @Test func aVanishedClaimIsNotStillMatching() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let claim = Claim(owner: "agent:x", until: 2000, started: 900)
+        #expect(ledger.removeClaim(id: claim.id, ifStillMatching: claim) == false)
+        #expect(ledger.removeClaim(id: claim.id) == true)
+    }
+
+    /// Re-derived against the addressing the claim-id fix left behind, because
+    /// "gone" is a statement about a FILENAME and that fix changed which
+    /// filename an owner gets.
+    ///
+    /// `Terminal` used to pass through as its own id, which on APFS is
+    /// `terminal`'s file; it now folds and fingerprints to
+    /// `terminal-<fingerprint>`, a name of its own that nothing has written.
+    /// So the snapshot form has to answer false for it — and, more to the
+    /// point, must not answer about the neighbour it used to collide with. A
+    /// true here would be `retire` recording an ending for a claim that is
+    /// still holding the machine awake, under a name that never took one.
+    @Test func aFoldedOwnerIsGoneOnItsOwnNameNotTheNeighboursFile() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let human = Claim(owner: "terminal", until: 4000, started: 900)
+        #expect(ledger.write(human))
+        let folded = Claim(owner: "Terminal", until: 4000, started: 900)
+        #expect(folded.id != human.id, "the claim-id fix folds and fingerprints: \(folded.id)")
+
+        #expect(ledger.removeClaim(id: folded.id, ifStillMatching: folded) == false)
+        #expect(ledger.retire(folded, why: "time is up", now: 4001) == false)
+        // The human's claim is untouched, and its ending was never recorded.
+        #expect(ledger.claims().map(\.id) == [human.id])
+        let events = (try? String(contentsOf: ledger.eventsFile, encoding: .utf8)) ?? ""
+        #expect(!events.contains("\"retire\""), "\(events)")
+    }
+
+    /// `Claim` got its range check at the parser chokepoint (a corrupt field
+    /// traps whichever surface does arithmetic on it first, at exit 133); the
+    /// cap record never did, and `until` and `expires` feed the same math.
+    @Test func aCorruptCapRecordCannotTrapArithmetic() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let overflow = "format=2\nuntil=9223372036854775807\nset_by=x\nset_at=1000\nexpires=9223372036854775807\n"
+        try? overflow.write(to: ledger.capFile, atomically: true, encoding: .utf8)
+        #expect(ledger.storedCap() == nil)
+        #expect(ledger.readCap(now: 1000) == nil)
+
+        // `expires` is contracted strictly after `until`; a value that is not
+        // is damage, and it is re-derived so the ceiling stays real for its
+        // own night rather than lapsing early.
+        let inverted = "format=2\nuntil=3000\nset_by=x\nset_at=1000\nexpires=2000\n"
+        try? inverted.write(to: ledger.capFile, atomically: true, encoding: .utf8)
+        #expect(ledger.storedCap()?.expires == Cap.rollover(after: 3000))
+    }
+
+    /// The range check must not become a wrong REFUSAL: it accepts exactly
+    /// what `Claim.init` accepts, so no record a claim would have been built
+    /// from is thrown away here. `maxEpoch` itself is the boundary both sides
+    /// take, and the second-to-last epoch is an ordinary value.
+    ///
+    /// The two directions differ deliberately. An unreadable claim becomes
+    /// `until = 1` — already over, so damage cannot hold the machine awake.
+    /// An unreadable ceiling becomes NO ceiling, because the other direction
+    /// is a lockout invented out of `Int.max` that refuses every claim, and
+    /// costing a caller awake time is the failure this tool exists to prevent
+    /// (AGENTS.md).
+    @Test func theCapAcceptsEveryEpochAClaimWouldAccept() {
+        let (ledger, dir) = makeLedger()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // The boundary, which `Claim.init` takes as a value.
+        #expect(Claim(owner: "x", until: Claim.maxEpoch, started: 0).until == Claim.maxEpoch)
+        let atTheEdge = "format=2\nuntil=\(Claim.maxEpoch)\nset_by=x\nset_at=1000\n"
+            + "expires=\(Claim.maxEpoch)\n"
+        try? atTheEdge.write(to: ledger.capFile, atomically: true, encoding: .utf8)
+        // `expires == until` is not "strictly after", so it is re-derived —
+        // but the ceiling itself survives, which is what must not be refused.
+        #expect(ledger.storedCap()?.until == Claim.maxEpoch)
+
+        // And one past it is damage on both sides.
+        #expect(Claim(owner: "x", until: Claim.maxEpoch + 1, started: 0).until == 1)
+        let pastTheEdge = "format=2\nuntil=\(Claim.maxEpoch + 1)\nset_by=x\nset_at=1000\n"
+        try? pastTheEdge.write(to: ledger.capFile, atomically: true, encoding: .utf8)
+        #expect(ledger.storedCap() == nil)
+
+        // A negative epoch is out of range at both ends of the same interval.
+        let negative = "format=2\nuntil=-1\nset_by=x\nset_at=1000\nexpires=-1\n"
+        try? negative.write(to: ledger.capFile, atomically: true, encoding: .utf8)
+        #expect(ledger.storedCap() == nil)
+    }
+}

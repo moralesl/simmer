@@ -114,8 +114,16 @@ public enum SudoRule {
             passwordless.filter { !SudoRule.commands.contains($0) }
         }
 
+        /// `ALL`, and only `ALL`. There was a second arm here —
+        /// `$0.hasSuffix(") ALL")` — for a runas group that had come through
+        /// attached, and no input can produce that: `grants` strips the group
+        /// before it builds `passwordless`, so nothing in this array can
+        /// carry one. A reader for a shape nothing emits is a branch that
+        /// cannot fail a test and cannot be right, and it advertised a
+        /// robustness this parser does not have.
+        /// `aRunasGroupNeverReachesTheGrantList` is why it stays gone.
         public var hasBlanketGrant: Bool {
-            passwordless.contains { $0 == "ALL" || $0.hasSuffix(") ALL") }
+            passwordless.contains { $0 == "ALL" }
         }
     }
 
@@ -138,8 +146,19 @@ public enum SudoRule {
             }
             var entry = line.trimmingCharacters(in: .whitespaces)
             guard !entry.isEmpty else { continue }
-            // Drop the runas group, e.g. "(root) " or "(ALL : ALL) ".
+            // Read the runas group before dropping it, e.g. "(root) " or
+            // "(ALL : ALL) ". A rule that runs as someone else does not grant
+            // what simmer asks sudo for: `(operator) NOPASSWD: /usr/bin/pmset
+            // …` is a foreign rule whose `sudo -n pmset` is still refused, and
+            // counting it as simmer's own made `doctor` vouch for a guard that
+            // cannot move the switch. No group at all defaults to root.
+            var runsAsRoot = true
             if entry.hasPrefix("("), let close = entry.firstIndex(of: ")") {
+                let group = String(entry[entry.index(after: entry.startIndex)..<close])
+                let users = group.split(separator: ":").first.map(String.init) ?? ""
+                runsAsRoot = users.split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .contains { $0 == "root" || $0 == "ALL" }
                 entry = String(entry[entry.index(after: close)...])
                     .trimmingCharacters(in: .whitespaces)
             }
@@ -154,7 +173,7 @@ public enum SudoRule {
                 entry = String(entry[entry.index(after: colon)...])
                     .trimmingCharacters(in: .whitespaces)
             }
-            guard isPasswordless, !entry.isEmpty else { continue }
+            guard isPasswordless, runsAsRoot, !entry.isEmpty else { continue }
             passwordless.append(contentsOf: entry.components(separatedBy: ", ")
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty })

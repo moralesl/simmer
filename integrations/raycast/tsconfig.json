@@ -2,6 +2,12 @@
   "$schema": "https://json.schemastore.org/tsconfig",
   "include": ["src/**/*", "tests/**/*", "raycast-env.d.ts"],
   "compilerOptions": {
+    // TypeScript 6.0 changed the default of `types` from ["*"] to [], so no
+    // @types/* package is loaded unless it is named here — "Simple Default
+    // Changes" in https://devblogs.microsoft.com/typescript/announcing-typescript-6-0/.
+    // Without this line the compiler cannot find `process`, `setTimeout`,
+    // the `NodeJS` namespace, or the `node:` specifiers themselves.
+    "types": ["node"],
     "lib": ["ES2023"],
     "module": "Node16",
     "moduleResolution": "node16",

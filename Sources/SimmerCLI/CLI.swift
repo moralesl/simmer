@@ -222,6 +222,10 @@ struct GuardCLI: ParsableCommand {
     @OptionGroup var common: CommonOptions
 
     func run() throws {
+        // A tick's answer is what it DID, and that goes to the log and the
+        // event stream — the machine surfaces for "what happened" are
+        // `status --json` and `events.jsonl`, not a launchd child's stdout.
+        common.refuseJSON("guard", insteadUse: "simmer status --json")
         // Unattended: must never prompt for a password — sudo -n or nothing.
         let ctx = Runtime.context(ownerFlag: common.owner, interactive: false)
         Runtime.deliver(Tick.run(ctx: ctx))

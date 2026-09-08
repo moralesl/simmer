@@ -170,8 +170,15 @@ public struct Ledger: Sendable {
     /// a newer version had added a field to, which is the opposite failure.
     public func removeClaim(id: String, ifStillMatching expected: Claim? = nil) -> Bool {
         let url = claimsDir.appendingPathComponent(id)
-        if let expected,
-           let text = try? String(contentsOf: url, encoding: .utf8) {
+        if let expected {
+            // Gone since the snapshot is NOT "still matching" — same answer
+            // `write(_:ifStillMatching:)` gives from the other side. Two ticks
+            // can coincide, and the one that lost the race used to fall
+            // through to the unconditional path below, answer true, and have
+            // `retire` record the same ending twice on the event stream.
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                return false
+            }
             let current = Claim.parse(text, fallbackId: id)
             guard current.until == expected.until, current.started == expected.started else {
                 return false
@@ -197,8 +204,13 @@ public struct Ledger: Sendable {
         // Retire what was actually read: if it moved under us, the decision
         // to end it was taken about a claim that no longer exists.
         guard removeClaim(id: claim.id, ifStillMatching: claim) else {
-            log("ERROR: could not retire \(claim.owner) · \(why) — it changed under us, or \(claimsDir.appendingPathComponent(claim.id).path) is still there",
-                now: now)
+            // Quiet when the file is simply gone: a coinciding tick already
+            // retired it and recorded the ending — a second ERROR line about
+            // an outcome that is correct would teach the log's reader to skim.
+            if FileManager.default.fileExists(atPath: claimsDir.appendingPathComponent(claim.id).path) {
+                log("ERROR: could not retire \(claim.owner) · \(why) — it changed under us, or \(claimsDir.appendingPathComponent(claim.id).path) is still there",
+                    now: now)
+            }
             return false
         }
         let reasonPart = claim.reason.isEmpty ? "" : " (\(claim.reason))"
@@ -267,6 +279,26 @@ public struct Ledger: Sendable {
             default: break
             }
         }
+        // The same discipline `Claim.init` applies to a claim record, at the
+        // cap's own parser chokepoint: out of range is "this field is not a
+        // value", never clamped. Swift arithmetic traps rather than wrapping,
+        // and both `until` and `expires` feed date math on every surface that
+        // asks about the cap — `Claim` got this check and the cap never did.
+        //
+        // The accepted range is `Claim`'s own, so this cannot refuse a record
+        // `Claim.init` would have taken. The direction differs, and has to:
+        // an unreadable CLAIM becomes `until = 1`, already over, because
+        // damage must not hold the machine awake. An unreadable CEILING
+        // becomes no ceiling, because damage must not refuse a caller awake
+        // time either — a lockout invented out of `Int.max` is the failure
+        // this tool exists to prevent, arriving from the other side.
+        func epoch(_ value: Int) -> Int { (0...Claim.maxEpoch).contains(value) ? value : 0 }
+        until = epoch(until)
+        setAt = epoch(setAt)
+        expires = epoch(expires)
+        // `expires` is contracted strictly after `until`; a value that is not
+        // is damage, and re-deriving it keeps the ceiling real for its night.
+        if expires <= until { expires = 0 }
         guard until != 0 else { return nil }
         // A file written before caps expired carries no `expires`. Deriving it
         // here is what retires those caps on first read rather than stranding
@@ -392,14 +424,38 @@ public struct Ledger: Sendable {
     /// a stale banner is worse than none.
     public func drainNotifications(now: Int, maxAge: Int = 120) -> [NotificationRequest] {
         let draining = spoolFile.appendingPathExtension("draining")
-        guard (try? FileManager.default.moveItem(at: spoolFile, to: draining)) != nil
-        else { return [] }
-        // Armed the moment the sentinel exists, not after the read. Registered
-        // below the read, its own failure path stranded the file it was there
-        // to remove — and a spool that can never be moved into place again is
-        // every banner, silently, forever.
-        defer { try? FileManager.default.removeItem(at: draining) }
-        guard let text = try? String(contentsOf: draining, encoding: .utf8) else { return [] }
+        // A sentinel already present is a drain that never finished: the
+        // `defer` below only runs in-process, so a crash between the rename
+        // and the sweep strands the file — and `moveItem` refuses an existing
+        // destination, so one stranded sentinel was every future banner,
+        // silently, forever. Its lines are requests that were never posted;
+        // they are drained too, and `maxAge` — not the crash — decides which
+        // of them still deserve a banner.
+        var text = (try? String(contentsOf: draining, encoding: .utf8)) ?? ""
+        // Unconditional, and keyed on the sentinel EXISTING rather than on
+        // what it holds. Removing it only when it read as non-empty leaves
+        // exactly the same immortality behind for the shapes that read as
+        // empty: a crash between the rename of an empty spool and the sweep,
+        // a directory or a dangling symlink wearing the name (`fileExists`
+        // answers false for the latter and `moveItem` still refuses it a
+        // destination), a permission that denies the read but not the unlink.
+        // `try?` swallows the not-there case, which is the common one.
+        try? FileManager.default.removeItem(at: draining)
+        // Terminate the recovered half before the fresh one is appended. Every
+        // record `enqueueNotification` writes ends in a newline, but the crash
+        // that stranded this file can have landed mid-`write` — and a partial
+        // record glued to the first whole one is a single line that parses as
+        // neither, so BOTH are dropped. The spool is line-delimited; the
+        // boundary between two reads of it has to be one too.
+        if !text.isEmpty, !text.hasSuffix("\n") { text += "\n" }
+        if (try? FileManager.default.moveItem(at: spoolFile, to: draining)) != nil {
+            // Armed the moment the sentinel exists, not after the read.
+            // Registered below the read, its own failure path stranded the
+            // file it was there to remove.
+            defer { try? FileManager.default.removeItem(at: draining) }
+            text += (try? String(contentsOf: draining, encoding: .utf8)) ?? ""
+        }
+        guard !text.isEmpty else { return [] }
         var requests: [NotificationRequest] = []
         for line in text.split(separator: "\n") {
             guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8))
@@ -497,7 +553,8 @@ public struct Ledger: Sendable {
         var checked = 0
         var latest = "", error = "", installed = ""
         var seamed = false
-        for line in text.split(separator: "\n") {
+        // CRLF is one Character in Swift; see `readInstallInProgress`.
+        for line in text.split(whereSeparator: \.isNewline) {
             let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
             guard parts.count == 2 else { continue }
             let value = String(parts[1])
@@ -554,11 +611,103 @@ public struct Ledger: Sendable {
         try? FileManager.default.removeItem(at: updateAttemptedFile)
     }
 
+    // MARK: the install that is under way
+    //
+    // A fourth fact about the same tag, and therefore a fourth file: what the
+    // last check FOUND, what a person has been TOLD, what this Mac has TRIED
+    // by itself — and now what is happening RIGHT NOW.
+    //
+    // It exists because `make install` takes a minute or two during which the
+    // only visible thing simmer does is disappear from the menu bar. A banner
+    // is the wrong sole channel for that: it can be suppressed by Focus, it
+    // cannot be re-read after it fades, and nothing simmer can read says
+    // whether it was ever shown. The menu is what a person opens when a banner
+    // is missed, so the menu has to know.
+
+    public struct InstallInProgress: Sendable, Equatable {
+        /// What is being installed, as a person reads it (`0.3.2`, or
+        /// `0.3.2 or newer` for the plan that installs a branch). Empty is a
+        /// legitimate value and NOT the same as no record: it means an install
+        /// is under way whose target this reader cannot name, and the row says
+        /// "Installing simmer…" rather than dropping the fact.
+        public var target: String
+        public var startedAt: Int
+        /// The version of the binary that started it. Read back by that
+        /// version only, exactly as `update-check` is — and here it is what
+        /// ends the state: the app that comes back IS the new version, so the
+        /// record it left behind is invisible to it and the row is honest
+        /// again without anything having to delete anything.
+        public var installed: String
+
+        public init(target: String, startedAt: Int, installed: String) {
+            self.target = target
+            self.startedAt = startedAt
+            self.installed = installed
+        }
+
+        /// The backstop, not the mechanism. Three things end this state
+        /// first: the child reports its own refusal or failure and clears it,
+        /// the app sees the child exit and clears it, and coming back as a
+        /// different version makes it unreadable. This closes the one hole
+        /// those leave — a child killed outright while the app was quit — and
+        /// is deliberately longer than a slow cold `make install`.
+        public static let maxAge = 15 * 60
+    }
+
+    public var updateInProgressFile: URL { stateDir.appendingPathComponent("update-in-progress") }
+
+    public func writeInstallInProgress(target: String, now: Int, installed: String) {
+        _ = atomicWrite("""
+        target=\(Claim.singleLine(target, limit: 64))
+        started_at=\(now)
+        installed=\(Claim.singleLine(installed, limit: 64))
+
+        """, to: updateInProgressFile)
+    }
+
+    public func clearInstallInProgress() {
+        try? FileManager.default.removeItem(at: updateInProgressFile)
+    }
+
+    /// The install under way, **only if this binary is the one that started
+    /// it** and it started recently enough to still be plausible.
+    ///
+    /// A key that appears twice makes the record nil rather than picking one:
+    /// two answers to one question is not an answer, and the safe direction
+    /// here is to claim nothing — the row falls back to "Update available",
+    /// which is true whether or not something is installing.
+    public func readInstallInProgress(writtenBy version: String, now: Int) -> InstallInProgress? {
+        guard let text = try? String(contentsOf: updateInProgressFile, encoding: .utf8)
+        else { return nil }
+        var fields: [String: String] = [:]
+        // `whereSeparator: \.isNewline` and NOT `separator: "\n"`: Swift
+        // grapheme-clusters CRLF into a SINGLE Character, which is not equal
+        // to "\n", so splitting on the literal returns a CRLF file as one
+        // unparseable line — and a reader that answers nil to a whole file is
+        // a menu row that never appears.
+        for line in text.split(whereSeparator: \.isNewline) {
+            let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            let key = String(parts[0])
+            guard fields[key] == nil else { return nil }
+            fields[key] = String(parts[1])
+        }
+        guard let startedText = fields["started_at"], let startedAt = Int(startedText),
+              startedAt > 0, let installed = fields["installed"], installed == version
+        else { return nil }
+        guard now - startedAt < InstallInProgress.maxAge else { return nil }
+        // `target` absent and `target=` empty are the same answer on purpose:
+        // an install whose target this reader cannot name is still an install.
+        return InstallInProgress(target: fields["target"] ?? "",
+                                startedAt: startedAt, installed: installed)
+    }
+
     /// `latest=` out of one of the two tag files. Both hold one fact about one
     /// tag in the same shape, so they are read by the same three lines.
     private func readTag(from file: URL) -> String {
         guard let text = try? String(contentsOf: file, encoding: .utf8) else { return "" }
-        for line in text.split(separator: "\n") {
+        // CRLF is one Character in Swift; see `readInstallInProgress`.
+        for line in text.split(whereSeparator: \.isNewline) {
             let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
             if parts.count == 2, parts[0] == "latest" { return String(parts[1]) }
         }
@@ -874,6 +1023,17 @@ public struct Ledger: Sendable {
     /// leading dot says the same thing to a person reading the directory.
     private func atomicWrite(_ text: String, to url: URL) -> Bool {
         let tmp = stateDir.appendingPathComponent(".\(url.lastPathComponent).tmp.\(getpid())")
+        // A symlink where a record belongs is removed, never followed and
+        // never left in place. `replaceItemAt` against one fails outright, so
+        // the record silently did not get written — the menu simply never said
+        // "Installing…" — and following it instead would put simmer's state
+        // wherever the link points, which is how a write under a bin directory
+        // lands in a repository. `attributesOfItem` does not follow links, so
+        // this asks about the path and not about its target.
+        if let type = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type]
+            as? FileAttributeType, type != .typeRegular {
+            try? FileManager.default.removeItem(at: url)
+        }
         do {
             try text.write(to: tmp, atomically: false, encoding: .utf8)
             // Set on the temp file, so the record is never briefly world-
