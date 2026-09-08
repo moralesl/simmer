@@ -1092,6 +1092,123 @@ import Testing
         #expect(!text.contains("open "), "\(text)")
     }
 
+    /// The plan of a bundle install: it fetched a release from a remote, so
+    /// there is a tag, a checkout and a remote to name.
+    private func installerPlan(
+        tag: String = "v0.9.0",
+        checkout: String = "/Users/x/.local/share/simmer",
+        remote: String = "https://github.com/moralesl/simmer"
+    ) -> UpdateCommand.ApplyPlan {
+        UpdateCommand.ApplyPlan(
+            steps: [], target: "0.9.0", reopenBundle: "/Applications/Simmer.app",
+            releaseFetch: .init(tag: tag, checkout: checkout, remote: remote))
+    }
+
+    /// The 8 Sep sentence, and what it could not tell anybody.
+    ///
+    /// "Could not switch to simmer 0.3.3. Nothing was installed." was true of
+    /// an install checkout whose `origin` lagged the release — and equally
+    /// true of a dirty tree, a moved tag and a disk that filled up. What it
+    /// now adds is where it looked: the tag, the checkout, and the remote it
+    /// fetched from.
+    @Test func theSwitchingSentenceNamesTheTagTheCheckoutAndTheRemote() {
+        let text = UpdateCommand.failureSentence(
+            phase: .switching, plan: installerPlan(),
+            updateCommand: "curl -fsSL https://github.com/moralesl/simmer/raw/main/bootstrap.sh | bash")
+
+        #expect(text.contains("Could not switch to simmer 0.9.0"), "\(text)")
+        #expect(text.contains("Nothing was installed"), "\(text)")
+        #expect(text.contains("the tag v0.9.0"), "\(text)")
+        #expect(text.contains("/Users/x/.local/share/simmer"), "\(text)")
+        #expect(text.contains("after fetching from https://github.com/moralesl/simmer"), "\(text)")
+        // The two clauses a truncated banner body must still show come first.
+        #expect(text.hasPrefix("Could not switch to simmer 0.9.0. Nothing was installed."),
+                "a banner truncates its tail, so the tail is the diagnostic half: \(text)")
+    }
+
+    /// It says where it looked, never why it failed.
+    ///
+    /// The same arm is reached by a dirty tree or a stray file in that
+    /// checkout — Luis's own is on a detached HEAD — so a sentence asserting
+    /// "the tag is not there" would be a lie about those. git's own words are
+    /// the second line, which `theFailingCommandIsTheSecondLineNotTheFirst`
+    /// pins.
+    @Test func theSwitchingSentenceClaimsNoCause() {
+        let text = UpdateCommand.failureSentence(
+            phase: .switching, plan: installerPlan(), updateCommand: "")
+        for cause in ["is not in", "does not exist", "missing", "not there", "lags", "dirty",
+                      "because"] {
+            #expect(!text.contains(cause),
+                    "a sentence composed from the plan cannot know the cause: \(text)")
+        }
+    }
+
+    /// And it never recommends the place that just failed.
+    ///
+    /// The update command for a bundle install is the one-paste installer,
+    /// which fetches the same remote the plan just fetched — so a failure
+    /// sentence ending in `Run: curl … | bash` sent Luis to a command that
+    /// failed for the identical reason. What it names instead reads the
+    /// checkout and stays true whatever the cause.
+    @Test func theSwitchingSentenceDoesNotSendThemBackToTheRemoteThatFailed() {
+        let installer = "curl -fsSL https://github.com/moralesl/simmer/raw/main/bootstrap.sh | bash"
+        let text = UpdateCommand.failureSentence(
+            phase: .switching, plan: installerPlan(), updateCommand: installer)
+
+        #expect(!text.contains("curl"), "\(text)")
+        #expect(!text.contains("| bash"), "\(text)")
+        #expect(!text.contains("Run: "), "\(text)")
+        #expect(text.hasSuffix("Look with: git -C /Users/x/.local/share/simmer status"), "\(text)")
+    }
+
+    /// The fetch that never got that far: the remote it TRIED is the fact this
+    /// sentence exists for on the day GitHub is unreachable while `origin` is
+    /// perfectly fine — the case a plan fetching `origin` never had.
+    @Test func theFetchingSentenceNamesTheRemoteItTried() {
+        let text = UpdateCommand.failureSentence(
+            phase: .fetching, plan: installerPlan(), updateCommand: "brew upgrade simmer")
+        #expect(text.contains("Could not fetch simmer 0.9.0 from https://github.com/moralesl/simmer"),
+                "\(text)")
+        #expect(text.contains("Nothing on this Mac was changed"), "\(text)")
+        // Nothing was fetched, so the retry is not a recommendation of a
+        // failure: it stays.
+        #expect(text.contains("Run: brew upgrade simmer"), "\(text)")
+    }
+
+    /// A plan that fetched no release from a remote it was told about — the
+    /// one-step Homebrew plan, a checkout fast-forwarding its own upstream —
+    /// says exactly what it said before, byte for byte.
+    @Test func aPlanWithNoReleaseFetchKeepsItsOldSentences() {
+        #expect(UpdateCommand.failureSentence(phase: .fetching, plan: plan(),
+                                              updateCommand: "brew upgrade simmer")
+            == "Could not fetch simmer 0.9.0. Nothing on this Mac was changed. "
+                + "Run: brew upgrade simmer")
+        #expect(UpdateCommand.failureSentence(phase: .switching, plan: plan(),
+                                              updateCommand: "brew upgrade simmer")
+            == "Could not switch to simmer 0.9.0. Nothing was installed. "
+                + "Run: brew upgrade simmer")
+    }
+
+    /// T1's deliverable 4, pinned by equality because nothing pinned its
+    /// order: the phase first — which part stopped is what decides whether
+    /// anything on this Mac changed — then the command, then git's own words.
+    /// The sentence above is for the person; this line is what makes the click
+    /// answerable tomorrow, and it is how the 8 Sep failure was diagnosed in
+    /// one read.
+    @Test func theLogLineIsPhaseThenCommandThenGitsOwnWords() {
+        let step = UpdateCommand.ApplyStep(
+            executable: "/usr/bin/git",
+            arguments: ["-C", "/Users/x/.local/share/simmer", "checkout", "--quiet", "v0.9.0"],
+            phase: .switching)
+        #expect(UpdateCommand.applyLogSentence(
+            .failed(step: step,
+                    detail: "error: pathspec 'v0.9.0' did not match any file(s) known to git",
+                    plan: installerPlan()))
+            == "update: 0.9.0 failed while switching — "
+                + "git -C /Users/x/.local/share/simmer checkout --quiet v0.9.0: "
+                + "error: pathspec 'v0.9.0' did not match any file(s) known to git")
+    }
+
     /// The sentence is the message; the failing command and its stderr tail
     /// stay underneath it as evidence, and in the banner's subtitle.
     @Test func theFailingCommandIsTheSecondLineNotTheFirst() throws {

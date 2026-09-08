@@ -442,12 +442,21 @@ import Testing
     /// alone can only record success, so every one of these was reachable only
     /// by breaking a real install — which is exactly the class of code that
     /// gets read once, at the worst possible moment.
+    /// The third column is what the sentence must point the reader at, and it
+    /// is not the same for all three. `switching` is the phase whose failure
+    /// means the release's files are not in the checkout — and the one-paste
+    /// installer named by `bootstrap.sh` fetches the very remote the plan just
+    /// fetched, so recommending it there is how this defect recommended
+    /// itself (8 Sep, the failure banner sent Luis to a `curl` that would have
+    /// failed identically). That phase names the checkout to look in instead;
+    /// the other two still name the command that works.
     @Test(arguments: [
-        ("fetching", "Could not fetch simmer 9.9.9"),
-        ("switching", "Could not switch to simmer 9.9.9"),
-        ("installing", "Could not install simmer 9.9.9"),
+        ("fetching", "Could not fetch simmer 9.9.9", "bootstrap.sh"),
+        ("switching", "Could not switch to simmer 9.9.9", "Look with: git -C"),
+        ("installing", "Could not install simmer 9.9.9", "bootstrap.sh"),
     ])
-    func aStepThatFailedSaysWhatDidNotFinish(_ phase: String, _ sentence: String) throws {
+    func aStepThatFailedSaysWhatDidNotFinish(_ phase: String, _ sentence: String,
+                                             _ pointsAt: String) throws {
         let sim = Sim(); defer { sim.tearDown() }
         let log = sim.root.appendingPathComponent("apply.log")
         FileManager.default.createFile(atPath: log.path, contents: nil)
@@ -462,10 +471,15 @@ import Testing
         // The sentence first, and the failing command under it as evidence.
         let lines = result.err.split(separator: "\n").map(String.init)
         #expect(lines.first?.contains(sentence) == true, "\(result.err)")
-        #expect(lines.first?.contains("bootstrap.sh") == true,
-                "the sentence names the command that works: \(result.err)")
+        #expect(lines.first?.contains(pointsAt) == true,
+                "the sentence names something to do: \(result.err)")
         #expect(result.err.contains("SIMMER_FAKE_APPLY_FAIL=\(phase)"),
                 "the failing step's own detail is kept: \(result.err)")
+        // Whatever it points at, it is never the remote that just failed.
+        if phase == "switching" {
+            #expect(lines.first?.contains("curl") != true,
+                    "the switching sentence sent them back to the remote that failed: \(result.err)")
+        }
     }
 
     /// `apply_error` is unchanged — the failing command and its detail, which

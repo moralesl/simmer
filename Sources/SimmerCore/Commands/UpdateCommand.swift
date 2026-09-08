@@ -664,15 +664,46 @@ public enum UpdateCommand {
     /// typed, in a checkout most people do not know they have, and leaves the
     /// two questions that matter — did anything change, and what do I do —
     /// entirely to the reader.
+    ///
+    /// Where the plan fetched a release from a remote (`releaseFetch`), the
+    /// two install phases also say WHERE it looked — the tag, the checkout and
+    /// the remote — because that is the whole of what the 8 Sep failure could
+    /// not tell anybody: "Could not switch to simmer 0.3.3. Nothing was
+    /// installed." is true of a checkout whose origin lags the release and of
+    /// three other things.
+    ///
+    /// Where it looked, and never **why** it failed. The same arm is reached
+    /// by a dirty tree or a stray file in that checkout, and a sentence
+    /// asserting "the tag is not there" would be a lie about those; git's own
+    /// words are on the second line, where `applyFailed` puts them. For the
+    /// same reason the switching case says `Look with:` rather than
+    /// `Run: <updateCommand>` — the update command for a bundle install is the
+    /// one-paste installer, which fetches the very remote that just failed to
+    /// yield the tag, and recommending it is how this defect recommended
+    /// itself. `git … status` reads the checkout and is true whatever the
+    /// cause.
     public static func failureSentence(phase: ApplyPhase, plan: ApplyPlan,
                                        updateCommand: String) -> String {
         let target = "simmer \(plan.target)"
         let terminal = updateCommand.isEmpty ? "" : " Run: \(updateCommand)"
         switch phase {
         case .fetching:
-            return "Could not fetch \(target). Nothing on this Mac was changed.\(terminal)"
+            // The remote it TRIED, which is the fact this sentence exists for
+            // on the day GitHub is unreachable while `origin` is fine — a
+            // plan that fetched `origin` never had that case at all.
+            let from = plan.releaseFetch.map { " from \($0.remote)" } ?? ""
+            return "Could not fetch \(target)\(from). Nothing on this Mac was changed.\(terminal)"
         case .switching:
-            return "Could not switch to \(target). Nothing was installed.\(terminal)"
+            guard let fetch = plan.releaseFetch else {
+                return "Could not switch to \(target). Nothing was installed.\(terminal)"
+            }
+            // The two clauses that answer "what happened" and "did anything
+            // change" stay first and stay as they were: a banner truncates
+            // its body, and what gets cut has to be the diagnostic tail.
+            return "Could not switch to \(target). Nothing was installed. "
+                + "Looked for the tag \(fetch.tag) in the checkout at \(fetch.checkout), "
+                + "after fetching from \(fetch.remote). "
+                + "Look with: git -C \(fetch.checkout) status"
         case .installing:
             // Deliberately not "was fetched but not installed": that is untrue
             // of the one-step Homebrew plan, which does both at once.
