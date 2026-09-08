@@ -1048,6 +1048,19 @@ import Testing
 
     /// Every sentence names the version, says whether anything changed, and
     /// ends with something to do. Those three are the whole point of it.
+    ///
+    /// `plan()` carries no `releaseFetch`, and that is what these three rows
+    /// are about: a plan that fetched no release from a remote it was told
+    /// about. The **one exception** to the last expectation is the `switching`
+    /// sentence of a plan that did — `theSwitchingSentenceDoesNotSendThemBackToTheRemoteThatFailed` —
+    /// and the ban on `git ` below is about which command, not about git. What this row
+    /// refuses is the failing command — the thing nobody typed, which belongs
+    /// on the second line as evidence. What that sentence ends in is a **look**
+    /// and not a fix: `git -C <checkout> status`, read-only, true whether the
+    /// tag is absent or the tree is dirty, and named because the fix this
+    /// phase would otherwise print fetches the remote that just failed.
+    /// A command in the message earns its place by being the reader's next
+    /// step; the pin and its exception say the same thing from two sides.
     @Test(arguments: [UpdateCommand.ApplyPhase.fetching, .switching, .installing])
     func eachInstallPhaseSaysWhatHappenedAndWhatToRun(_ phase: UpdateCommand.ApplyPhase) {
         let text = sentence(phase)
