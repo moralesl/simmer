@@ -261,7 +261,12 @@ public struct Ledger: Sendable {
     /// the true path, so the stream never records an ending that did not
     /// happen — the log carries the failure, because inventing an event kind
     /// for it would change a contracted surface.
-    public func retire(_ claim: Claim, why: String, now: Int) -> Bool {
+    ///
+    /// `by` names the actor that ended it — the owner itself, a person ending
+    /// everyone's, or `guard` for the tick — and lands on the `retire` event.
+    /// It is what lets `release` answer "did my claim hold": an ending recorded
+    /// by anyone but the owner is one the owner was never told about.
+    public func retire(_ claim: Claim, why: String, by actor: String, now: Int) -> Bool {
         Ledger.endLegacyCaffeinate(claim)
         // Retire what was actually read: if it moved under us, the decision
         // to end it was taken about a claim that no longer exists.
@@ -288,8 +293,59 @@ public struct Ledger: Sendable {
             ("reason", .string(claim.reason)),
             ("until", .int(claim.until)),
             ("why", .string(why)),
+            ("by", .string(actor)),
         ])
         return true
+    }
+
+    /// The actor name the guard retires under. Not an owner anyone is given by
+    /// default, and an owner who chooses it is only ever told less: a claim
+    /// named `guard` that the guard ends reads as its own release and no lapse.
+    public static let guardActor = "guard"
+
+    /// A claim that ended without its owner: what ended it, and when.
+    public struct Lapse: Equatable, Sendable {
+        public var at: Int
+        public var why: String
+        public var by: String
+        public var until: Int
+    }
+
+    /// The most recent thing that happened to `owner`'s claim, read back from
+    /// `events.jsonl` — the one consumer of that stream, and the reason
+    /// `retire` records `by`.
+    ///
+    /// Answers a lapse only for the newest `claim`/`retire` event about the
+    /// owner, and only when that is a `retire` recorded by somebody else. A
+    /// newer `claim` means the owner started again and knew; a `retire` the
+    /// owner wrote is a release; an event written before `by` existed cannot
+    /// be told apart from one, so it is not a lapse either — the answer is
+    /// allowed to be missing, never invented.
+    ///
+    /// Read whole and scanned from the end: the file is append-only and the
+    /// answer is in its last few lines. A line that does not parse is skipped
+    /// rather than fatal, for the same reason `claims()` skips a record it
+    /// cannot read.
+    public func lastLapse(of owner: String) -> Lapse? {
+        guard let text = try? String(contentsOf: eventsFile, encoding: .utf8) else { return nil }
+        for line in text.split(separator: "\n").reversed() {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  let event = object["event"] as? String,
+                  object["owner"] as? String == owner else { continue }
+            switch event {
+            case "claim":
+                return nil
+            case "retire":
+                guard let actor = object["by"] as? String, actor != owner else { return nil }
+                return Lapse(at: object["ts"] as? Int ?? 0,
+                             why: object["why"] as? String ?? "",
+                             by: actor,
+                             until: object["until"] as? Int ?? 0)
+            default:
+                continue
+            }
+        }
+        return nil
     }
 
     /// Signal the caffeinate a v0.1 spike claim recorded — **only if the pid

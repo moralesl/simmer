@@ -357,7 +357,7 @@ import Testing
                                                ofItemAtPath: ledger.claimsDir.path)
 
         #expect(ledger.removeClaim(id: claim.id) == false)
-        #expect(ledger.retire(claim, why: "released by hand", now: 1000) == false)
+        #expect(ledger.retire(claim, why: "released by hand", by: claim.owner, now: 1000) == false)
         #expect(ledger.claims().count == 1)
         // And no `retire` event for an ending that did not happen.
         let events = (try? String(contentsOf: ledger.eventsFile, encoding: .utf8)) ?? ""
@@ -430,7 +430,7 @@ import Testing
                           atomically: true, encoding: .utf8)
 
         #expect(ledger.claims().count == 1)
-        ledger.retire(ledger.claims()[0], why: "released by hand", now: 1000)
+        _ = ledger.retire(ledger.claims()[0], why: "released by hand", by: ledger.claims()[0].owner, now: 1000)
         #expect(ledger.claims().isEmpty)
     }
 
@@ -519,7 +519,7 @@ import Testing
 
         // b released; a becomes the aggregate and gets its OWN warning
         // instead of inheriting a spent flag.
-        ledger.retire(ledger.claim(owner: "b")!, why: "test", now: 1460)
+        _ = ledger.retire(ledger.claim(owner: "b")!, why: "test", by: Ledger.guardActor, now: 1460)
         outcome = Tick.run(ctx: context(now: 1460))
         #expect(outcome.notifications.contains { $0.subtitle.contains("then this Mac sleeps") })
         #expect(ledger.claim(owner: "a")?.warned == true)
@@ -983,7 +983,7 @@ import Testing
 
         #expect(ledger.write(Claim(owner: "agent:x", until: 0, started: 1_700_000_000)))
         let snapshot = ledger.claims()[0]
-        #expect(ledger.retire(snapshot, why: "released by hand", now: 1_800_000_000))
+        #expect(ledger.retire(snapshot, why: "released by hand", by: snapshot.owner, now: 1_800_000_000))
 
         var stale = snapshot
         stale.reminded = 1_800_000_000
@@ -1009,11 +1009,11 @@ import Testing
         renewed.until += 3600
         #expect(ledger.write(renewed))
 
-        #expect(ledger.retire(snapshot, why: "time is up", now: 1_800_000_001) == false)
+        #expect(ledger.retire(snapshot, why: "time is up", by: Ledger.guardActor, now: 1_800_000_001) == false)
         #expect(ledger.claims().first?.until == renewed.until, "the renewal was deleted")
 
         // And retiring what is actually there still works.
-        #expect(ledger.retire(ledger.claims()[0], why: "time is up", now: 1_800_000_001))
+        #expect(ledger.retire(ledger.claims()[0], why: "time is up", by: Ledger.guardActor, now: 1_800_000_001))
         #expect(ledger.claims().isEmpty)
     }
 }
@@ -1235,9 +1235,9 @@ import Testing
         let claim = Claim(owner: "agent:eval", until: 2000, started: 900)
         #expect(ledger.write(claim))
         let snapshot = ledger.claims()[0]
-        #expect(ledger.retire(snapshot, why: "time is up", now: 2001))
+        #expect(ledger.retire(snapshot, why: "time is up", by: Ledger.guardActor, now: 2001))
         // The tick that lost the race, acting on the same snapshot.
-        #expect(ledger.retire(snapshot, why: "time is up", now: 2001) == false)
+        #expect(ledger.retire(snapshot, why: "time is up", by: Ledger.guardActor, now: 2001) == false)
         let events = (try? String(contentsOf: ledger.eventsFile, encoding: .utf8)) ?? ""
         #expect(events.components(separatedBy: "\"retire\"").count == 2,
                 "one ending, one event: \(events)")
@@ -1268,7 +1268,7 @@ import Testing
         #expect(ledger.write(extended))
         #expect(ledger.outcomeOfRemovingClaim(id: snapshot.id, ifStillMatching: snapshot)
                 == .changed)
-        #expect(ledger.retire(snapshot, why: "time is up", now: 2001) == false)
+        #expect(ledger.retire(snapshot, why: "time is up", by: Ledger.guardActor, now: 2001) == false)
         var log = (try? String(contentsOf: ledger.logFile, encoding: .utf8)) ?? ""
         #expect(log.contains("ERROR: could not retire agent:eval"),
                 "the one case the ERROR line is for was silenced: \(log)")
@@ -1292,7 +1292,7 @@ import Testing
         #expect(ledger.outcomeOfRemovingClaim(id: snapshot.id, ifStillMatching: snapshot)
                 == .gone)
         try? FileManager.default.removeItem(at: ledger.logFile)
-        #expect(ledger.retire(snapshot, why: "time is up", now: 2002) == false)
+        #expect(ledger.retire(snapshot, why: "time is up", by: Ledger.guardActor, now: 2002) == false)
         log = (try? String(contentsOf: ledger.logFile, encoding: .utf8)) ?? ""
         #expect(!log.contains("ERROR"), "a correct outcome was reported as one: \(log)")
 
@@ -1301,7 +1301,7 @@ import Testing
         #expect(ledger.outcomeOfRemovingClaim(id: extended.id, ifStillMatching: extended)
                 == .removed)
         #expect(ledger.write(extended))
-        #expect(ledger.retire(extended, why: "released by hand", now: 5001))
+        #expect(ledger.retire(extended, why: "released by hand", by: extended.owner, now: 5001))
         events = (try? String(contentsOf: ledger.eventsFile, encoding: .utf8)) ?? ""
         #expect(events.components(separatedBy: "\"retire\"").count == 2, "\(events)")
     }
@@ -1337,7 +1337,7 @@ import Testing
         #expect(folded.id != human.id, "the claim-id fix folds and fingerprints: \(folded.id)")
 
         #expect(ledger.removeClaim(id: folded.id, ifStillMatching: folded) == false)
-        #expect(ledger.retire(folded, why: "time is up", now: 4001) == false)
+        #expect(ledger.retire(folded, why: "time is up", by: Ledger.guardActor, now: 4001) == false)
         // The human's claim is untouched, and its ending was never recorded.
         #expect(ledger.claims().map(\.id) == [human.id])
         let events = (try? String(contentsOf: ledger.eventsFile, encoding: .utf8)) ?? ""

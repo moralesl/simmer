@@ -5,6 +5,16 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ## Unreleased
 
+### Added
+
+- **`simmer down` tells you whether your claim held.** A claim can end under a running process without a word — the deadline, the battery floor, the charger on a `--require-ac` claim, thermal pressure, a person's `down --all` — and until now the release that followed answered "nothing to release" at exit 0, or "these are not yours to end" at exit 1, and said nothing about the guarantee that had quietly gone. The release is the one moment the caller is guaranteed to be listening, so that is where it is said now: `held` is whether your claim was live until that very call, and `lapsed` is when it ended, what ended it and who recorded that, read back from the events stream. The human sentence says the Mac *may* have slept since — simmer knows when the guarantee ended, not what the lid did. `simmer run` says the same on stderr when the guard ended its claim underneath the command, and the command's own exit code still passes through untouched. `AGENTS.md` asks agents to carry `held: false` into their handoff, because "the machine may have slept after 02:14" is a sentence that was previously impossible to write truthfully.
+
+### Machine surface
+
+- `release --json` gains **`held`** (boolean) and **`lapsed`** (`null`, or `{"at","why","by","until"}`). Appended, like every field after the first release; the object's existing fields are unchanged.
+- The `retire` event on `events.jsonl` gains **`by`** — the actor that ended the claim: its owner, the person who ran `down --all`, or `guard`. Events written before this carry no `by` and are read as "cannot tell", never as a lapse.
+- **One exit code moves, in one shape.** `down` by a caller whose claim had *ended*, while other claims were still live, was exit 1 with the refusal object. It is exit 0 now, `released: []`, `held: false` and `lapsed` filled in — nothing was asked that could be refused, and the old answer was false about the caller. A caller with no claim and no history at all is refused exactly as before.
+
 ## 0.3.4 — 2026-09-08
 
 ### Changed
