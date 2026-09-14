@@ -56,6 +56,7 @@ Claims request from below; the cap rules from above.
 A cap holds for the night it was set for and lifts itself at 09:00, so tonight's ceiling is never tomorrow's lockout.
 
 The full contract, including the reasoning behind each of those choices, is [docs/CONTRACTS.md](docs/CONTRACTS.md).
+What simmer will and will not become — the test a proposal has to pass — is [VISION.md](VISION.md).
 
 ## Install
 

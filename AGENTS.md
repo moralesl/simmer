@@ -146,6 +146,7 @@ Tests/                unit suite + an acceptance suite that drives the BUILT
                       binary under the seam variables (honours SIMMER_BIN)
 integrations/raycast/ the Raycast extension: TypeScript, its own npm tree and
                       tests. A fourth renderer over `status --json`.
+VISION.md             whether a thing belongs at all: what fits, what is resisted.
 docs/CONTRACTS.md     the law: surface, exit codes, machine output, reasoning.
 docs/PLATFORM-FACTS.md  what macOS actually does, verified.
 docs/ROADMAP.md       decided but not built. docs/FAQ.md — short answers.
@@ -157,6 +158,8 @@ docs/ROADMAP.md       decided but not built. docs/FAQ.md — short answers.
    Settled decisions are not relitigated.
 2. `docs/PLATFORM-FACTS.md` — each line bought with a failed attempt, plus the traps no test can carry.
    If your plan trips one, the plan is wrong, and nothing there changes without re-running the experiment and recording the result.
+3. `VISION.md` — whether the thing you are about to build belongs here at all.
+   Test a feature against its two lists before designing it; a "resisted" entry moves only with its reason rewritten.
 
 ## Commands
 

@@ -33,4 +33,6 @@ It reads `status --json` only, never the ledger, so `Aggregate.compute` stays th
 `simmer render raycast` keeps its job: it is the line under the command title in the root search, refreshed on Raycast's background tick, so the launcher row, the menu bar and any third-party script command all read the same because one place decides the wording.
 The extension reads `status --json` for the list and `render raycast` for the glance — machine surface where it needs fields, human surface where it needs a sentence.
 
+The acceptance policy behind every row above and every refusal below is `VISION.md`, in the repository root.
+
 Deliberately **not** planned: a SwiftBar plugin (decided 2026-08-23 — the app IS the menu bar; `render swiftbar` stays in the surface only until a contract revision retires it), a daemon, a config file, named presets — the model went a year without wanting them (flags plus three defaults covered every case), force semantics or owner juggling in the menu, and any paid Apple signature, ever.

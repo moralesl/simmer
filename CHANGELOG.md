@@ -8,6 +8,7 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 ### Added
 
 - **`simmer down` tells you whether your claim held.** A claim can end under a running process without a word — the deadline, the battery floor, the charger on a `--require-ac` claim, thermal pressure, a person's `down --all` — and until now the release that followed answered "nothing to release" at exit 0, or "these are not yours to end" at exit 1, and said nothing about the guarantee that had quietly gone. The release is the one moment the caller is guaranteed to be listening, so that is where it is said now: `held` is whether your claim was live until that very call, and `lapsed` is when it ended, what ended it and who recorded that, read back from the events stream. The human sentence says the Mac *may* have slept since — simmer knows when the guarantee ended, not what the lid did. `simmer run` says the same on stderr when the guard ended its claim underneath the command, and the command's own exit code still passes through untouched. `AGENTS.md` asks agents to carry `held: false` into their handoff, because "the machine may have slept after 02:14" is a sentence that was previously impossible to write truthfully.
+- **`VISION.md`** — whether a thing belongs in simmer at all, as two lists: what a proposal has to do to fit, and what is resisted with the reason each time. The roadmap says what is decided and not built and the contract says what is law; this is the page before both, and `AGENTS.md` now reads it third.
 
 ### Machine surface
 
