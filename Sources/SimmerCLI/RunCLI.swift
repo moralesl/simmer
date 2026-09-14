@@ -238,7 +238,7 @@ final class RunCoordinator {
             // disk and the Mac still awake — the wrapped command's own exit
             // code passed through, saying nothing about the machine.
             var outcome = Outcome()
-            if !ctx.ledger.retire(claim, why: "run finished", now: ctx.now) {
+            if !ctx.ledger.retire(claim, why: "run finished", by: owner, now: ctx.now) {
                 // Epoch 0 must never be formatted as a time — it reads 01:00.
                 // A run claim always carries a deadline, so this is belt and
                 // braces rather than a live case.
@@ -248,6 +248,16 @@ final class RunCoordinator {
             }
             let (_, settled) = Engine.settle(ctx: ctx, why: "run finished")
             outcome.merge(settled)
+            Runtime.emit(outcome, human: .stderr)
+        } else if let lapse = ctx.ledger.lastLapse(of: owner) {
+            // The guard ended the claim under a command that kept running —
+            // the deadline, --max, the floor, the charger, heat. The command's
+            // own exit code passes through untouched, so this line is the only
+            // place the machine's side of the story can be told. Handoffs
+            // that say "ran under simmer" should be able to say this too.
+            var outcome = Outcome()
+            outcome.stderr.append(
+                "simmer: the claim ended at \(Formats.hhmmDated(lapse.at, now: ctx.now)) · \(lapse.why) — the Mac may have slept since; the command was not interrupted")
             Runtime.emit(outcome, human: .stderr)
         }
     }

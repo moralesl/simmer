@@ -298,7 +298,7 @@ An implementation migrating a single-lease predecessor owes these differences; t
 | a second owner is refused | gets its own claim | awake time is counted, not owned |
 | `--force` replaces a lease | inert, and says so | nothing left to force |
 | `simmer down` releases whoever's lease | releases **yours** | an agent must not end a human's claim |
-| `simmer down` holding no claim released everything | **refused**, with the list | ending work you did not start deserves an explicit flag. A human is pointed at `down --all` — their authority, stated; an agent is not, because that call is not theirs |
+| `simmer down` holding no claim released everything | **refused**, with the list — unless the caller's claim *ended* under it, which is reported as `held: false` with `lapsed` at exit 0 | ending work you did not start deserves an explicit flag. A human is pointed at `down --all` — their authority, stated; an agent is not, because that call is not theirs. A caller whose claim was taken by the guard or a person asked for nothing that could be refused, and is owed the fact instead |
 | `simmer +20m` needed no ownership | needs a claim of yours | "extend" has to mean something specific once there are several |
 | `simmer +20m` set the deadline to now+20m | **adds** 20 minutes to it | see § Surface guarantees — a "+" that subtracts is the one surprise this tool cannot afford |
 | `run` proved ownership with a `[run <pid>]` token in the reason | owner is `run:<pid>`; the reason is just the command | the identity moved to where identity lives |
@@ -332,6 +332,14 @@ All additive to the surface above:
   `theThreeListsOfWhichVerbsRefuseJSONNameTheSameVerbs` gates this sentence against the suites that assert it, in both directions — a verb named here and not refused, or refused and not named here, is red.
   `everyVerbHonoursJSON` is the gate — it walks the whole verb list, so a new command cannot join the surface without answering this question one way or the other.
   A refusal with `--json` prints `{"action":"refused","error":"…"}` and still exits 1.
+- **`release --json` answers about the caller's own claim, not only about the machine.** Two fields, appended: `held` (boolean — the caller's claim was live until this very call) and `lapsed` (`null`, or `{"at", "why", "by", "until"}`: when the claim ended, what ended it, who recorded the ending, and the deadline it had).
+  A claim can end under a running process without a word — the deadline, the floor, the charger, heat, a person's `down --all` — and the release is the one moment the caller is guaranteed to be listening, so that is where it is said.
+  `lapsed` is read back from `events.jsonl`: the newest `claim` or `retire` event about the caller, and it is a lapse only when that is a `retire` recorded by somebody else.
+  A newer `claim` means the caller started again and knew; a `retire` the caller wrote is a release; an event too old to carry `by` is not a lapse either — the answer may be missing, never invented.
+  **One exit code moves with this, in one shape:** a caller whose claim *ended*, releasing while others still hold, used to be refused as reaching for someone else's time — true about the other claims, false about the caller, silent about the lapse.
+  It is exit 0 now, `released: []`, `held: false`, with `lapsed` filled in; the other claims are untouched.
+  A caller with no claim and no history is refused exactly as before.
+  The human sentence says "may have slept", never "slept": simmer knows when the guarantee ended, not what the lid did.
 - **The exit-code table is complete and published** (in `--help` and here): budget 0/1/3 · run passes through · claim/extend/release/cap 0 ok, 1 refused · doctor 0/1.
   Parse errors are 1, never an ArgumentParser 64.
 - **The anonymous-claimer nudge.** A non-tty caller taking a claim without naming itself gets one stderr line — not an error, not repeated, invisible to humans in a terminal.
@@ -339,7 +347,8 @@ All additive to the surface above:
   Events observed: `claim`, `extend`, `release`, `release_all`, `retire`, `cap_set`, `cap_lifted`, `cap_expired`, `switch_on`, `switch_off`, `orphan_heal`, `thermal_release`, `warn`, `prefloor_warn`, `remind`, `migrate`.
   Order is chronological — the switch flips before the claim file lands, and the stream says so.
   Fields are append-only.
-  Nothing reads it yet; `watch`/`why` stay uncontracted.
+  `retire` carries **`by`** — the actor that ended the claim: its owner, the person who ran `down --all`, or `guard` for the tick — which is what lets `release` answer `lapsed` (above) without a second record of endings.
+  `release` is the one reader of the stream; `watch`/`why` stay uncontracted.
 - **`simmer update` reports; installing is a second, explicit thing to ask for.** Bare, it prints the command for the copy it is running from and stops there — `--apply` runs it, and `--auto on` lets the daily check run it (both below).
   An update replaces a running app and the binary the guard's LaunchAgent points at, and it can be asked for while a claim is live — so the default shape is `simmer uninstall`'s, for the same reason: an operation that happens rarely, in front of a person already at a keyboard, is better as a command they can read first than as a button that acts on their behalf.
   What the two additions buy is the case that shape does not serve — a person with no terminal, and a copy nobody opens — and each pays for it separately: `--apply` by running only the command it would have printed, `--auto` by being off until asked and refusing while a claim is live.

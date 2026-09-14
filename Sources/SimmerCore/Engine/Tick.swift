@@ -71,7 +71,7 @@ public enum Tick {
         // `down`, `cap off` — must check, because the speaking is the harm.
         if ctx.power.thermalPressure() {
             var stuck = 0
-            for claim in ledger.claims() where !ledger.retire(claim, why: "thermal pressure", now: ctx.now) {
+            for claim in ledger.claims() where !ledger.retire(claim, why: "thermal pressure", by: Ledger.guardActor, now: ctx.now) {
                 stuck += 1
             }
             // The guard may ignore a retire that failed — it runs again in
@@ -109,7 +109,7 @@ public enum Tick {
 
             // Deadline passed — the claim's own, or the cap clipping it.
             if effective != 0 && ctx.now >= effective {
-                _ = ledger.retire(claim, why: "time is up", now: ctx.now)
+                _ = ledger.retire(claim, why: "time is up", by: Ledger.guardActor, now: ctx.now)
                 continue
             }
 
@@ -118,7 +118,7 @@ public enum Tick {
             // 60 cannot drag anyone else's time down with it (CONTRACTS.md § the claims ledger).
             if onBattery, let percent, percent <= claim.minBattery {
                 _ = ledger.retire(claim, why: "battery \(percent)% below floor \(claim.minBattery)%",
-                                  now: ctx.now)
+                                  by: Ledger.guardActor, now: ctx.now)
                 continue
             }
 
@@ -126,7 +126,7 @@ public enum Tick {
             // assumption behind the claim is gone, so it ends now, at 90%,
             // rather than at the floor hours later.
             if claim.requireAC && onBattery {
-                _ = ledger.retire(claim, why: "charger unplugged (--require-ac)", now: ctx.now)
+                _ = ledger.retire(claim, why: "charger unplugged (--require-ac)", by: Ledger.guardActor, now: ctx.now)
                 continue
             }
 

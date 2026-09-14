@@ -8,6 +8,9 @@ extension Commands {
     public static func release(all: Bool, json: Bool, ctx: Context) -> Outcome {
         var outcome = Outcome()
         let claims = ctx.ledger.claims()
+        /// What ended the caller's claim, if the caller did not. Read once,
+        /// here, so every path below answers the same question the same way.
+        let lapse = ctx.ledger.claim(owner: ctx.owner) == nil ? ctx.ledger.lastLapse(of: ctx.owner) : nil
 
         func settleAndReport(_ why: String) {
             let (ok, settleOutcome) = Engine.settle(ctx: ctx, why: why)
@@ -27,24 +30,45 @@ extension Commands {
             outcome.stdout.append(contentsOf: Present.capNote(ctx: ctx, afterRelease: true))
         }
 
+        /// `held` is about the CALLER's claim — was it live until this very
+        /// release — and `lapsed` is what ended it when it was not. "Ask again
+        /// while you work" in AGENTS.md exists because a claim can end under a
+        /// running process without a word; this is the word, delivered at the
+        /// one moment the caller is guaranteed to be listening.
         func releasedJSON(_ owners: [String]) {
             guard json else { return }
             var pairs: [(String, JSONValue)] = [
                 ("action", .string("released")),
                 ("released", .array(owners.map { .string($0) })),
+                ("held", .bool(owners.contains(ctx.owner))),
+                ("lapsed", lapse.map { lapse in
+                    JSONValue.object([
+                        ("at", .int(lapse.at)),
+                        ("why", .string(lapse.why)),
+                        ("by", .string(lapse.by)),
+                        ("until", .int(lapse.until)),
+                    ])
+                } ?? .null),
             ]
             pairs.append(contentsOf: Present.aggregateJSON(ctx.aggregate()))
             outcome.stdout = [JSONValue.object(pairs).serialized()]
+        }
+
+        /// The human spelling of `lapsed`. "May have slept" rather than
+        /// "slept": simmer knows when the guarantee ended, not what the lid did.
+        func lapseLine(_ lapse: Ledger.Lapse) -> String {
+            "⏾ your claim ended at \(Formats.hhmmDated(lapse.at, now: ctx.now)) · \(lapse.why) · the Mac may have slept since"
         }
 
         // Nothing claimed, switch on: the orphan. Reverting it is always
         // allowed, by anyone — stopping is never the thing simmer stands in
         // the way of (contract guarantee 6).
         if claims.isEmpty {
+            if let lapse { outcome.stdout.append(lapseLine(lapse)) }
             if ctx.power.sleepDisabled() {
                 settleAndReport("reverted by hand")
                 if outcome.exit == 0 { outcome.stdout.append("⏾ sleep allowed again") }
-            } else {
+            } else if lapse == nil {
                 outcome.stdout.append("⏾ nothing to release · sleep is already allowed")
             }
             releasedJSON([])
@@ -84,7 +108,7 @@ extension Commands {
         if all {
             var released: [Claim] = [], stuck: [Claim] = []
             for claim in claims {
-                if ctx.ledger.retire(claim, why: "released by hand (all)", now: ctx.now) {
+                if ctx.ledger.retire(claim, why: "released by hand (all)", by: ctx.owner, now: ctx.now) {
                     released.append(claim)
                 } else {
                     stuck.append(claim)
@@ -103,7 +127,7 @@ extension Commands {
         }
 
         if let mine = ctx.ledger.claim(owner: ctx.owner) {
-            guard ctx.ledger.retire(mine, why: "released by hand", now: ctx.now) else {
+            guard ctx.ledger.retire(mine, why: "released by hand", by: ctx.owner, now: ctx.now) else {
                 return couldNotRelease([mine])
             }
             ctx.ledger.event("release", now: ctx.now, [("owner", .string(ctx.owner))])
@@ -120,6 +144,21 @@ extension Commands {
             noteTheCeiling()
             settleAndReport("released by hand")
             releasedJSON([mine.owner])
+            return outcome
+        }
+
+        // No claim of ours, but somebody has one — and ours ENDED rather than
+        // never was: the guard, or a person, took it while the caller worked.
+        // Not a refusal: nothing was asked that could be refused, and exit 1
+        // here told an honest agent it was reaching for someone else's time.
+        // The caller learns what happened; the others' claims are untouched.
+        if let lapse {
+            outcome.stdout.append(lapseLine(lapse))
+            let after = ctx.aggregate()
+            let untilText = after.until == 0 ? "further notice" : Formats.hhmm(after.until)
+            outcome.stdout.append("   \(after.count) other claim(s) still live, awake until \(untilText)")
+            if ctx.isHuman { outcome.stdout.append("   to end them all: simmer down --all") }
+            releasedJSON([])
             return outcome
         }
 

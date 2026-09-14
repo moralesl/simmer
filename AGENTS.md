@@ -40,7 +40,7 @@ $ simmer +30m --owner agent:evals --json
 
 # 5. Done. Hand it back.
 $ simmer down --owner agent:evals --json
-{"action":"released","released":["agent:evals"],"state":"idle","claim_count":0,...}
+{"action":"released","released":["agent:evals"],"held":true,"lapsed":null,"state":"idle","claim_count":0,...}
 # exit 0
 ```
 
@@ -62,7 +62,11 @@ Conflating them means working while the machine sleeps under you.
 ## Ask again while you work
 
 **Checking once at the start is not enough.** A claim can end before your work does without you doing anything wrong: the battery reaches its floor, the charger is unplugged on a `--require-ac` claim, the chip reports thermal pressure, or a human moves the cap.
-Your process keeps running; your guarantee is gone, and nothing tells you.
+Your process keeps running; your guarantee is gone, and nothing tells you — until you hand it back.
+`simmer down --json` answers **`held`**: whether your claim was live until that very call.
+When it was not, **`lapsed`** says what happened — `{"at", "why", "by", "until"}`: when it ended, what ended it (`time is up`, the floor, the charger, heat, or a person's `down --all`), who recorded that, and the deadline you had.
+Put `held: false` in your handoff with `lapsed.at` and `lapsed.why`: it is the one place "the machine may have slept after 02:14" can be said truthfully rather than guessed.
+`simmer run` says the same on stderr when the guard ended its claim under the command.
 
 So for work measured in hours, re-run `simmer budget --need <t>` between units of work — after each batch, each file, each test run.
 Exit 3 mid-job means claim again before continuing.
@@ -102,6 +106,9 @@ Exit 1 means finish the current unit and write the handoff rather than starting 
 **`clipped_by_cap: true` on a successful claim is not a refusal.** You got a shorter deadline than you asked for at exit 0; `until` says how short.
 Asking for `8h` under a one-hour cap gives you one hour, and only that field says so.
 
+**`released: []` at exit 0 is two different things**, and `held` tells them apart: nothing of yours to release, or yours ended without you.
+Read `lapsed` before writing "released cleanly".
+
 **`budget`'s `seconds_left`** is a number when there is a deadline, `-1` when there is none, and `null` when nothing is claimed at all.
 Switch on the exit code and the type never comes up.
 
@@ -139,6 +146,7 @@ Tests/                unit suite + an acceptance suite that drives the BUILT
                       binary under the seam variables (honours SIMMER_BIN)
 integrations/raycast/ the Raycast extension: TypeScript, its own npm tree and
                       tests. A fourth renderer over `status --json`.
+VISION.md             whether a thing belongs at all: what fits, what is resisted.
 docs/CONTRACTS.md     the law: surface, exit codes, machine output, reasoning.
 docs/PLATFORM-FACTS.md  what macOS actually does, verified.
 docs/ROADMAP.md       decided but not built. docs/FAQ.md — short answers.
@@ -150,6 +158,8 @@ docs/ROADMAP.md       decided but not built. docs/FAQ.md — short answers.
    Settled decisions are not relitigated.
 2. `docs/PLATFORM-FACTS.md` — each line bought with a failed attempt, plus the traps no test can carry.
    If your plan trips one, the plan is wrong, and nothing there changes without re-running the experiment and recording the result.
+3. `VISION.md` — whether the thing you are about to build belongs here at all.
+   Test a feature against its two lists before designing it; a "resisted" entry moves only with its reason rewritten.
 
 ## Commands
 
