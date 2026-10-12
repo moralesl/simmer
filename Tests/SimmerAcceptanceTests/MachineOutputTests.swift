@@ -523,10 +523,10 @@ import Testing
         #expect(help.out.contains("EXIT CODES ARE API"))
     }
 
-    @Test func unknownOptionsAreExitOneNotSixtyFour() {
+    @Test func unknownOptionsAreExitTwoNotSixtyFour() {
         let sim = Sim(); defer { sim.tearDown() }
-        #expect(sim.run(["status", "--bogus"]).code == 1)
-        #expect(sim.run(["--not-a-thing"]).code == 1)
+        #expect(sim.run(["status", "--bogus"]).code == 2)
+        #expect(sim.run(["--not-a-thing"]).code == 2)
     }
 
     @Test func launcherTrailersAreToleratedEverywhere() {
@@ -605,7 +605,7 @@ import Testing
         let sim = Sim(); defer { sim.tearDown() }
         let result = sim.run(args + ["--json"])
 
-        #expect(result.code == 1, "\(args) exited \(result.code), want 1")
+        #expect(result.code == 2, "\(args) exited \(result.code), want 2")
         let stdout = result.out.trimmingCharacters(in: .whitespacesAndNewlines)
         #expect(!stdout.isEmpty, "\(args) --json wrote nothing to stdout")
         guard let object = try? JSONSerialization.jsonObject(with: Data(stdout.utf8))
@@ -614,6 +614,9 @@ import Testing
             return
         }
         #expect(object["action"] as? String == "refused", "\(args): \(stdout.prefix(120))")
+        // What refused is the call itself, and the object says so in the field
+        // a caller may switch on — the sentence below is not that field.
+        #expect(object["refused_by"] as? String == "usage", "\(args): \(stdout.prefix(120))")
         // The diagnosis has to be IN the object — an empty `error` would pass
         // a shape check while telling the caller nothing.
         let error = object["error"] as? String ?? ""
@@ -644,7 +647,7 @@ import Testing
                            ["guard", "--json"],
                            ["uninstall", "--json"]] {
             let result = sim.run(invocation)
-            #expect(result.code == 1)
+            #expect(result.code == 2)
             #expect(result.err.contains("no JSON form"))
             // A refusal that names no fix is the one thing the surface forbids.
             #expect(result.err.contains("simmer"))
@@ -694,7 +697,7 @@ import Testing
         // parser owns and diagnoses before simmer sees anything.
         for bad in ["abc", "200", "101", "-5", "12.5"] {
             let result = sim.run(["1h", "--min-battery=\(bad)", "--owner", "test", "--json"])
-            #expect(result.code == 1, "--min-battery=\(bad) was accepted")
+            #expect(result.code == 2, "--min-battery=\(bad) was accepted")
             // The contracted refusal object, on stdout, for every bad value —
             // ArgumentParser's own diagnosis wrote nothing there at all.
             let object = sim.json(result)
@@ -713,7 +716,7 @@ import Testing
         let sim = Sim(); defer { sim.tearDown() }
         for word in ["notify-post", "wibble", "statuss"] {
             let result = sim.run([word])
-            #expect(result.code == 1)
+            #expect(result.code == 2)
             #expect(!result.combined.contains("Unexpected argument"))
             // claim owns the diagnosis, and it names what good input looks like.
             #expect(result.err.contains("did not understand the duration"))

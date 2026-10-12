@@ -42,15 +42,20 @@ Every command reachable from a launcher also tolerates a trailing `-r <reason> -
 
 | Command | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
-| `budget` | fits | not enough time on the earliest clock | — | **nothing claimed at all** |
-| `run -- cmd` | *(command's own exit code, passed through untouched)* ||||
-| take/extend/down/cap | ok | refused (floor, cap, authority, parse) | — | — |
-| `doctor` | healthy | something red | — | — |
-| `update` | the check completed — newer or not | **could not check** | — | — |
-| `update --apply` | nothing left to do: installed, or already current | could not be done | — | — |
+| `budget` | fits | not enough time on the earliest clock | usage | **nothing claimed at all** |
+| `run -- cmd` | *(command's own exit code, passed through untouched — once it has started)* ||||
+| take/extend/down/cap | ok | refused — `refused_by` says by what | usage | — |
+| `doctor` | healthy | something red | usage | — |
+| `update` | the check completed — newer or not | **could not check** | usage | — |
+| `update --apply` | nothing left to do: installed, or already current | could not be done | usage | — |
 
 `budget`'s 3-vs-1 split is load-bearing: 1 is a small budget, 3 is an absent guarantee.
 Callers that conflate them keep working while the machine sleeps.
+
+**2 is the call itself, on every verb**: an unknown flag, a missing argument, a value that does not parse, `--json` on a verb that has no JSON form.
+Nothing was looked at and nothing was decided, so the caller fixes the call and asks again.
+It used to be 1, and on `budget` that read as "not enough time left": a typo in `--need` told an agent to wind down.
+`run` exits 2 when its own arguments are wrong, before any command starts; after that every code is the command's, which may be 2 as well — as it could always be 1.
 
 **`update`'s 0 does not mean "you are current"** — it means the question was answered, and the answer is in `update_available`.
 A newer release existing is not a failure of anything, which is the same reading that keeps "out of date" out of `doctor`'s red rows; the one non-zero exit is not knowing.
@@ -331,7 +336,22 @@ All additive to the surface above:
   (`render`'s surfaces *are* its machine output, so a `--json` there would be a fourth surface nobody asked for; `run` passes its command's own output and exit code through, and the flag would have to sit before the `--` terminator to be read at all; `guard` and `uninstall` answer with what they DID, which goes to the log and to `events.jsonl`.)
   `theThreeListsOfWhichVerbsRefuseJSONNameTheSameVerbs` gates this sentence against the suites that assert it, in both directions — a verb named here and not refused, or refused and not named here, is red.
   `everyVerbHonoursJSON` is the gate — it walks the whole verb list, so a new command cannot join the surface without answering this question one way or the other.
-  A refusal with `--json` prints `{"action":"refused","error":"…"}` and still exits 1.
+  A refusal with `--json` prints `{"action":"refused","error":"…","refused_by":"…"}` and exits 1, or 2 when `refused_by` is `usage`.
+  `error` is the sentence for a person; `refused_by` is what refused, for a caller whose next move depends on it:
+
+  | `refused_by` | what refused | exit |
+  |---|---|---|
+  | `usage` | the call itself — an unknown flag, a missing argument, a value that does not parse | 2 |
+  | `cap` | the person's ceiling: it has passed, or the claim is already at it | 1 |
+  | `floor` | the battery is at or below the claim's floor | 1 |
+  | `charger` | `--require-ac`, and the Mac is on battery | 1 |
+  | `authority` | something only a person may do — set or lift the cap, `down --all` | 1 |
+  | `no_claim` | the caller holds no claim for this to act on | 1 |
+  | `no_deadline` | the caller's claim is open-ended, so there is nothing to extend | 1 |
+  | `system` | simmer could not do it — a record that did not reach the disk, a switch that would not move | 1 |
+
+  The values are machine surface and append-only, like every field; `everyRefusalKindIsListedInTheContractAndTheProtocol` holds this table, the protocol in `AGENTS.md` and the code in step.
+  `update --apply --json` is the one refusal outside this object: it answers with the whole update object, `action: "refused"`, and the reason in `apply_error`.
 - **`release --json` answers about the caller's own claim, not only about the machine.** Two fields, appended: `held` (boolean — the caller's claim was live until this very call) and `lapsed` (`null`, or `{"at", "why", "by", "until"}`: when the claim ended, what ended it, who recorded the ending, and the deadline it had).
   A claim can end under a running process without a word — the deadline, the floor, the charger, heat, a person's `down --all` — and the release is the one moment the caller is guaranteed to be listening, so that is where it is said.
   `lapsed` is read back from `events.jsonl`: the newest `claim` or `retire` event about the caller, and it is a lapse only when that is a `retire` recorded by somebody else.
@@ -340,8 +360,8 @@ All additive to the surface above:
   It is exit 0 now, `released: []`, `held: false`, with `lapsed` filled in; the other claims are untouched.
   A caller with no claim and no history is refused exactly as before.
   The human sentence says "may have slept", never "slept": simmer knows when the guarantee ended, not what the lid did.
-- **The exit-code table is complete and published** (in `--help` and here): budget 0/1/3 · run passes through · claim/extend/release/cap 0 ok, 1 refused · doctor 0/1.
-  Parse errors are 1, never an ArgumentParser 64.
+- **The exit-code table is complete and published** (in `--help` and here): 2 usage on every verb · budget 0/1/3 · run passes through · claim/extend/release/cap 0 ok, 1 refused · doctor 0/1.
+  Parse errors are 2, never an ArgumentParser 64.
 - **The anonymous-claimer nudge.** A non-tty caller taking a claim without naming itself gets one stderr line — not an error, not repeated, invisible to humans in a terminal.
 - **`events.jsonl` is contracted** as append-only state (§ State above): one object per transition with `v`, `ts`, `ts_human`, `event`, and the event's details (`owner`, `reason`, `until`, `why`, …).
   Events observed: `claim`, `extend`, `release`, `release_all`, `retire`, `cap_set`, `cap_lifted`, `cap_expired`, `switch_on`, `switch_off`, `orphan_heal`, `thermal_release`, `warn`, `prefloor_warn`, `remind`, `migrate`.

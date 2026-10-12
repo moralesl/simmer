@@ -32,7 +32,7 @@ struct CommonOptions: ParsableArguments {
         guard json else { return }
         Runtime.deliver(.failure(
             "\(command) has no JSON form — its output is for a person. Use \(alternative).",
-            json: false))
+            by: .usage, json: false))
     }
 }
 
@@ -93,7 +93,7 @@ struct ClaimCLI: ParsableCommand {
             guard let value = Int(minBattery), (0...100).contains(value) else {
                 Runtime.deliver(.failure(
                     "--min-battery wants a whole percentage, 0–100: \(minBattery)",
-                    json: common.json))
+                    by: .usage, json: common.json))
             }
             floor = value
         }
@@ -126,7 +126,7 @@ struct ExtendCLI: ParsableCommand {
     func run() throws {
         let ctx = Runtime.context(ownerFlag: common.owner)
         guard let duration, !duration.isEmpty, duration != "+" else {
-            Runtime.deliver(.failure("extend by how much? 'simmer +20m'", json: common.json))
+            Runtime.deliver(.failure("extend by how much? 'simmer +20m'", by: .usage, json: common.json))
         }
         Runtime.deliver(Commands.extend(duration, json: common.json, ctx: ctx))
     }
@@ -210,7 +210,7 @@ struct BudgetCLI: ParsableCommand {
         var needSeconds = 0
         if let need {
             guard let parsed = Durations.parse(need) else {
-                Runtime.deliver(.failure("did not understand the duration: \(need)", json: common.json))
+                Runtime.deliver(.failure("did not understand the duration: \(need)", by: .usage, json: common.json))
             }
             needSeconds = parsed
         }

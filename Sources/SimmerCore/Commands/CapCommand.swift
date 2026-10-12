@@ -37,7 +37,7 @@ extension Commands {
 
         case "off", "none", "clear", "lift":
             guard ctx.isHuman else {
-                outcome.merge(.failure("only a person can lift the cap", json: json))
+                outcome.merge(.failure("only a person can lift the cap", by: .authority, json: json))
                 return outcome
             }
             if let stored = ctx.ledger.storedCap() {
@@ -49,7 +49,7 @@ extension Commands {
                     ctx.ledger.log("ERROR: could not lift the cap", now: ctx.now)
                     outcome.merge(.failure(
                         "could not remove \(ctx.ledger.capFile.path) — the cap is still in force, and lifts itself at \(Formats.hhmm(stored.expires)). Run 'simmer doctor'",
-                        json: json))
+                        by: .system, json: json))
                     return outcome
                 }
                 ctx.ledger.log("cap lifted by \(ctx.owner)", now: ctx.now)
@@ -66,7 +66,7 @@ extension Commands {
 
         case .some(let argument):
             guard ctx.isHuman else {
-                outcome.merge(.failure("only a person can set the cap", json: json))
+                outcome.merge(.failure("only a person can set the cap", by: .authority, json: json))
                 return outcome
             }
             let target: Int
@@ -85,7 +85,7 @@ extension Commands {
                     let ago = Durations.human(ctx.now - (parsed.epoch - 86_400))
                     outcome.merge(.failure(
                         "\(argument) was \(ago) ago, so that would cap \(Durations.human(parsed.epoch - ctx.now)) from now — longer than a night. For tomorrow, say the duration: 'simmer cap \((parsed.epoch - ctx.now) / 3600)h'",
-                        json: json))
+                        by: .usage, json: json))
                     return outcome
                 }
                 target = parsed.epoch
@@ -94,7 +94,7 @@ extension Commands {
             } else {
                 outcome.merge(.failure(
                     "did not understand the cap: \(argument) (expected HH:MM, a duration, or 'off')",
-                    json: json))
+                    by: .usage, json: json))
                 return outcome
             }
 
@@ -103,7 +103,7 @@ extension Commands {
                 ctx.ledger.log("ERROR: could not record the cap", now: ctx.now)
                 outcome.merge(.failure(
                     "could not record the cap in \(ctx.ledger.capFile.path) — no ceiling is in force. Run 'simmer doctor'",
-                    json: json))
+                    by: .system, json: json))
                 return outcome
             }
             ctx.ledger.log("cap set to \(Formats.hhmm(target)) by \(ctx.owner)", now: ctx.now)

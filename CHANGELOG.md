@@ -5,6 +5,15 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ## Unreleased
 
+<!-- release: patch -->
+
+### Machine surface
+
+- **A refusal says what refused: `refused_by`.** Every `{"action":"refused","error":…}` object gains one field, appended — `usage`, `cap`, `floor`, `charger`, `authority`, `no_claim`, `no_deadline` or `system`. A typo and a passed cap used to arrive as the same object at the same exit 1, and they want opposite answers: fix the call and try again, or report it and stop. The only way to tell them apart was `error`, the sentence the contract says may be reworded at any time. `AGENTS.md` now tells agents what to do for each kind, and a structure test holds that list, the contract's and the code's in step. `update --apply --json` keeps its own object and its `apply_error`, unchanged.
+- **Exit 2 is the call itself, on every verb.** An unknown flag, a missing argument, a value that does not parse, or `--json` on a verb with no JSON form exited 1 and now exits 2. On `budget` the old answer was false: 1 means "not enough time left — wind down", so a typo in `--need` told an agent holding two hours to stop working. Every other non-zero code keeps its meaning, and a caller that only checks for non-zero sees no difference. `simmer run` exits 2 when its own arguments are wrong, before any command starts, and after that passes the command's code through as before.
+
+Both first show in the version that carries them: they are what the CLI answers, not what the installer says.
+
 ## 0.4.0 — 2026-09-14
 
 ### Added

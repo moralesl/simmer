@@ -12,7 +12,7 @@ extension Commands {
         case "swiftbar": outcome.stdout = renderSwiftBar(ctx: ctx)
         case "raycast": outcome.stdout = [renderRaycast(ctx: ctx)]
         default:
-            return .failure("usage: simmer render swiftbar|raycast")
+            return .failure("usage: simmer render swiftbar|raycast", by: .usage)
         }
         return outcome
     }

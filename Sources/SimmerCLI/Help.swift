@@ -108,10 +108,14 @@ FOR SCRIPTS AND AGENTS
   simmer doctor --json       health as one object: every check, plus the state
 
 EXIT CODES ARE API
+  every command  2 the call itself is wrong — an unknown flag, a value that
+                 does not parse. Fix it and try again; nothing was decided.
   budget         0 fits (or no deadline) · 1 not enough · 3 NOTHING CLAIMED —
                  an absent guarantee, not a small budget. Do not conflate.
   run -- cmd     the command's own exit code, passed through untouched
-  claim/extend/release/cap   0 ok · 1 refused (floor, cap, authority, parse)
+  claim/extend/release/cap   0 ok · 1 refused — --json says by what, in
+                 refused_by: cap, floor, charger, authority, no_claim,
+                 no_deadline or system
   doctor         0 healthy · 1 something red
   update         0 the check completed — read update_available for the answer ·
                  1 could not check. A newer version existing is not a failure.

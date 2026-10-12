@@ -47,7 +47,7 @@ struct UpdateCLI: ParsableCommand {
         if apply && cached {
             Runtime.deliver(.failure(
                 "--apply always checks first, so it cannot be combined with --cached",
-                json: common.json))
+                by: .usage, json: common.json))
         }
 
         // `--auto` is a setting, not a question about a release: it makes no
@@ -58,7 +58,7 @@ struct UpdateCLI: ParsableCommand {
                 Runtime.deliver(.failure(
                     "--auto sets whether updates install themselves; it cannot be combined with "
                         + (apply ? "--apply" : "--cached"),
-                    json: common.json))
+                    by: .usage, json: common.json))
             }
             deliverAuto(auto, env: env)
         }
@@ -203,7 +203,7 @@ struct UpdateCLI: ParsableCommand {
             break
         default:
             Runtime.deliver(.failure(
-                "--auto takes on, off or status — not '\(value)'", json: common.json))
+                "--auto takes on, off or status — not '\(value)'", by: .usage, json: common.json))
         }
 
         // Both halves, because unattended installs ride on the once-a-day

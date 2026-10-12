@@ -4,8 +4,8 @@ import SimmerCore
 
 // The entry point. Sugar is normalised first (bare `simmer`, `simmer 2h`,
 // `+20m`, `down`), then ArgumentParser handles the canonical grammar. Errors
-// are mapped by hand because exit codes are API: every refusal and parse
-// failure is 1, never ArgumentParser's 64.
+// are mapped by hand because exit codes are API: a parse failure is 2 and a
+// refusal 1, never ArgumentParser's 64.
 
 let rawArguments = Array(CommandLine.arguments.dropFirst())
 
@@ -45,12 +45,17 @@ do {
     // the latter appends usage text naming internal subcommand spellings
     // nobody typed, which belongs in a human's terminal and not in a
     // contracted field.
+    //
+    // Everything that reaches here came from the parser: the commands throw
+    // nothing but `ExitCode`, caught above. So it is a usage error, and exit 2
+    // keeps a typo apart from `budget`'s 1 ("not enough time — wind down"),
+    // which is what the same typo used to answer.
     if rawArguments.contains("--json") {
-        Runtime.deliver(.failure(SimmerRoot.message(for: error), json: true))
+        Runtime.deliver(.failure(SimmerRoot.message(for: error), by: .usage, json: true))
     }
     let message = SimmerRoot.fullMessage(for: error)
     if !message.isEmpty {
         FileHandle.standardError.write(Data(("simmer: " + message + "\n").utf8))
     }
-    exit(1)
+    exit(Refusal.usage.exitCode)
 }

@@ -78,7 +78,7 @@ extension Commands {
         if all && !ctx.isHuman {
             outcome.stderr.append("simmer: 'down --all' ends claims that are not yours — only a person may do that.")
             outcome.stderr.append(contentsOf: Present.claimRows(ctx: ctx))
-            outcome.merge(.failure("release your own with 'simmer down', or ask the human", json: json))
+            outcome.merge(.failure("release your own with 'simmer down', or ask the human", by: .authority, json: json))
             return outcome
         }
 
@@ -101,7 +101,7 @@ extension Commands {
                 released.isEmpty
                     ? "nothing was released and the Mac is still awake. Run 'simmer doctor'"
                     : "released \(released.count) of \(released.count + stuck.count) · the Mac is still awake. Run 'simmer doctor'",
-                json: json))
+                by: .system, json: json))
             return failed
         }
 
@@ -168,13 +168,13 @@ extension Commands {
         if ctx.isHuman {
             outcome.stderr.append("simmer: you hold no claim; these are live:")
             outcome.stderr.append(contentsOf: Present.claimRows(ctx: ctx))
-            outcome.merge(.failure("to end them all: simmer down --all", json: json))
+            outcome.merge(.failure("to end them all: simmer down --all", by: .noClaim, json: json))
             return outcome
         }
 
         outcome.stderr.append("simmer: you hold no claim, and these are not yours to end:")
         outcome.stderr.append(contentsOf: Present.claimRows(ctx: ctx))
-        outcome.merge(.failure("nothing released. Ask the human, or wait for the deadline", json: json))
+        outcome.merge(.failure("nothing released. Ask the human, or wait for the deadline", by: .noClaim, json: json))
         return outcome
     }
 }

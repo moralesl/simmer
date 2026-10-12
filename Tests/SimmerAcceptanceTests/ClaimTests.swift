@@ -19,7 +19,7 @@ import Testing
     func rejectsDuration(_ text: String) {
         let sim = Sim(); defer { sim.tearDown() }
         let result = sim.run(["budget", "--need", text])
-        #expect(result.code == 1)
+        #expect(result.code == 2)
         #expect(result.combined.contains("did not understand"))
     }
 
@@ -34,16 +34,16 @@ import Testing
     func aDurationTooLargeToBeRealIsRefusedAndNeverTraps(_ text: String) {
         let sim = Sim(); defer { sim.tearDown() }
         let claim = sim.run([text, "--owner", "test"])
-        #expect(claim.code == 1, "exit \(claim.code) for \(text)")
+        #expect(claim.code == 2, "exit \(claim.code) for \(text)")
         #expect(sim.switchValue == "0")
-        #expect(sim.run(["budget", "--need", text]).code == 1)
+        #expect(sim.run(["budget", "--need", text]).code == 2)
     }
 
     /// The ceiling is far past anything real, so nothing a person types moves.
     @Test func aYearIsStillTooLongAndEverythingBelowItStillWorks() {
         let sim = Sim(); defer { sim.tearDown() }
         #expect(sim.run(["budget", "--need", "364d"]).code == 3)
-        #expect(sim.run(["budget", "--need", "366d"]).code == 1)
+        #expect(sim.run(["budget", "--need", "366d"]).code == 2)
     }
 }
 
@@ -151,7 +151,7 @@ import Testing
     @Test func noDurationIsARefusalNotACrash() {
         let sim = Sim(); defer { sim.tearDown() }
         let result = sim.run(["claim", "--owner", "test"])
-        #expect(result.code == 1)
+        #expect(result.code == 2)
         #expect(result.err.contains("no duration given"))
     }
 

@@ -40,18 +40,18 @@ struct RunCLI: ParsableCommand {
         common.refuseJSON("run", insteadUse: "simmer status --json in another shell")
         let env = Runtime.environment()
         guard !command.isEmpty else {
-            Runtime.deliver(.failure("run what? simmer run -- <command...>"))
+            Runtime.deliver(.failure("run what? simmer run -- <command...>", by: .usage))
         }
         guard let chunk = env.runChunkSeconds else {
-            Runtime.deliver(.failure("SIMMER_RUN_CHUNK: did not understand the duration"))
+            Runtime.deliver(.failure("SIMMER_RUN_CHUNK: did not understand the duration", by: .usage))
         }
         guard let interval = env.runIntervalSeconds else {
-            Runtime.deliver(.failure("SIMMER_RUN_INTERVAL: did not understand the duration"))
+            Runtime.deliver(.failure("SIMMER_RUN_INTERVAL: did not understand the duration", by: .usage))
         }
         var maxSeconds = 0
         if let max {
             guard let parsed = Durations.parse(max) else {
-                Runtime.deliver(.failure("did not understand the duration: \(max)"))
+                Runtime.deliver(.failure("did not understand the duration: \(max)", by: .usage))
             }
             maxSeconds = parsed
         }
@@ -90,7 +90,7 @@ struct RunCLI: ParsableCommand {
             try child.run()
         } catch {
             coordinator.cleanup()
-            Runtime.deliver(.failure("could not run \(command[0]): \(error.localizedDescription)", exit: 127))
+            Runtime.deliver(.failure("could not run \(command[0]): \(error.localizedDescription)", by: .system, exit: 127))
         }
         child.waitUntilExit()
         coordinator.cleanup()

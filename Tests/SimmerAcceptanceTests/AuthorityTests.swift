@@ -496,7 +496,7 @@ import Testing
     @Test func aTimeThatRolledMoreThanHalfADayIsRefused() {
         let sim = Sim(); defer { sim.tearDown() }
         let result = sim.run(["cap", "22:00", "--owner", "terminal"], now: Self.at2230)
-        #expect(result.code == 1)
+        #expect(result.code == 2)
         #expect(result.combined.contains("was 30 min ago"))
         #expect(result.combined.contains("longer than a night"))
         #expect(sim.capUntil == nil, "a refused cap must not land")
