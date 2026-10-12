@@ -14,6 +14,12 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 Both first show in the version that carries them: they are what the CLI answers, not what the installer says.
 
+### Changed
+
+- **The Raycast extension's dependencies move: all five Dependabot proposed, in one change.** `@raycast/api` 2.2.0 → 2.5.2, `@raycast/utils` 2.3.0 → 2.3.2, `eslint` 10.9.1 → 10.11.0, `@types/node` 26.4.1 → 26.6.3 and `@types/react` 19.2.18 → 19.3.0 — together, because each of the five rewrote the same lockfile and merging one would have sent the other four back to rebase.
+  Raycast still publishes no changelog for 2.x, so the api bump was read as the diff of its own type declarations: every name the extension imports is declared as before, and what 2.5.2 removes is entries of the `AI.Model` enum, which the extension does not use. 2.5.2 stays below the installed Raycast (2.7.3), as `.github/dependabot.yml` requires.
+  `npm audit fix` lifts the two transitive `brace-expansion` copies to 5.0.12 and 2.1.7, past three denial-of-service advisories (GHSA-q2hr-2g5m-vwhr, GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p); only the lockfile moves for it.
+
 ## 0.4.0 — 2026-09-14
 
 ### Added
