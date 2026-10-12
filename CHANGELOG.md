@@ -5,7 +5,7 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ## Unreleased
 
-<!-- release: patch -->
+## 0.4.1 — 2026-10-12
 
 ### Machine surface
 
