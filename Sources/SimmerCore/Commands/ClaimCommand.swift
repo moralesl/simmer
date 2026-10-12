@@ -46,7 +46,7 @@ public enum Commands {
         } else if let untilText = input.untilText {
             guard let parsed = Durations.parseUntil(untilText, now: ctx.now) else {
                 outcome.merge(.failure("did not understand the time: \(untilText) (expected HH:MM)",
-                                       json: input.json))
+                                       by: .usage, json: input.json))
                 return outcome
             }
             untilEpoch = parsed
@@ -54,14 +54,14 @@ public enum Commands {
             guard let seconds = Durations.parse(durationText) else {
                 outcome.merge(.failure(
                     "did not understand the duration: \(durationText) (e.g. 60m, 2h, 1h30m)",
-                    json: input.json))
+                    by: .usage, json: input.json))
                 return outcome
             }
             untilEpoch = ctx.now + seconds
         } else {
             outcome.merge(.failure(
                 "no duration given. 'simmer 60m', 'simmer --until 23:00' or 'simmer forever'",
-                json: input.json))
+                by: .usage, json: input.json))
             return outcome
         }
 
@@ -75,14 +75,14 @@ public enum Commands {
                 body: "Plug in, or lower --min-battery."))
             outcome.merge(.failure(
                 "battery \(percent)% <= floor \(input.minBattery)%. Plug in, or lower --min-battery.",
-                json: input.json))
+                by: .floor, json: input.json))
             return outcome
         }
         // Same argument for --require-ac: a claim that ends the moment it
         // starts is never what was meant.
         if input.requireAC && ctx.power.onBattery() {
             outcome.merge(.failure("--require-ac, and this Mac is on battery. Plug in first.",
-                                   json: input.json))
+                                   by: .charger, json: input.json))
             return outcome
         }
 
@@ -96,7 +96,7 @@ public enum Commands {
             if cap.until <= ctx.now {
                 outcome.merge(.failure(
                     "the cap is \(Formats.hhmm(cap.until)), which has passed. Nothing new until \(Formats.hhmm(cap.expires)), when it lifts itself — 'simmer cap off' is sooner.",
-                    json: input.json))
+                    by: .cap, json: input.json))
                 return outcome
             }
             if untilEpoch == 0 || untilEpoch > cap.until {
@@ -194,7 +194,7 @@ public enum Commands {
                 : "nothing is holding the Mac awake"
             outcome.merge(.failure(
                 "could not record the claim in \(ctx.ledger.claimsDir.path) — \(machine). Run 'simmer doctor'",
-                json: input.json))
+                by: .system, json: input.json))
             return outcome
         }
 
@@ -204,7 +204,7 @@ public enum Commands {
             // claim back rather than leave a promise nothing is keeping.
             _ = ctx.ledger.removeClaim(id: claim.id, ifStillMatching: claim)
             outcome.merge(.failure("could not set disablesleep (sudo?). Run 'simmer doctor'",
-                                   json: input.json))
+                                   by: .system, json: input.json))
             return outcome
         }
         if !switchWasOn {
@@ -314,21 +314,21 @@ public enum Commands {
         var outcome = Outcome()
         let text = durationText.hasPrefix("+") ? String(durationText.dropFirst()) : durationText
         guard !text.isEmpty else {
-            outcome.merge(.failure("extend by how much? 'simmer +20m'", json: json))
+            outcome.merge(.failure("extend by how much? 'simmer +20m'", by: .usage, json: json))
             return outcome
         }
         guard let seconds = Durations.parse(text) else {
-            outcome.merge(.failure("did not understand the duration: \(text)", json: json))
+            outcome.merge(.failure("did not understand the duration: \(text)", by: .usage, json: json))
             return outcome
         }
         guard var claim = ctx.ledger.claim(owner: ctx.owner) else {
             outcome.merge(.failure("no claim of yours to extend. 'simmer \(text)' takes one.",
-                                   json: json))
+                                   by: .noClaim, json: json))
             return outcome
         }
         if claim.until == 0 {
             outcome.merge(.failure("your claim has no deadline — there is nothing to extend.",
-                                   json: json))
+                                   by: .noDeadline, json: json))
             return outcome
         }
 
@@ -347,7 +347,7 @@ public enum Commands {
         guard target <= Claim.maxEpoch else {
             outcome.merge(.failure(
                 "that would extend past the year 2100, which is further than this tool will hold a deadline",
-                json: json))
+                by: .usage, json: json))
             return outcome
         }
         var clippedByCap = false
@@ -357,14 +357,14 @@ public enum Commands {
             if cap.until <= ctx.now {
                 outcome.merge(.failure(
                     "the cap is \(Formats.hhmm(cap.until)), which has passed. Nothing new until \(Formats.hhmm(cap.expires)), when it lifts itself — 'simmer cap off' is sooner.",
-                    json: json))
+                    by: .cap, json: json))
                 return outcome
             }
             if target > cap.until {
                 if claim.until >= cap.until {
                     outcome.merge(.failure(
                         "already at the cap (\(Formats.hhmm(cap.until))). Only a human can move it.",
-                        json: json))
+                        by: .cap, json: json))
                     return outcome
                 }
                 target = cap.until
@@ -385,7 +385,7 @@ public enum Commands {
             ctx.ledger.log("ERROR: could not record the extension for \(ctx.owner)", now: ctx.now)
             outcome.merge(.failure(
                 "could not record the extension — your claim still ends at \(Formats.hhmmDated(before.until, now: ctx.now)). Run 'simmer doctor'",
-                json: json))
+                by: .system, json: json))
             return outcome
         }
         ctx.ledger.event("extend", now: ctx.now, [

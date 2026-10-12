@@ -434,7 +434,7 @@ import Testing
         let sim = Sim(); defer { sim.tearDown() }
         let result = sim.run(["update", "--apply", "--cached"],
                              env: ["SIMMER_FAKE_LATEST": "v9.9.9"])
-        #expect(result.code == 1)
+        #expect(result.code == 2)
         #expect(result.err.contains("--cached"), "\(result.err)")
     }
 
@@ -860,7 +860,7 @@ import Testing
         let sim = Sim(); defer { sim.tearDown() }
         let result = sim.run(["update", "--auto", "yes", "--json"])
 
-        #expect(result.code == 1)
+        #expect(result.code == 2)
         #expect(object(result.out)["action"] as? String == "refused",
                 "the refusal did not reach stdout as JSON: \(result.combined)")
         #expect((object(result.out)["error"] as? String)?.contains("on, off or status") == true)
@@ -873,7 +873,7 @@ import Testing
         let sim = Sim(); defer { sim.tearDown() }
         for other in ["--apply", "--cached"] {
             let result = sim.run(["update", "--auto", "on", other])
-            #expect(result.code == 1, "\(other): \(result.combined)")
+            #expect(result.code == 2, "\(other): \(result.combined)")
             #expect(result.err.contains("--auto"), "\(other): \(result.err)")
             // And it changed nothing on the way to refusing.
             #expect(!FileManager.default.fileExists(

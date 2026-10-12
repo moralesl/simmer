@@ -167,6 +167,48 @@ import Testing
                 "refuseJSON's comment names \(documented.subtracting(refused)) that nothing refuses, and omits \(refused.subtracting(documented))")
     }
 
+    /// The kinds of refusal are listed in three places — the code, the law and
+    /// the protocol agents read — and a kind missing from either document is a
+    /// value a caller meets with no instruction for it. Set equality, both
+    /// directions, for the reason the `--json` lists above use it: a surplus
+    /// kind is a promise nothing keeps.
+    ///
+    /// The law also states each kind's exit code, so that is held to the code
+    /// too: "usage exits 2" is the half of this a script switches on first.
+    @Test func everyRefusalKindIsListedInTheContractAndTheProtocol() throws {
+        let code = Dictionary(uniqueKeysWithValues: Refusal.allCases.map { ($0.rawValue, $0.exitCode) })
+
+        func rows(of markdown: String, under header: String) -> [String] {
+            let lines = Self.scriptLines(of: markdown).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard let start = lines.firstIndex(where: { $0.hasPrefix(header) }) else { return [] }
+            return Array(lines[(start + 2)...].prefix(while: { $0.hasPrefix("|") }))
+        }
+        func firstCell(_ row: String) -> String {
+            row.split(separator: "|", omittingEmptySubsequences: true).first.map(String.init) ?? ""
+        }
+
+        let lawRows = rows(of: try Self.read("docs/CONTRACTS.md"),
+                           under: "| `refused_by` | what refused | exit |")
+        var law: [String: Int32] = [:]
+        for row in lawRows {
+            let cells = row.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard let kind = Self.backticked(in: cells.first ?? "").first,
+                  let exit = cells.last.flatMap({ Int32($0) }) else {
+                Issue.record("docs/CONTRACTS.md: a refused_by row that does not parse: \(row)")
+                continue
+            }
+            law[kind] = exit
+        }
+        #expect(law == code,
+                "docs/CONTRACTS.md lists \(law.sorted { $0.key < $1.key }); the code has \(code.sorted { $0.key < $1.key })")
+
+        let protocolRows = rows(of: try Self.read("AGENTS.md"),
+                                under: "| `refused_by` | what you do |")
+        let protocolKinds = Set(protocolRows.flatMap { Self.backticked(in: firstCell($0)) })
+        #expect(protocolKinds == Set(code.keys),
+                "AGENTS.md tells agents about \(protocolKinds.subtracting(code.keys)) that nothing raises, and is silent on \(Set(code.keys).subtracting(protocolKinds))")
+    }
+
     /// One sentence of a doc comment, from the line holding `anchor` to the
     /// first `.` that ends it — because a list of five verbs wraps, and a
     /// reader of the anchor line alone answers about half of it. Adversarial

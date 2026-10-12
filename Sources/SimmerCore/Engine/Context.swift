@@ -60,14 +60,23 @@ public struct Outcome {
 
     public init() {}
 
-    public static func failure(_ message: String, exit: Int32 = 1,
+    /// Every refusal names what refused, because the caller's next move
+    /// depends on it and `error` is a sentence nobody may parse. A typo is
+    /// fixed and retried; a cap is reported and never retried — and both used
+    /// to arrive as the same object at the same exit 1, so the only way to
+    /// tell them apart was the prose the contract says may be reworded.
+    ///
+    /// `refusal` has no default on purpose: a new refusal cannot ship without
+    /// someone deciding which kind it is.
+    public static func failure(_ message: String, by refusal: Refusal, exit: Int32? = nil,
                                json: Bool = false) -> Outcome {
         var outcome = Outcome()
-        outcome.exit = exit
+        outcome.exit = exit ?? refusal.exitCode
         if json {
             outcome.stdout = [JSONValue.object([
                 ("action", .string("refused")),
                 ("error", .string(message)),
+                ("refused_by", .string(refusal.rawValue)),
             ]).serialized()]
         } else {
             outcome.stderr = ["simmer: \(message)"]
@@ -81,6 +90,32 @@ public struct Outcome {
         notifications.append(contentsOf: other.notifications)
         if other.exit != 0 { exit = other.exit }
     }
+}
+
+/// What refused — `refused_by` in the refusal object, and the exit code that
+/// goes with it. The raw values are machine surface: append-only, and listed in
+/// CONTRACTS.md and AGENTS.md, which `StructureTests` holds in step with this.
+public enum Refusal: String, CaseIterable, Sendable {
+    /// The call itself: an unknown flag, a missing argument, a value that does
+    /// not parse. The only kind that exits 2 — fix the call and try again.
+    case usage
+    /// The person's ceiling. Report it and stop; never retry with more.
+    case cap
+    /// The battery is at or below the claim's floor.
+    case floor
+    /// `--require-ac`, and the Mac is on battery.
+    case charger
+    /// Something only a person may do: set or lift the cap, `down --all`.
+    case authority
+    /// The caller holds no claim for this to act on.
+    case noClaim = "no_claim"
+    /// The caller's claim is open-ended, so there is no deadline to add to.
+    case noDeadline = "no_deadline"
+    /// simmer could not do what it was asked: a record that did not reach the
+    /// disk, a switch that would not move, an update that could not be done.
+    case system
+
+    public var exitCode: Int32 { self == .usage ? 2 : 1 }
 }
 
 /// A notification the app should post — the app is the ONLY poster: macOS

@@ -46,18 +46,45 @@ $ simmer down --owner agent:evals --json
 
 `simmer run --max 2h -- npm test` sidesteps all five steps for anything expressible as one command: the claim lives as long as the process, renews while it runs, and is released when the command exits.
 
-A killed runner cannot release anything — nothing runs after `SIGKILL` — so the claim is instead **self-revoking**: it is written one chunk at a time and simply stops being renewed, and the guard retires it at that chunk's deadline. The switch always comes back; after a kill it comes back within a chunk rather than immediately.
+A killed runner cannot release anything — nothing runs after `SIGKILL` — so the claim is instead **self-revoking**: it is written one chunk at a time and simply stops being renewed, and the guard retires it at that chunk's deadline.
+The switch always comes back; after a kill it comes back within a chunk rather than immediately.
 
 ## The exit codes are the contract
 
 | exit | meaning | what you do |
 |---|---|---|
 | 0 | fits, or no deadline at all | proceed |
-| 1 | not enough time left, or refused | wind down, or read `.error` |
+| 1 | not enough time left, or refused | wind down — or, when refused, act on `.refused_by` (below) |
+| 2 | **your call is wrong** — an unknown flag, a value that does not parse | fix the call and ask again; nothing was decided |
 | 3 | **nothing is claimed at all** | the lid can interrupt at ANY moment — claim first |
 
 3 is not a big 1: it is an absent guarantee, not a small budget.
 Conflating them means working while the machine sleeps under you.
+2 is not a 1 either: a typo in `--need` says nothing about the time you have.
+
+## When you are refused
+
+A refusal names what refused, in `refused_by`; `error` is the sentence for your report, never for parsing.
+
+```bash
+$ simmer budget --nede 30m --json
+{"action":"refused","error":"Unknown option '--nede'. Did you mean '--need'?","refused_by":"usage"}
+# exit 2 — fix the call.
+
+$ simmer cap 1h --owner agent:evals --json
+{"action":"refused","error":"only a person can set the cap","refused_by":"authority"}
+# exit 1 — not yours to do.
+```
+
+| `refused_by` | what you do |
+|---|---|
+| `usage` | fix the call and run it again (exit 2) |
+| `cap` | report it and stop — see *What you may not do* |
+| `floor`, `charger` | the Mac needs its charger; say so in your report |
+| `authority` | that call belongs to a person; release your own with `simmer down --owner …` |
+| `no_claim` | nothing of yours to act on: claim first, or there was nothing to release |
+| `no_deadline` | your claim is open-ended already; there is nothing to extend |
+| `system` | simmer could not record the claim or move the switch — you have **no** guarantee; report it with what `simmer doctor` says |
 
 ## Ask again while you work
 
@@ -112,7 +139,9 @@ Read `lapsed` before writing "released cleanly".
 **`budget`'s `seconds_left`** is a number when there is a deadline, `-1` when there is none, and `null` when nothing is claimed at all.
 Switch on the exit code and the type never comes up.
 
-**And `-1` no longer means "anything fits".** `budget` answers about the earliest clock, which is the deadline *or* the battery floor the claim was taken with — so an open-ended claim on a draining battery can answer exit 1 with `seconds_left: -1`. `battery_seconds_left` is the other clock: seconds until the floor, `0` once it is reached, `null` on AC, while the estimate is calibrating, or when nothing is claimed. This is exactly the "ask again while you work" case arriving in a single call.
+**And `-1` no longer means "anything fits".** `budget` answers about the earliest clock, which is the deadline *or* the battery floor the claim was taken with — so an open-ended claim on a draining battery can answer exit 1 with `seconds_left: -1`.
+`battery_seconds_left` is the other clock: seconds until the floor, `0` once it is reached, `null` on AC, while the estimate is calibrating, or when nothing is claimed.
+This is exactly the "ask again while you work" case arriving in a single call.
 
 ## When simmer is not installed
 

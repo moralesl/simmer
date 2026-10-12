@@ -725,7 +725,7 @@ public enum UpdateCommand {
                                    plan: ApplyPlan, updateCommand: String) -> Outcome {
         let sentence = failureSentence(phase: step.phase, plan: plan,
                                        updateCommand: updateCommand)
-        var outcome = Outcome.failure(sentence)
+        var outcome = Outcome.failure(sentence, by: .system)
         outcome.stderr.append("   \(step.described) failed — \(detail)")
         outcome.notifications = [NotificationRequest(
             title: "The simmer update did not finish",
@@ -797,7 +797,7 @@ public enum UpdateCommand {
                 title: "simmer did not install the update",
                 subtitle: "", body: why, sound: false)]
             guard json else {
-                var failure = Outcome.failure(why)
+                var failure = Outcome.failure(why, by: .system)
                 failure.notifications = notifications
                 return failure
             }
