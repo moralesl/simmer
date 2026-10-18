@@ -391,6 +391,8 @@ uninstall:
 	@echo "Removed the app, the CLI symlink, the guard and the agent skill."
 	@echo "Left alone if present (needs root, and only if simmer wrote it):"
 	@echo "  /etc/sudoers.d/simmer — remove with: sudo rm /etc/sudoers.d/simmer"
+	@echo "  /Library/LaunchDaemons/io.github.moralesl.simmer.boot-heal.plist — the boot-time heal:"
+	@echo "    sudo launchctl bootout system/io.github.moralesl.simmer.boot-heal; sudo rm /Library/LaunchDaemons/io.github.moralesl.simmer.boot-heal.plist"
 	@echo "If sleep still does not work, the switch is the last thing to revert:"
 	@echo "  sudo pmset -a disablesleep 0"
 

@@ -5,6 +5,20 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ## Unreleased
 
+### Added
+
+- **A boot-time heal, so a reboot can no longer leave the switch on.** `pmset -a disablesleep` survives a reboot and the guard is a LaunchAgent in one user's login session, so a crash during a claim followed by a restart left the Mac awake at the login window, lid closed, until that user logged in — the founding failure, arriving through the back door. One LaunchDaemon, `/Library/LaunchDaemons/io.github.moralesl.simmer.boot-heal.plist`, now runs `pmset -a disablesleep 0` once at boot and nothing else; a claim still live is restored by the guard at login. Like the sudo rule it is root's: `bootstrap.sh` shows the plist in full and installs it in the same `sudo` session, `simmer doctor` is red without it and prints the one-liner, `simmer uninstall` lists its removal. It is deliberately not loaded at install, because loading it would run the heal under a claim that may be live. `BootHeal` is the single source, pinned by `BootHealTests` to that one invocation and to the installer's copy line for line.
+- **`simmer doctor` notices a second install on the same Mac.** The ledger and the guard are per user and the switch is per machine, so two accounts with simmer installed and both logged in are two guards settling one switch in opposite directions every thirty seconds, with no error line anywhere. `doctor` now reads the per-user rule files in `/etc/sudoers.d` and reports the other accounts as `other_installs`, informational, with the remedy; `CONTRACTS.md` § One user per Mac names the supported shape and leaves the system-wide alternative as a decision not yet taken.
+- **`Prototypes/LidAssertion/`** — the experiment behind an open PLATFORM-FACTS row: whether a root-held IOPM assertion carrying `AppliesOnLidClose` keeps an Apple-silicon lid awake. The 2026-08-22 measurement was unprivileged only. The spike holds the assertion, samples the lid state and two clocks, and reports the seconds asleep from the drift between `mach_absolute_time` and `mach_continuous_time`; the row stays ⚠️ unproven until the two summaries are pasted in.
+
+### Machine surface
+
+- `doctor --json` gains two rows: **`boot_heal`** (`ok` true/false, `null` under the seam) and **`other_installs`** (informational, present only when another account's rule file exists, never under the seam). Appended, like every row before them.
+
+### Fixed
+
+- **`make test` compiles again on Command Line Tools 27.** The October 2026 tools moved the swift-testing macro plugin into a `testing/` subdirectory the compiler does not search, so every `@Test` failed to expand — `plugin for module 'TestingMacros' not found` — and the suite was red on a clean checkout. The Makefile names that directory with `-plugin-path` where it exists; an older CLT keeps exactly the flags it had.
+
 ## 0.4.1 — 2026-10-12
 
 ### Machine surface

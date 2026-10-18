@@ -272,6 +272,21 @@ Warn-once, the reminder interval and deadline crossings are the paths a differen
 6. Reverting an **orphan** — the switch on with nothing claiming it — is allowed to anyone, always.
    Stopping is never the thing simmer stands in the way of.
 
+## One user per Mac
+
+The ledger is per user (`$XDG_STATE_HOME`), the guard is a per-user LaunchAgent, and the switch is one per machine.
+Two users with simmer installed and both logged in are therefore two guards settling one switch in opposite directions: the one whose ledger is empty reads the enabled switch as an orphan and turns it off under the other's claim, and the other turns it back on within thirty seconds.
+Nothing logs an error for it.
+One user per Mac is the supported shape; `doctor` reports a second install as `other_installs`, and the remedy is to log the other account out before relying on a claim.
+Making the switch's owner system-wide — a shared ledger, or a heal that reverts only what this ledger turned on — is a decision not yet taken; guarantee 6 above stands until it is.
+
+## The boot-time heal
+
+The switch survives a reboot and the guard runs in a login session, so a reboot with a claim live left the switch on until that user logged in.
+A LaunchDaemon that runs `pmset -a disablesleep 0` once at boot closes that window.
+It is not a guard: it holds no opinion about claims, ticks on nothing, and never turns the switch on; a claim still live at boot is restored by the guard at login, exactly as the ledger says.
+Shown in full and installed by a human, like the rule (`SECURITY.md`); `doctor` reports it as `boot_heal` and is red without it.
+
 ## The claims ledger
 
 A ledger of claims rather than a single lease: owner conflicts and `--force` disappear, and `state`/`until` aggregate over claims.

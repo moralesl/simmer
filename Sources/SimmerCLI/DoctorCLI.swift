@@ -193,6 +193,48 @@ struct DoctorCLI: ParsableCommand {
             }
         }
 
+        // The boot-time heal: the one thing that can hand the switch back
+        // between a reboot and a login (BootHeal). Red when missing, like the
+        // sudo rule — without it a crashed claim's switch stays on at the
+        // login window for as long as nobody logs in — and the command to
+        // install it is printed below, beside the rule's.
+        if seamed {
+            rows.append(Row(id: "boot_heal",
+                            label: "SIMMER_FAKE_PMSET is set — the boot-time heal is not being checked",
+                            ok: nil))
+        } else if BootHeal.isInstalled() {
+            rows.append(Row(id: "boot_heal",
+                            label: "boot-time heal installed (\(BootHeal.path))",
+                            ok: true))
+        } else {
+            rows.append(Row(
+                id: "boot_heal",
+                label: "boot-time heal (missing — after a crash and a reboot the switch stays on until you log in; the command to install it is below)",
+                ok: false))
+        }
+
+        // A second simmer install on this Mac. Informational, because it is
+        // not this install's defect — but it is the one failure in the model
+        // that writes no error line anywhere: two guards settling one switch
+        // in opposite directions (CONTRACTS.md § One user per Mac). Never
+        // under the seam: /etc/sudoers.d is the tester's, not the fixture's.
+        if !seamed {
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: SudoRule.directory)) ?? []
+            let others = SudoRule.otherUsers(amongRuleFiles: names, user: NSUserName())
+            if !others.isEmpty {
+                rows.append(Row(
+                    id: "other_installs",
+                    label: "simmer is also installed for \(others.joined(separator: ", ")) on this Mac.",
+                    ok: nil,
+                    detail: [
+                        "Two guards share one sleep switch: while both accounts are logged in, the one",
+                        "holding no claim turns the switch off under the other's claim every 30 s.",
+                        "One user per Mac is the supported shape (CONTRACTS.md) — log the other account",
+                        "out before relying on a claim.",
+                    ]))
+            }
+        }
+
         // The app's heartbeat, never UNUserNotificationCenter from here: this
         // executable would be told about its own never-granted state
         // (PLATFORM-FACTS.md — that misread cost a wrong diagnosis once already).
@@ -521,6 +563,21 @@ struct DoctorCLI: ParsableCommand {
                 print("installs with (validates before it lands, so a typo cannot break sudo):")
                 print("")
                 print("    \(SudoRule.installCommand(user: NSUserName()))")
+                print("")
+            }
+            // The boot-time heal is root's too, so it is shown the same way:
+            // the whole plist, then the one-liner that validates it and lands
+            // it. It is loaded at the next boot, never now.
+            if !seamed, !BootHeal.isInstalled() {
+                print("The boot-time heal needs root too. This plist runs 'pmset -a disablesleep 0' once at boot:")
+                print("")
+                for line in BootHeal.plistLines {
+                    print("    \(line)")
+                }
+                print("")
+                print("installs with (validates before it lands; loads at the next boot, not now):")
+                print("")
+                print("    \(BootHeal.installCommand)")
                 print("")
             }
         }

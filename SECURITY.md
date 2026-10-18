@@ -11,7 +11,7 @@ Expect a first response within a week. simmer is one person's tool, not a funded
 
 ## What simmer asks for, exactly
 
-One sudoers rule, scoped to two invocations of one binary and nothing else:
+Two root-owned files. First, one sudoers rule, scoped to two invocations of one binary and nothing else:
 
 ```
 <user> ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0
@@ -27,6 +27,15 @@ One sudoers rule, scoped to two invocations of one binary and nothing else:
 
 Removing it is one command: `sudo rm /etc/sudoers.d/simmer`.
 `make uninstall` deliberately does not do it for you, because it needs root and because simmer only ever removes what simmer wrote.
+
+And one LaunchDaemon, `/Library/LaunchDaemons/io.github.moralesl.simmer.boot-heal.plist`, root-owned, mode 0644, that runs `/usr/bin/pmset -a disablesleep 0` once at boot and nothing else — no interval, no keep-alive, no watch.
+
+- It exists because the switch survives a reboot and the guard runs in a login session: without it, a crash during a claim left the Mac awake at the login window until someone logged in.
+- It never turns the switch on. A claim still live at boot is restored by the guard at login.
+- Shown in full first, validated with `plutil -lint` before it lands, and not loaded at install — it loads at the next boot, which is the only moment it is for.
+- A unit test pins the plist to that one invocation, and the installer's copy to the binary's, line for line.
+
+Removing it: `sudo launchctl bootout system/io.github.moralesl.simmer.boot-heal; sudo rm /Library/LaunchDaemons/io.github.moralesl.simmer.boot-heal.plist`.
 
 ## The install path
 
@@ -66,5 +75,5 @@ That is the whole network surface.
 
 ## What would be a vulnerability
 
-Anything that lets simmer leave `disablesleep` on with nothing scheduled to turn it off, that widens the sudoers rule beyond the two invocations above, that writes to `/etc/sudoers.d` without validating first, or that lets a caller get root through simmer.
+Anything that lets simmer leave `disablesleep` on with nothing scheduled to turn it off, that widens the sudoers rule beyond the two invocations above, that lets the boot-time daemon do anything but turn the switch off, that writes to `/etc/sudoers.d` or `/Library/LaunchDaemons` without validating first, or that lets a caller get root through simmer.
 Those are the promises; a hole in one of them is a report worth making.

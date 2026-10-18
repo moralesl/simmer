@@ -61,6 +61,17 @@ import Testing
         #expect(bootstrap.contains(SudoRule.legacyPath))
     }
 
+    /// A second install on the same Mac is read from the per-user file names
+    /// and nothing else: the legacy shared file names nobody, and a stranger's
+    /// `awake` rule is not an install of simmer.
+    @Test func otherInstallsAreReadFromTheRuleFileNames() {
+        let names = ["simmer", "simmer-luis", "simmer-pablo", "awake", "simmer-", "README"]
+        #expect(SudoRule.otherUsers(amongRuleFiles: names, user: "luis") == ["pablo"])
+        #expect(SudoRule.otherUsers(amongRuleFiles: names, user: "pablo") == ["luis"])
+        #expect(SudoRule.otherUsers(amongRuleFiles: ["simmer"], user: "luis").isEmpty)
+        #expect(SudoRule.otherUsers(amongRuleFiles: [], user: "luis").isEmpty)
+    }
+
     /// simmer never escalates its own privileges. `osascript … with
     /// administrator privileges` is how that would come back — as an
     /// app-composed shell string running as root — so its absence is asserted

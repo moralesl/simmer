@@ -49,6 +49,10 @@ case "$SUDOERS_USER" in
   *)                SUDOERS=/etc/sudoers.d/simmer-$SUDOERS_USER ;;
 esac
 SUDOERS_LEGACY=/etc/sudoers.d/simmer
+# The boot-time heal: one LaunchDaemon that puts the switch back at boot,
+# before any login (BootHeal.swift says why). Root's, so it is shown and
+# installed in the same sudo session as the rule.
+BOOT_HEAL=/Library/LaunchDaemons/io.github.moralesl.simmer.boot-heal.plist
 
 die() { printf 'simmer: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n▸ %s\n' "$*"; }
@@ -301,6 +305,71 @@ FOREIGN
 BYHAND
 }
 
+# ── the boot-time heal ──────────────────────────────────────────────────────
+# `pmset -a disablesleep` survives a reboot and the guard is a LaunchAgent in
+# one user's login session, so between boot and login nothing could hand the
+# switch back: a crash during a claim left the Mac awake at the login window
+# until someone logged in. This daemon runs ONCE at boot and puts it back; a
+# claim still live is restored by the guard at login. It is deliberately NOT
+# loaded here — `launchctl bootstrap` would run the heal now, under a claim
+# that may be live. Loaded at the next boot is exactly its job.
+#
+# The plist below must stay identical to BootHeal.swift, line for line, which
+# is the single source `simmer doctor` and `simmer uninstall` render from. CI
+# asserts they agree.
+boot_heal_plist() {
+  printf '%s\n' \
+    '<?xml version="1.0" encoding="UTF-8"?>' \
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+    '<plist version="1.0">' \
+    '<dict>' \
+    '	<key>Label</key>' \
+    '	<string>io.github.moralesl.simmer.boot-heal</string>' \
+    '	<key>ProgramArguments</key>' \
+    '	<array>' \
+    '		<string>/usr/bin/pmset</string>' \
+    '		<string>-a</string>' \
+    '		<string>disablesleep</string>' \
+    '		<string>0</string>' \
+    '	</array>' \
+    '	<key>RunAtLoad</key>' \
+    '	<true/>' \
+    '</dict>' \
+    '</plist>'
+}
+
+install_boot_heal() {
+  step "the boot-time heal: one plist in /Library/LaunchDaemons"
+  if [ -f "$BOOT_HEAL" ]; then
+    echo "  already in place ($BOOT_HEAL) — nothing to do"
+    return 0
+  fi
+  echo "  This plist, and nothing else, goes to $BOOT_HEAL"
+  echo "  (it runs 'pmset -a disablesleep 0' once at boot, before anyone logs in):"
+  echo
+  boot_heal_plist | sed 's/^/    /'
+  echo
+  echo "  sudo asks again only if its earlier grant has expired."
+
+  # Written unprivileged, validated BEFORE it lands: launchd refuses a
+  # malformed plist silently at boot, which is the one moment this is for.
+  local tmp
+  tmp="$(mktemp /private/tmp/simmer-boot-heal.XXXXXX)"
+  boot_heal_plist > "$tmp"
+  if plutil -lint "$tmp" >/dev/null &&
+     sudo /usr/bin/install -m 0644 -o root -g wheel "$tmp" "$BOOT_HEAL"; then
+    rm -f "$tmp"
+    echo "  installed $BOOT_HEAL — loads at the next boot"
+    return 0
+  fi
+  rm -f "$tmp"
+  cat <<BYHAND
+  Not installed (cancelled, or sudo refused). Without it, a reboot during a
+  claim leaves the switch on until someone logs in. \`simmer doctor\` prints
+  the command to install it later.
+BYHAND
+}
+
 # ── the notification identity ───────────────────────────────────────────────
 # Launched via LaunchServices so macOS shows the permission request as a
 # banner carrying simmer's own pot icon (PLATFORM-FACTS.md). This launch IS
@@ -364,6 +433,7 @@ main() {
   fetch
   build_and_install
   install_sudo_rule
+  install_boot_heal
   launch_app
   epilogue
 }
