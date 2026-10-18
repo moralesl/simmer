@@ -66,6 +66,16 @@ TEST_FLAGS = -Xswiftc -F -Xswiftc $(CLT_FRAMEWORKS) \
              -Xlinker -rpath -Xlinker $(CLT_FRAMEWORKS) \
              -Xlinker -rpath -Xlinker $(CLT_TESTLIB)
 endif
+# Command Line Tools 27 (macOS 27 SDK, October 2026) ship the swift-testing
+# macro plugin in a `testing/` subdirectory the compiler does not search, so
+# every `@Test` and `#expect` failed to expand — "external macro implementation
+# type 'TestingMacros.TestDeclarationMacro' could not be found" — and `make
+# test` was red on a clean main. Named only where that directory exists, so an
+# older CLT keeps exactly the flags it had.
+CLT_TESTING_PLUGINS = $(CLT_DEVELOPER_DIR)/usr/lib/swift/host/plugins/testing
+ifneq ($(wildcard $(CLT_TESTING_PLUGINS)/libTestingMacros.dylib),)
+TEST_FLAGS += -Xswiftc -plugin-path -Xswiftc $(CLT_TESTING_PLUGINS)
+endif
 endif
 
 .PHONY: build test print-test-flags test-release test-raycast skill app install uninstall clean release-check release-notes
