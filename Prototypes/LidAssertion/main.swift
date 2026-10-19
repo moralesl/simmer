@@ -165,15 +165,10 @@ if result != kIOReturnSuccess {
 }
 print("assertion held (id \(assertion)). Close the lid now; open it again after a minute or more.")
 
-// Released by the kernel when this process ends, however it ends; releasing
-// on the way out is only manners.
-for sig in [SIGINT, SIGTERM, SIGHUP] {
-    signal(sig) { _ in
-        IOPMAssertionRelease(assertion)
-        print("\nreleased on signal")
-        exit(130)
-    }
-}
+// No signal handlers, on purpose: the kernel releases an IOPM assertion when
+// its process ends, however it ends, so Ctrl-C needs no help — and neither
+// IOPMAssertionRelease nor print is async-signal-safe, so a handler that
+// called them would be the one thing here that could deadlock.
 
 FileManager.default.createFile(atPath: options.log, contents: nil)
 guard let handle = FileHandle(forWritingAtPath: options.log) else {

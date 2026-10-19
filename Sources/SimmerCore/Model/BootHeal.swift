@@ -62,10 +62,19 @@ public enum BootHeal {
     /// lands, and only then does it land root-owned 0644 — the ownership and
     /// mode launchd requires before it will load anything from that directory.
     public static var installCommand: String {
-        let quoted = plistLines.map { "'\($0)'" }.joined(separator: " ")
+        let quoted = plistLines.map(shellQuoted).joined(separator: " ")
         return "tmp=$(mktemp) && printf '%s\\n' \(quoted) > \"$tmp\" && "
             + "plutil -lint \"$tmp\" && "
             + "sudo install -m 0644 -o root -g wheel \"$tmp\" \(path); rm -f \"$tmp\""
+    }
+
+    /// One shell word, whatever the text: single-quoted, with any single quote
+    /// inside it spelled `'\''` (close, escaped quote, reopen). No plist line
+    /// carries one today, and a future label or comment that did would
+    /// otherwise break the one-liner at the shell level — silently, into a
+    /// plist that is not this one.
+    static func shellQuoted(_ text: String) -> String {
+        "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// Removal needs root too, so these are shown, never run — like the rule.

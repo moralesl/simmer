@@ -541,16 +541,32 @@ struct DoctorCLI: ParsableCommand {
         print("")
 
         if failures > 0 {
-            if let repair = install.repairCommand {
-                print("Anything red above is fixed by re-running the installer:")
-                print("  \(repair)")
-            } else {
-                print("Anything red above is fixed by installing simmer again:")
-                print("  \(install.updateCommand)")
+            // Two red rows name root-owned files the installer does not write
+            // on its own: `make install` never touches /etc/sudoers.d or
+            // /Library/LaunchDaemons, and only `bootstrap.sh` asks for sudo.
+            // So the "re-run the installer" sentence is only true of the
+            // other rows — said as such, or it sends a person in a circle:
+            // reinstall, everything else green, the same red row, the same
+            // advice. Their own fixes are printed in full right below.
+            let rootOwned: Set<String> = ["sudo_rule", "boot_heal"]
+            let rootOwnedRed = rows.contains { $0.ok == false && rootOwned.contains($0.id) }
+            let installerFixable = rows.contains { $0.ok == false && !rootOwned.contains($0.id) }
+            if installerFixable {
+                let subject = rootOwnedRed
+                    ? "Everything red above except the root-owned files (their commands are below)"
+                    : "Anything red above"
+                if let repair = install.repairCommand {
+                    print("\(subject) is fixed by re-running the installer:")
+                    print("  \(repair)")
+                } else {
+                    print("\(subject) is fixed by installing simmer again:")
+                    print("  \(install.updateCommand)")
+                }
+                print("")
             }
-            print("")
-            // The sudo rule is the one thing simmer will not do for you: it
-            // needs root, and simmer never escalates its own privileges. So
+            // The sudo rule and the boot-time heal are the two things simmer
+            // will not do for you: they need root, and simmer never escalates
+            // its own privileges. So
             // print the command in full rather than describing it — a rule
             // someone can read before running is the whole point (SudoRule).
             if !seamed, SudoRule.installedPath() == nil {

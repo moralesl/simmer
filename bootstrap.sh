@@ -340,9 +340,16 @@ boot_heal_plist() {
 
 install_boot_heal() {
   step "the boot-time heal: one plist in /Library/LaunchDaemons"
+  # Accepted only when it IS this plist, byte for byte. A file at that path
+  # proves nothing about what runs at boot: a stale copy from an older
+  # version, or a malformed one from an interrupted attempt, would be the
+  # daemon failing silently at the one moment it exists for.
   if [ -f "$BOOT_HEAL" ]; then
-    echo "  already in place ($BOOT_HEAL) — nothing to do"
-    return 0
+    if boot_heal_plist | cmp -s - "$BOOT_HEAL"; then
+      echo "  already in place ($BOOT_HEAL) — nothing to do"
+      return 0
+    fi
+    echo "  $BOOT_HEAL exists but is not this plist — replacing it"
   fi
   echo "  This plist, and nothing else, goes to $BOOT_HEAL"
   echo "  (it runs 'pmset -a disablesleep 0' once at boot, before anyone logs in):"

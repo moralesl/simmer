@@ -49,6 +49,16 @@ import Testing
         }
     }
 
+    /// A single quote inside a plist line must survive the shell. None carries
+    /// one today — asserted, so the day one does, this is the test that says
+    /// the one-liner still installs exactly that text.
+    @Test func theInstallCommandSurvivesASingleQuote() {
+        #expect(BootHeal.shellQuoted("plain") == "'plain'")
+        #expect(BootHeal.shellQuoted("it's") == "'it'\\''s'")
+        #expect(!BootHeal.plistLines.contains { $0.contains("'") },
+                "a plist line carries a single quote — check the rendered one-liner by hand once")
+    }
+
     /// bootstrap.sh cannot import Swift, so it carries its own copy of the
     /// plist. Line for line, or an installer writes a daemon `doctor` then
     /// reports as somebody else's.
@@ -60,6 +70,9 @@ import Testing
         #expect(bootstrap.contains(BootHeal.path))
         #expect(bootstrap.contains("plutil -lint"))
         #expect(!bootstrap.contains("launchctl bootstrap system"))
+        // An existing file is accepted only if it IS this plist, byte for
+        // byte; a stale or foreign one at that path is replaced, not trusted.
+        #expect(bootstrap.contains("cmp -s - \"$BOOT_HEAL\""))
     }
 
     /// The sweep, for the daemon's path: every surface asks `BootHeal`.
