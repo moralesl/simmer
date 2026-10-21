@@ -5,6 +5,8 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ## Unreleased
 
+## 0.5.0 — 2026-10-21
+
 ### Added
 
 - **A boot-time heal, so a reboot can no longer leave the switch on.** `pmset -a disablesleep` survives a reboot and the guard is a LaunchAgent in one user's login session, so a crash during a claim followed by a restart left the Mac awake at the login window, lid closed, until that user logged in — the founding failure, arriving through the back door. One LaunchDaemon, `/Library/LaunchDaemons/io.github.moralesl.simmer.boot-heal.plist`, now runs `pmset -a disablesleep 0` once at boot and nothing else; a claim still live is restored by the guard at login. Like the sudo rule it is root's: `bootstrap.sh` shows the plist in full and installs it in the same `sudo` session, `simmer doctor` is red without it and prints the one-liner, `simmer uninstall` lists its removal. It is deliberately not loaded at install, because loading it would run the heal under a claim that may be live. `BootHeal` is the single source, pinned by `BootHealTests` to that one invocation and to the installer's copy line for line.
