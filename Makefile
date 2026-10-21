@@ -66,6 +66,16 @@ TEST_FLAGS = -Xswiftc -F -Xswiftc $(CLT_FRAMEWORKS) \
              -Xlinker -rpath -Xlinker $(CLT_FRAMEWORKS) \
              -Xlinker -rpath -Xlinker $(CLT_TESTLIB)
 endif
+# Command Line Tools 27 (macOS 27 SDK, October 2026) ship the swift-testing
+# macro plugin in a `testing/` subdirectory the compiler does not search, so
+# every `@Test` and `#expect` failed to expand — "external macro implementation
+# type 'TestingMacros.TestDeclarationMacro' could not be found" — and `make
+# test` was red on a clean main. Named only where that directory exists, so an
+# older CLT keeps exactly the flags it had.
+CLT_TESTING_PLUGINS = $(CLT_DEVELOPER_DIR)/usr/lib/swift/host/plugins/testing
+ifneq ($(wildcard $(CLT_TESTING_PLUGINS)/libTestingMacros.dylib),)
+TEST_FLAGS += -Xswiftc -plugin-path -Xswiftc $(CLT_TESTING_PLUGINS)
+endif
 endif
 
 .PHONY: build test print-test-flags test-release test-raycast skill app install uninstall clean release-check release-notes
@@ -295,10 +305,12 @@ install: app
 	# person to do what the next paragraph is about to do reads as a bug.
 	[ "$(NOTES)" = "0" ] || { \
 	    echo ""; \
-	    echo "Two steps remain, both yours (they need a human):"; \
+	    echo "Three steps remain, all yours (they need a human):"; \
 	    echo "  1. The sudo rule — bootstrap.sh installs it, or run it yourself:"; \
 	    echo "       simmer doctor   # says whether it is in place, and prints the command"; \
-	    echo "  2. open -a Simmer, then click Allow on the notification banner."; }
+	    echo "  2. The boot-time heal (/Library/LaunchDaemons/io.github.moralesl.simmer.boot-heal.plist)"; \
+	    echo "       — bootstrap.sh installs it too; simmer doctor prints the one-liner otherwise."; \
+	    echo "  3. open -a Simmer, then click Allow on the notification banner."; }
 
 # Hand the machine back BEFORE removing anything, and refuse to go on if that
 # did not work.
@@ -381,6 +393,8 @@ uninstall:
 	@echo "Removed the app, the CLI symlink, the guard and the agent skill."
 	@echo "Left alone if present (needs root, and only if simmer wrote it):"
 	@echo "  /etc/sudoers.d/simmer — remove with: sudo rm /etc/sudoers.d/simmer"
+	@echo "  /Library/LaunchDaemons/io.github.moralesl.simmer.boot-heal.plist — the boot-time heal:"
+	@echo "    sudo launchctl bootout system/io.github.moralesl.simmer.boot-heal; sudo rm /Library/LaunchDaemons/io.github.moralesl.simmer.boot-heal.plist"
 	@echo "If sleep still does not work, the switch is the last thing to revert:"
 	@echo "  sudo pmset -a disablesleep 0"
 

@@ -25,6 +25,15 @@ Tested on macOS 26.5.1, Apple silicon, August 2026, unless a line says otherwise
 Independent confirmation: LidRun, a commercial product for exactly this use case ("keep Claude Code running when your MacBook is closed"), ships `pmset -a disablesleep` behind a privileged helper with auto-reversion and a 20% battery floor — simmer's architecture, including the same default.
 The sudoers rule stays, as a validated design rather than a workaround; the remaining softening is packaging: show the exact command at install time and let the person run it.
 
+**Open 2026-10-18: whether a ROOT process holding `AppliesOnLidClose` keeps the lid awake.** The 2026-08-22 measurement was unprivileged only; LidRun shipping the flag is evidence that the flag works, not that the assertion does not.
+If a root-held assertion holds a closed Apple-silicon lid, simmer's mechanism could be a lease that dies with its holder instead of a flag that survives reboots — no sudoers rule, no orphan state, no boot-time heal.
+The experiment is `Prototypes/LidAssertion/`: a control run without the property (expect sleep), then `sudo` with it, lid closed for over a minute each; the summary reads the seconds asleep from the drift between `mach_absolute_time`, which stops in sleep, and `mach_continuous_time`, which does not.
+
+| Fact | Status |
+|---|---|
+| Root-held `PreventSystemSleep` + `AppliesOnLidClose` holds a closed lid | ⚠️ unproven — `Prototypes/LidAssertion`, not yet run; paste the two summaries here with the date |
+| `disablesleep` applies at the login window, no user logged in | ⚠️ unproven — reasoned from the flag being system-wide, which is why the boot-time heal exists; measure after a reboot with a claim live |
+
 ### Notifications
 
 A notification carries the name and icon of **the bundle that posted it**.

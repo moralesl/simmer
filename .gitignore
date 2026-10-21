@@ -6,3 +6,6 @@
 # The worktrees are embedded repositories, so `git add -A` swallows them and
 # commits four one-line gitlinks nobody can clone.
 .claude/
+
+# The lid-assertion spike builds beside its source (Prototypes/LidAssertion/build.sh).
+Prototypes/LidAssertion/lid-assertion

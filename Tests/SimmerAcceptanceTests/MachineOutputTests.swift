@@ -681,6 +681,14 @@ import Testing
         let appRow = checks.first { $0["id"] as? String == "app_running" }
         #expect(appRow != nil)
         #expect(appRow?["ok"] is NSNull, "the app check must be informational under the seam")
+        // Two more reads of the tester's own Mac that the seam must bar: the
+        // boot-time heal is a file in /Library/LaunchDaemons, and a second
+        // install is a listing of /etc/sudoers.d.
+        let bootHeal = checks.first { $0["id"] as? String == "boot_heal" }
+        #expect(bootHeal != nil)
+        #expect(bootHeal?["ok"] is NSNull, "the boot-time heal is a file on the tester's Mac — never checked under the seam")
+        #expect(!checks.contains { $0["id"] as? String == "other_installs" },
+                "other installs are the tester's /etc/sudoers.d — never read under the seam")
         // The nested status object is the same shape `status --json` emits.
         let status = object["status"] as? [String: Any] ?? [:]
         #expect(status["state"] as? String == "idle")

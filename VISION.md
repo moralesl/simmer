@@ -41,7 +41,7 @@ An entry moves off this list only when its reason is rewritten here, and never b
 
 | Resisted | Why |
 |---|---|
-| A daemon, or any long-running service | The guard is one idempotent tick, run two ways: IOKit events in the app for instant response and a LaunchAgent every thirty seconds as the backstop nobody can quit. A daemon would be a second implementation of the aggregate, and the two would disagree. |
+| A daemon, or any long-running service | The guard is one idempotent tick, run two ways: IOKit events in the app for instant response and a LaunchAgent every thirty seconds as the backstop nobody can quit. A daemon would be a second implementation of the aggregate, and the two would disagree. The boot-time heal is not this: a `RunAtLoad`-only LaunchDaemon that runs `pmset -a disablesleep 0` once at boot holds no aggregate, decides nothing about claims, and never turns the switch on — it exists because the guard lives in a login session and the switch does not (CONTRACTS.md § The boot-time heal). |
 | A config file, named presets | Flags plus three defaults covered every case for a year. A config file is state that decides things nobody can see deciding — the same shape as the switch this tool exists to hide. |
 | `--force`, owner juggling, "take over" | The conflict they would resolve cannot occur: one live claim per owner, and no owner can address another's. There is nothing left to force. |
 | Ending anyone's work | simmer never kills a command it wrapped, never refuses a release, and heals toward sleep. Stopping is never the thing it stands in the way of, and starting or continuing is never its decision. |

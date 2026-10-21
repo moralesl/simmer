@@ -259,7 +259,7 @@ Warn-once, the reminder interval and deadline crossings are the paths a differen
 
 ## Behavioural guarantees
 
-1. Five things end awake time; only one is remembering: a claim's deadline (or the cap clipping it), the battery floor (on battery only), its charger disappearing if it asked for one, thermal pressure, explicit release, and the guard reverting a switch it finds enabled with no claim behind it.
+1. Five things end awake time; only one is remembering: a claim's deadline (or the cap clipping it), the battery floor (on battery only), its charger disappearing if it asked for one, thermal pressure, explicit release, and the guard reverting a switch it finds enabled with no claim behind it — once more at boot, before any login, by the boot-time heal below.
 2. The switch is never exposed, only leased.
    **Every mutation ends in one function that reads the ledger and puts the switch where it says** — that is what makes "no code path leaves `disablesleep` on without something scheduled to turn it off" a property rather than a promise.
 3. A warning fires once, ~5 minutes before the **aggregate** deadline; open-ended time reminds every 30 minutes; a claim on battery warns once at floor+10%, re-arming if the charger returns.
@@ -271,6 +271,21 @@ Warn-once, the reminder interval and deadline crossings are the paths a differen
    A differential harness is the instrument that enforces this asymmetry — contract-bearing lines must match exactly, prose differences are reported and allowed — and it is the only thing that catches a field name, an exit code or a field's *type* drifting.
 6. Reverting an **orphan** — the switch on with nothing claiming it — is allowed to anyone, always.
    Stopping is never the thing simmer stands in the way of.
+
+## One user per Mac
+
+The ledger is per user (`$XDG_STATE_HOME`), the guard is a per-user LaunchAgent, and the switch is one per machine.
+Two users with simmer installed and both logged in are therefore two guards settling one switch in opposite directions: the one whose ledger is empty reads the enabled switch as an orphan and turns it off under the other's claim, and the other turns it back on within thirty seconds.
+Nothing logs an error for it.
+One user per Mac is the supported shape; `doctor` reports a second install as `other_installs`, and the remedy is to log the other account out before relying on a claim.
+Making the switch's owner system-wide — a shared ledger, or a heal that reverts only what this ledger turned on — is a decision not yet taken; guarantee 6 above stands until it is.
+
+## The boot-time heal
+
+The switch survives a reboot and the guard runs in a login session, so a reboot with a claim live left the switch on until that user logged in.
+A LaunchDaemon that runs `pmset -a disablesleep 0` once at boot closes that window.
+It is not a guard: it holds no opinion about claims, ticks on nothing, and never turns the switch on; a claim still live at boot is restored by the guard at login, exactly as the ledger says.
+Shown in full and installed by a human, like the rule (`SECURITY.md`); `doctor` reports it as `boot_heal` and is red without it.
 
 ## The claims ledger
 

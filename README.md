@@ -66,7 +66,7 @@ One paste, one password, one click on Allow:
 curl -fsSL https://raw.githubusercontent.com/moralesl/simmer/main/bootstrap.sh | bash
 ```
 
-That checks macOS 14+ and the Command Line Tools (Swift 6, so Xcode/CLT 16 or newer — it says so in one sentence rather than in compiler output), clones, compiles locally (which is why there is no Gatekeeper warning and no Apple account — see the FAQ), installs `Simmer.app` with its menu bar and background guard, shows the exact two-line sudo rule in full before `sudo` asks for your password once, and launches the app so the notification permission banner arrives carrying simmer's own icon. simmer never gives itself root: it shows you the rule and you approve it — see [SECURITY.md](SECURITY.md).
+That checks macOS 14+ and the Command Line Tools (Swift 6, so Xcode/CLT 16 or newer — it says so in one sentence rather than in compiler output), clones, compiles locally (which is why there is no Gatekeeper warning and no Apple account — see the FAQ), installs `Simmer.app` with its menu bar and background guard, shows the exact two-line sudo rule and the one-plist boot-time heal (`/Library/LaunchDaemons/io.github.moralesl.simmer.boot-heal.plist`, which puts the switch back at boot before anyone logs in) in full before `sudo` asks for your password once, and launches the app so the notification permission banner arrives carrying simmer's own icon. simmer never gives itself root: it shows you the rule and you approve it — see [SECURITY.md](SECURITY.md).
 
 ```bash
 simmer 2h -r "big build"    # stay awake two hours, lid may close
@@ -150,7 +150,7 @@ It shows the commands rather than running them — the same way it shows the sud
 That also means you can read what is about to happen, and it cannot delete the bundle it is running from.
 The commands come out resolved, so nothing depends on remembering that the one-paste installer put a checkout in `~/.local/share/simmer`.
 
-The sudo rule is left out of them deliberately: removing it needs root, and simmer only ever removes what simmer wrote.
+The sudo rule and the boot-time heal are listed but left to you deliberately: removing them needs root, and simmer only ever removes what simmer wrote.
 State (`~/.local/state/simmer/`) is yours to keep or delete.
 
 ## Building it yourself

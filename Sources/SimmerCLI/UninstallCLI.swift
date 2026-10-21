@@ -127,6 +127,15 @@ struct UninstallCLI: ParsableCommand {
                 outcome.stdout.append("   Find it with: sudo grep -rn disablesleep /etc/sudoers /etc/sudoers.d/")
             }
         }
+        // Root-owned as well, and shown rather than run for the same reason.
+        if BootHeal.isInstalled() {
+            outcome.stdout.append("")
+            outcome.stdout.append("And the boot-time heal, root-owned too:")
+            outcome.stdout.append("")
+            for command in BootHeal.removeCommands {
+                outcome.stdout.append("   \(command)")
+            }
+        }
         outcome.stdout.append("")
         outcome.stdout.append("Your state stays put — delete it too if you want the log and the claims gone:")
         outcome.stdout.append("   rm -rf \(env.stateDir.path)")

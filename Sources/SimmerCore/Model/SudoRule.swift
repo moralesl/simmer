@@ -18,6 +18,28 @@ public enum SudoRule {
     /// recognised and can be pointed at.
     public static let legacyPath = "/etc/sudoers.d/simmer"
 
+    /// The directory every rule lives in. Listable by an admin without a
+    /// password, which is what lets `doctor` notice ANOTHER user's install.
+    public static let directory = "/etc/sudoers.d"
+
+    /// Other users who installed simmer on this Mac, read from the file names
+    /// in `directory`: one `simmer-<user>` file per install since 0.2.0.
+    ///
+    /// Two installs on one Mac are two guards, two ledgers and ONE switch.
+    /// While both users are logged in, A's guard reads its own empty ledger
+    /// and an enabled switch as an orphan and turns it off under B's claim,
+    /// and B's guard turns it back on within thirty seconds (CONTRACTS.md
+    /// § One user per Mac). Nothing logs an error for it, so `doctor` is the
+    /// one place it can be said. The shared legacy file names nobody, so it
+    /// cannot be attributed and is not counted.
+    public static func otherUsers(amongRuleFiles names: [String], user: String) -> [String] {
+        names.compactMap { name -> String? in
+            guard name.hasPrefix("simmer-") else { return nil }
+            let other = String(name.dropFirst("simmer-".count))
+            return other.isEmpty || other == user ? nil : other
+        }.sorted()
+    }
+
     /// One file per USER.
     ///
     /// The shared file held a single `<user> ALL=(root) NOPASSWD: …` line, and

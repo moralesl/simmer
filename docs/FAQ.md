@@ -14,12 +14,13 @@ On Apple silicon the machine sleeps the moment you close it no matter which asse
 
 **Why does it need my password?** Only root can flip that switch, and the guard has to be able to flip it back while nobody is at the keyboard.
 So a two-line `/etc/sudoers.d` rule, scoped to exactly `pmset -a disablesleep 0` and `pmset -a disablesleep 1` and nothing else.
-Asked once, at install, and the rule is printed in full before it is asked for. simmer never escalates its own privileges: it composes the command and shows it, and you run it — the app's setup window hands you the command rather than performing it, and `simmer doctor` prints it if it is missing ([SECURITY.md](../SECURITY.md)).
+The same password installs the boot-time heal: one LaunchDaemon that runs `pmset -a disablesleep 0` once at boot, because the switch survives a reboot and the guard only runs once you are logged in — without it a crash during a claim left the Mac awake at the login window.
+Asked once, at install, and both files are printed in full before they are asked for. simmer never escalates its own privileges: it composes the command and shows it, and you run it — the app's setup window hands you the command rather than performing it, and `simmer doctor` prints it if it is missing ([SECURITY.md](../SECURITY.md)).
 
 **How do I remove it?** `simmer uninstall`.
 It lists what is on the machine and prints the exact commands that remove it, resolved — so nothing depends on remembering where the one-paste installer put its checkout.
 It shows them rather than running them, for the same reason the sudo rule is shown rather than applied, and because a binary that deletes its own bundle mid-run is a worse idea than a paste.
-The sudo rule is the one command that needs root, and it stays yours.
+The sudo rule and the boot-time heal are the two removals that need root, and they stay yours.
 The uninstall removes exactly what the install wrote — nothing else, and it never touches a sudoers rule it cannot prove it wrote.
 Your state (`~/.local/state/simmer/`) is left alone; delete it if you want the log and the claims gone too.
 
