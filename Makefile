@@ -305,10 +305,12 @@ install: app
 	# person to do what the next paragraph is about to do reads as a bug.
 	[ "$(NOTES)" = "0" ] || { \
 	    echo ""; \
-	    echo "Two steps remain, both yours (they need a human):"; \
+	    echo "Three steps remain, all yours (they need a human):"; \
 	    echo "  1. The sudo rule — bootstrap.sh installs it, or run it yourself:"; \
 	    echo "       simmer doctor   # says whether it is in place, and prints the command"; \
-	    echo "  2. open -a Simmer, then click Allow on the notification banner."; }
+	    echo "  2. The boot-time heal (/Library/LaunchDaemons/io.github.moralesl.simmer.boot-heal.plist)"; \
+	    echo "       — bootstrap.sh installs it too; simmer doctor prints the one-liner otherwise."; \
+	    echo "  3. open -a Simmer, then click Allow on the notification banner."; }
 
 # Hand the machine back BEFORE removing anything, and refuse to go on if that
 # did not work.

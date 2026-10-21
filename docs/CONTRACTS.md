@@ -259,7 +259,7 @@ Warn-once, the reminder interval and deadline crossings are the paths a differen
 
 ## Behavioural guarantees
 
-1. Five things end awake time; only one is remembering: a claim's deadline (or the cap clipping it), the battery floor (on battery only), its charger disappearing if it asked for one, thermal pressure, explicit release, and the guard reverting a switch it finds enabled with no claim behind it.
+1. Five things end awake time; only one is remembering: a claim's deadline (or the cap clipping it), the battery floor (on battery only), its charger disappearing if it asked for one, thermal pressure, explicit release, and the guard reverting a switch it finds enabled with no claim behind it — once more at boot, before any login, by the boot-time heal below.
 2. The switch is never exposed, only leased.
    **Every mutation ends in one function that reads the ledger and puts the switch where it says** — that is what makes "no code path leaves `disablesleep` on without something scheduled to turn it off" a property rather than a promise.
 3. A warning fires once, ~5 minutes before the **aggregate** deadline; open-ended time reminds every 30 minutes; a claim on battery warns once at floor+10%, re-arming if the charger returns.
