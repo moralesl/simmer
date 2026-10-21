@@ -15,6 +15,11 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 - `doctor --json` gains two rows: **`boot_heal`** (`ok` true/false, `null` under the seam) and **`other_installs`** (informational, present only when another account's rule file exists, never under the seam). Appended, like every row before them.
 
+### Changed
+
+- **The Raycast extension's dependencies move: all three Dependabot proposed, in one change.** `@raycast/api` 2.5.2 → 2.7.2, `eslint` 10.11.0 → 10.12.0 and `@types/node` 26.6.3 → 26.6.4 — together, because each rewrote the same lockfile and merging one would have sent the other two back to rebase.
+  Raycast still publishes no changelog for 2.x, so the api bump was read as the diff of its own type declarations (9681 → 9712 lines): every name the extension imports — `LaunchProps`, `Toast`, `getPreferenceValues`, `open`, `showHUD`, `showToast` — is declared with the same signature as before, and what moves is the AI tool-call context (`entryPointType`, `providerOptions`, `sessionId`), which the extension does not use. 2.7.2 stays below the installed Raycast (2.8.2), as `.github/dependabot.yml` requires. Every peer range in the lockfile admits eslint 10.12. Read on 2026-10-21; the registry had moved on to `@raycast/api` 2.8.2, `eslint` 10.13.0 and `@types/node` 26.6.5 by then, which Dependabot's next monthly round proposes.
+
 ### Fixed
 
 - **`make test` compiles again on Command Line Tools 27.** The October 2026 tools moved the swift-testing macro plugin into a `testing/` subdirectory the compiler does not search, so every `@Test` failed to expand — `plugin for module 'TestingMacros' not found` — and the suite was red on a clean checkout. The Makefile names that directory with `-plugin-path` where it exists; an older CLT keeps exactly the flags it had.
