@@ -25,6 +25,13 @@ public struct ClaimInput {
         self.force = force
         self.json = json
     }
+
+    /// The menu's overnight row, as `simmer --until 09:00 --require-ac -r
+    /// overnight`: until the morning the cap lifts, and only while the charger
+    /// is in, because a night on battery ends at the floor hours early.
+    public static var overnight: ClaimInput {
+        ClaimInput(untilText: Cap.rolloverTime, reason: "overnight", requireAC: true)
+    }
 }
 
 public enum Commands {

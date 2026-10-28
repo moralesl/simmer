@@ -13,6 +13,10 @@ public enum MenuAction: Equatable, Sendable {
     /// — the label promised one thing and the verb did another.
     case extend(String)
     case claimForever
+    /// Take the menu bar's claim as `ClaimInput.overnight`. Its own case
+    /// rather than `.claim`, because a duration cannot carry `--until` or
+    /// `--require-ac`, and both are what make it overnight.
+    case claimOvernight
     case releaseMine
     case releaseAll
     case capSet(String)
@@ -215,7 +219,8 @@ public struct MenuInstall: Sendable, Equatable {
 public enum MenuModel {
     /// Lead with why, then act: header first, the claims, the
     /// 80% actions, the cap, then the bridge to the CLI.
-    public static func build(aggregate: Aggregate, batteryLine: String,
+    public static func build(aggregate: Aggregate, now: Int, batteryLine: String,
+                             onBattery: Bool = false,
                              install: MenuInstall) -> [MenuItemModel] {
         var items: [MenuItemModel] = []
 
@@ -270,6 +275,7 @@ public enum MenuModel {
             }
             items.append(MenuItemModel(title: "4 hours", symbol: "cup.and.saucer.fill",
                                        action: .claim("4h")))
+            items.append(overnightItem(now: now, onBattery: onBattery))
             // `forever` demoted to the power layer: with a cap available,
             // a deadline is strictly better in almost every case.
             items.append(MenuItemModel(title: "Until further notice", symbol: "infinity",
@@ -475,6 +481,25 @@ public enum MenuModel {
             // https://…/bootstrap.sh | bash` is a title macOS truncates.
             title: "Copied to clipboard", subtitle: "", body: command, sound: false)]
         return outcome
+    }
+
+    /// Overnight is a first-class case (CONTRACTS.md § Surface), and the one
+    /// the menu had no way to reach: "4 hours" taken at 23:00 hands the lid
+    /// back at 03:00. It ends at the morning the cap lifts, and only on mains
+    /// power. `--require-ac` exists for exactly this claim, so on battery the
+    /// row says what is missing rather than refusing on click.
+    ///
+    /// The deadline is dated: at 10:00 the next 09:00 is twenty-three hours
+    /// away, and a bare "until 09:00" would read as a time already gone.
+    static func overnightItem(now: Int, onBattery: Bool) -> MenuItemModel {
+        let until = Durations.parseUntil(Cap.rolloverTime, now: now)
+            .map { Formats.hhmmDated($0, now: now) } ?? Cap.rolloverTime
+        if onBattery {
+            return MenuItemModel(title: "Until \(until) · plug in first",
+                                 symbol: "moon.stars.fill", isUnavailable: true)
+        }
+        return MenuItemModel(title: "Until \(until), plugged in",
+                             symbol: "moon.stars.fill", action: .claimOvernight)
     }
 
     /// The agent-tool bridge in one feature: every menu action has a CLI
