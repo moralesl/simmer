@@ -220,7 +220,7 @@ public enum MenuModel {
     /// Lead with why, then act: header first, the claims, the
     /// 80% actions, the cap, then the bridge to the CLI.
     public static func build(aggregate: Aggregate, now: Int, batteryLine: String,
-                             onBattery: Bool = false,
+                             onBattery: Bool,
                              install: MenuInstall) -> [MenuItemModel] {
         var items: [MenuItemModel] = []
 
@@ -275,7 +275,7 @@ public enum MenuModel {
             }
             items.append(MenuItemModel(title: "4 hours", symbol: "cup.and.saucer.fill",
                                        action: .claim("4h")))
-            items.append(overnightItem(now: now, onBattery: onBattery))
+            items.append(overnightItem(now: now, onBattery: onBattery, cap: aggregate.cap))
             // `forever` demoted to the power layer: with a cap available,
             // a deadline is strictly better in almost every case.
             items.append(MenuItemModel(title: "Until further notice", symbol: "infinity",
@@ -491,14 +491,27 @@ public enum MenuModel {
     ///
     /// The deadline is dated: at 10:00 the next 09:00 is twenty-three hours
     /// away, and a bare "until 09:00" would read as a time already gone.
-    static func overnightItem(now: Int, onBattery: Bool) -> MenuItemModel {
-        let until = Durations.parseUntil(Cap.rolloverTime, now: now)
-            .map { Formats.hhmmDated($0, now: now) } ?? Cap.rolloverTime
+    ///
+    /// A cap before the morning is named in the label, because the claim
+    /// clips to it silently and this is the row whose whole value is the
+    /// deadline. A cap that has passed refuses the claim, so the row is drawn
+    /// unavailable for it, in the same order `Commands.claim` refuses in.
+    static func overnightItem(now: Int, onBattery: Bool, cap: Int) -> MenuItemModel {
+        let rollover = Durations.parseUntil(Cap.rolloverTime, now: now)
+        let morning = rollover.map { Formats.hhmmDated($0, now: now) } ?? Cap.rolloverTime
         if onBattery {
-            return MenuItemModel(title: "Until \(until) · plug in first",
+            return MenuItemModel(title: "Until \(morning) · plug in first",
                                  symbol: "moon.stars.fill", isUnavailable: true)
         }
-        return MenuItemModel(title: "Until \(until), plugged in",
+        if cap != 0 && cap <= now {
+            return MenuItemModel(title: "Until \(morning) · the cap at \(Formats.hhmm(cap)) has passed",
+                                 symbol: "moon.stars.fill", isUnavailable: true)
+        }
+        if cap != 0, let rollover, cap < rollover {
+            return MenuItemModel(title: "Until \(Formats.hhmmDated(cap, now: now)) (cap), plugged in",
+                                 symbol: "moon.stars.fill", action: .claimOvernight)
+        }
+        return MenuItemModel(title: "Until \(morning), plugged in",
                              symbol: "moon.stars.fill", action: .claimOvernight)
     }
 
@@ -507,6 +520,7 @@ public enum MenuModel {
     static func copyAsCLI(_ aggregate: Aggregate) -> MenuItemModel {
         var commands = [
             "simmer 1h -r \"why\"",
+            "simmer --until \(Cap.rolloverTime) --require-ac -r overnight",
             "simmer status --json",
             "simmer budget --need 20m",
         ]
