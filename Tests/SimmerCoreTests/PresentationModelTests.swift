@@ -59,10 +59,12 @@ import Testing
         Claim(owner: owner, until: until, started: 10)
     }
 
-    func build(claims: [Claim], cap: CapRecord? = nil, switchOn: Bool = true) -> [MenuItemModel] {
-        let aggregate = Aggregate.compute(claims: claims, cap: cap, now: 100,
+    func build(claims: [Claim], cap: CapRecord? = nil, switchOn: Bool = true,
+               now: Int = 100, onBattery: Bool = false) -> [MenuItemModel] {
+        let aggregate = Aggregate.compute(claims: claims, cap: cap, now: now,
                                           sleepDisabled: switchOn)
-        return MenuModel.build(aggregate: aggregate, batteryLine: "battery 80%, on AC",
+        return MenuModel.build(aggregate: aggregate, now: now, batteryLine: "battery 80%, on AC",
+                               onBattery: onBattery,
                                install: MenuInstall(version: "0.0.0-test",
                                                     canHandBackUnattended: true))
     }
@@ -83,6 +85,109 @@ import Testing
         // carry no action — a version you cannot click is the point.
         #expect(items.compactMap(\.action).last == .quit)
         #expect(items.last?.action == nil)
+    }
+
+    /// A local wall-clock time on the acceptance suite's fixed day, so the
+    /// labels below hold in any time zone the suite runs in.
+    func local(_ hhmm: String) -> Int {
+        Durations.parseUntil(hhmm, now: 1_800_000_000)!
+    }
+
+    func overnightRow(_ items: [MenuItemModel]) -> MenuItemModel? {
+        items.first { $0.symbol == "moon.stars.fill" }
+    }
+
+    /// Overnight ends at the morning the cap lifts, and says which morning:
+    /// after midnight it is today's 09:00, before it tomorrow's.
+    @Test func overnightNamesTheMorningItEnds() {
+        let evening = overnightRow(build(claims: [], switchOn: false, now: local("22:00")))
+        #expect(evening?.title == "Until 09:00 tomorrow, plugged in")
+        #expect(evening?.action == .claimOvernight)
+        #expect(evening?.isAlternate == false)
+        let smallHours = overnightRow(build(claims: [], switchOn: false, now: local("02:00")))
+        #expect(smallHours?.title == "Until 09:00, plugged in")
+        // Mid-morning it is still the next 09:00, and the label says so rather
+        // than reading as a time already gone.
+        let morning = overnightRow(build(claims: [], switchOn: false, now: local("10:00")))
+        #expect(morning?.title == "Until 09:00 tomorrow, plugged in")
+    }
+
+    /// `--require-ac` on battery is a refusal, so the row says what is missing
+    /// instead of offering a click that cannot work.
+    @Test func overnightOnBatteryAsksForTheCharger() {
+        let row = overnightRow(build(claims: [], switchOn: false, now: local("22:00"),
+                                     onBattery: true))
+        #expect(row?.title == "Until 09:00 tomorrow · plug in first")
+        #expect(row?.action == nil)
+        #expect(row?.isUnavailable == true)
+    }
+
+    /// At 09:00 itself the morning has arrived, so the row points at the next.
+    @Test func overnightAtTheRolloverItselfPointsAtTomorrow() {
+        let row = overnightRow(build(claims: [], switchOn: false, now: local("09:00")))
+        #expect(row?.title == "Until 09:00 tomorrow, plugged in")
+    }
+
+    /// The claim clips to a cap silently, so a cap before the morning is
+    /// named in the label rather than discovered at 23:00.
+    @Test func overnightNamesTheCapWhenItEndsFirst() {
+        let evening = local("22:00")
+        func cap(_ until: Int) -> CapRecord {
+            CapRecord(until: until, setBy: "terminal", setAt: evening,
+                      expires: Cap.rollover(after: until))
+        }
+        let early = overnightRow(build(claims: [], cap: cap(evening + 3600),
+                                       switchOn: false, now: evening))
+        #expect(early?.title == "Until 23:00 (cap), plugged in")
+        #expect(early?.action == .claimOvernight)
+        // A cap past the morning clips nothing, so it is not mentioned.
+        let late = overnightRow(build(claims: [], cap: cap(Durations.parseUntil("10:00", now: evening)!),
+                                      switchOn: false, now: evening))
+        #expect(late?.title == "Until 09:00 tomorrow, plugged in")
+    }
+
+    /// A passed cap refuses every claim until it lifts, so the row says why
+    /// instead of offering a click that cannot work.
+    @Test func overnightUnderAPassedCapIsUnavailable() {
+        let evening = local("22:00")
+        let passed = CapRecord(until: evening - 1800, setBy: "terminal", setAt: evening - 3600,
+                               expires: Cap.rollover(after: evening - 1800))
+        let row = overnightRow(build(claims: [], cap: passed, switchOn: false, now: evening))
+        #expect(row?.title == "Until 09:00 tomorrow · the cap at 21:30 has passed")
+        #expect(row?.action == nil)
+        #expect(row?.isUnavailable == true)
+    }
+
+    @Test func overnightIsOfferedOnlyWhenNothingIsClaimed() {
+        let items = build(claims: [claim("terminal", until: 4000)])
+        #expect(!items.contains { $0.action == .claimOvernight })
+    }
+
+    @Test func theOvernightClaimEndsAtTheRolloverOnTheCharger() {
+        let now = local("22:00")
+        func context(_ power: TestPowerSystem) -> Context {
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("simmer-core-\(UUID().uuidString)")
+            return Context(now: now, power: power, ledger: Ledger(stateDir: dir),
+                           owner: "menubar", ownerExplicit: true, isHuman: true,
+                           isTTY: false, version: "test", binPath: "simmer")
+        }
+
+        let plugged = TestPowerSystem()
+        let ctx = context(plugged)
+        _ = Commands.claim(.overnight, ctx: ctx)
+        let held = ctx.aggregate()
+        #expect(held.state == .active)
+        #expect(held.until == Durations.parseUntil(Cap.rolloverTime, now: now))
+        #expect(held.live.first?.claim.requireAC == true)
+        #expect(held.live.first?.claim.reason == "overnight")
+        #expect(plugged.disabled)
+
+        let unplugged = TestPowerSystem(onBattery: true)
+        let refused = context(unplugged)
+        _ = Commands.claim(.overnight, ctx: refused)
+        #expect(refused.aggregate().state == .idle)
+        #expect(unplugged.switchWrites.isEmpty)
     }
 
     @Test func activeLeadsWithWhyThenActs() {
@@ -178,6 +283,10 @@ import Testing
         let idle = build(claims: [], switchOn: false)
         let idleCopy = idle.first { $0.title == "Copy as CLI command" }
         #expect(idleCopy?.children.contains { $0.title == "simmer cap 23:00" } == true)
+        // The overnight row's own spelling, the one nobody would guess.
+        #expect(idleCopy?.children.contains {
+            $0.title == "simmer --until 09:00 --require-ac -r overnight"
+        } == true)
     }
 }
 
@@ -186,7 +295,7 @@ import Testing
 /// facts are ones a person cannot get at from the menu bar otherwise.
 @Suite struct MenuInstallFooter {
     func menu(_ install: MenuInstall) -> [MenuItemModel] {
-        MenuModel.build(aggregate: Aggregate(), batteryLine: "battery 80%, on AC",
+        MenuModel.build(aggregate: Aggregate(), now: 1000, batteryLine: "battery 80%, on AC", onBattery: false,
                         install: install)
     }
 
@@ -259,7 +368,7 @@ import Testing
     @Test func everyCopyableRowInTheMenuHasSomethingToSay() {
         let items = MenuModel.build(
             aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000, sleepDisabled: false),
-            batteryLine: "battery 80%, on AC",
+            now: 1000, batteryLine: "battery 80%, on AC", onBattery: false,
             install: MenuInstall(version: "0.2.0", canHandBackUnattended: true,
                                  updateLine: "Update available: 0.3.0",
                                  updateCommand: "curl -fsSL https://example.test/bootstrap.sh | bash"))
@@ -282,7 +391,7 @@ import Testing
     private func menu(_ install: MenuInstall) -> [MenuItemModel] {
         MenuModel.build(aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000,
                                                      sleepDisabled: false),
-                        batteryLine: "battery 80%, on AC", install: install)
+                        now: 1000, batteryLine: "battery 80%, on AC", onBattery: false, install: install)
     }
 
     private func available(installing: String?) -> MenuInstall {
@@ -374,7 +483,7 @@ import Testing
     private func menu(_ install: MenuInstall) -> [MenuItemModel] {
         MenuModel.build(aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000,
                                                      sleepDisabled: false),
-                        batteryLine: "battery 80%, on AC", install: install)
+                        now: 1000, batteryLine: "battery 80%, on AC", onBattery: false, install: install)
     }
 
     /// The fixture of T8's frames: 0.3.2 installed, 0.3.3 published.
@@ -657,7 +766,7 @@ import Testing
         let row = try #require(MenuModel.build(
             aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000,
                                          sleepDisabled: false),
-            batteryLine: "battery 80%, on AC", install: install).first)
+            now: 1000, batteryLine: "battery 80%, on AC", onBattery: false, install: install).first)
         #expect(row.title == "Update available: 0.3.2")
         #expect(!row.children.isEmpty, "the row a person can act on came back")
     }

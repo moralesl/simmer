@@ -422,7 +422,7 @@ import Testing
     private func menu(_ install: MenuInstall) -> [MenuItemModel] {
         MenuModel.build(aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000,
                                                      sleepDisabled: false),
-                        batteryLine: "battery 80%, on AC", install: install)
+                        now: 1000, batteryLine: "battery 80%, on AC", onBattery: false, install: install)
     }
 
     @Test func theRowIsThereOnlyWhenThereIsSomethingToSay() {
@@ -818,7 +818,7 @@ import Testing
         func menu(_ canApply: Bool) -> [MenuItemModel] {
             MenuModel.build(
                 aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000, sleepDisabled: false),
-                batteryLine: "battery 80%, on AC",
+                now: 1000, batteryLine: "battery 80%, on AC", onBattery: false,
                 install: MenuInstall(version: "0.2.0", canHandBackUnattended: true,
                                      updateLine: "Update available: 0.3.0",
                                      updateCommand: "brew upgrade simmer",
@@ -839,7 +839,7 @@ import Testing
     @Test func theFooterIsAlwaysTheLastRow() {
         let items = MenuModel.build(
             aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000, sleepDisabled: false),
-            batteryLine: "battery 80%, on AC",
+            now: 1000, batteryLine: "battery 80%, on AC", onBattery: false,
             install: MenuInstall(version: "0.2.0", canHandBackUnattended: true))
         #expect(items.last?.title == "simmer 0.2.0")
     }
@@ -1024,7 +1024,7 @@ import Testing
     private func menu(_ install: MenuInstall) -> [MenuItemModel] {
         MenuModel.build(aggregate: Aggregate.compute(claims: [], cap: nil, now: 1000,
                                                      sleepDisabled: false),
-                        batteryLine: "battery 80%, on AC", install: install)
+                        now: 1000, batteryLine: "battery 80%, on AC", onBattery: false, install: install)
     }
 
     private let notesURL = "https://github.com/moralesl/simmer/releases/tag/v0.3.0"

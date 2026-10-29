@@ -132,7 +132,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func rows() -> [MenuItemModel] {
         let ctx = AppState.shared.context()
         let percent = ctx.power.batteryPercent().map(String.init) ?? "?"
-        let batteryLine = "battery \(percent)%, \(ctx.power.onBattery() ? "on battery" : "on AC")"
+        let onBattery = ctx.power.onBattery()
+        let batteryLine = "battery \(percent)%, \(onBattery ? "on battery" : "on AC")"
         // Read per menu open, not cached: the rule can be installed from the
         // setup window while this menu is the thing that sent you there, and a
         // stale "no permission" row would then be the lie.
@@ -150,7 +151,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                   // open is the first chance to say so.
                                   installing: AppState.shared.installInProgress(),
                                   checking: checking, checked: answer)
-        return MenuModel.build(aggregate: ctx.aggregate(), batteryLine: batteryLine,
+        return MenuModel.build(aggregate: ctx.aggregate(), now: ctx.now,
+                               batteryLine: batteryLine, onBattery: onBattery,
                                install: install)
     }
 
@@ -266,6 +268,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             AppState.shared.perform { Commands.extend(duration, json: false, ctx: $0) }
         case .claimForever:
             AppState.shared.perform { Commands.claim(ClaimInput(forever: true), ctx: $0) }
+        case .claimOvernight:
+            AppState.shared.perform { Commands.claim(.overnight, ctx: $0) }
         case .releaseMine:
             AppState.shared.perform { Commands.release(all: false, json: false, ctx: $0) }
         case .releaseAll:

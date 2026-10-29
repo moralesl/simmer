@@ -5,6 +5,10 @@ Machine surfaces — exit codes, `--json`, `--machine`, `events.jsonl` — are c
 
 ## Unreleased
 
+### Added
+
+- **An overnight row in the menu.** "Keep awake for…" stopped at 4 hours, so a claim taken at 23:00 handed the lid back at 03:00, and overnight, which the contract calls a first-class case, was reachable only from a terminal. The new row is `simmer --until 09:00 --require-ac -r overnight`: it ends at the same morning the cap lifts (`Cap.rolloverTime`, not a new setting), and only while the charger is in. The label names the morning, "Until 09:00 tomorrow, plugged in" before midnight and "Until 09:00, plugged in" after it. On battery the row is greyed out as "· plug in first" rather than offering a click that `--require-ac` would refuse. A cap before 09:00 clips the claim, so the row names it ("Until 23:00 (cap), plugged in"), and a cap that has already passed greys the row out with the reason. "Copy as CLI command" gains the row's own spelling. No machine surface changes.
+
 ## 0.5.0 — 2026-10-21
 
 ### Added
